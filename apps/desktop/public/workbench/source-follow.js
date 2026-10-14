@@ -12,7 +12,8 @@ function sourceFor(index,config,part){
  return row&&row.sourceId&&String(row.goodsId??'')===String(part.goodsId??'')?row:null;
 }
 function initializePart(config,part,row){
- if(part.sourceFollow?.sourceId!==part.sourceId)part.sourceFollow={sourceId:part.sourceId};
+ // 未绑定输出源的空白配件也允许手工编辑，先建立跟随记录。
+ if(!part.sourceFollow||part.sourceFollow.sourceId!==part.sourceId)part.sourceFollow={sourceId:part.sourceId};
  for(const field of ['name','upgrade']){
   const value=effective(part,field),target=sourceValue(config,row,field),previous=part.sourceFollow[field];
   if(!previous||!['follow','manual'].includes(previous.mode))part.sourceFollow[field]={mode:value===target?'follow':'manual',value,sourceValue:target};
@@ -30,7 +31,8 @@ export function initializeSourceFollow(configs,rows){
 /** 用户手工编辑字段后明确解除该字段的自动跟随。 */
 export function markSourceFieldManual(part,field){
  if(!['name','upgrade'].includes(field))return;
- if(part.sourceFollow?.sourceId!==part.sourceId)part.sourceFollow={sourceId:part.sourceId};
+ // 未绑定输出源的空白配件也允许手工编辑，先建立跟随记录。
+ if(!part.sourceFollow||part.sourceFollow.sourceId!==part.sourceId)part.sourceFollow={sourceId:part.sourceId};
  const previous=part.sourceFollow[field];
  part.sourceFollow[field]={mode:'manual',value:effective(part,field),...(previous&&Object.hasOwn(previous,'sourceValue')?{sourceValue:previous.sourceValue}:{})};
 }

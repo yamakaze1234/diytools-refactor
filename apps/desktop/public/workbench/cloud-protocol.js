@@ -49,6 +49,10 @@ export function validateCloudRecord(type,id,data){
   if(type==='component'&&(typeof data.goodsId!=='string'||!/^\d{1,20}$/.test(data.goodsId)||typeof data.erpScopeId!=='string'||!data.erpScopeId||id!==data.erpScopeId+'|'+data.goodsId||data.taxCents!==null&&!safeInteger(data.taxCents)))throw Error('云端共享成本格式无效');
   if(type==='source'&&(data.sourceId!==id||typeof data.goodsId!=='string'||!['intel','gigabyte','jonsbo'].includes(data.shopId)))throw Error('云端输出源格式无效');
   if(type==='source')validateAddon(sourceAddon(data));
+  // 与已发行 Python 客户端保持店设置边界一致，防止新版提交旧版无法接收的记录。
+  if(type==='settings'&&data.serviceText!==undefined&&(typeof data.serviceText!=='string'||data.serviceText.length>1000))throw Error('默认服务承诺无效');
+  if(type==='settings'&&data.erpShopId!==undefined&&(typeof data.erpShopId!=='string'||data.erpShopId&&!/^\d{1,30}$/.test(data.erpShopId)))throw Error('ERP 店铺 ID 无效');
+  if(type==='settings'&&data.erpShopName!==undefined&&(typeof data.erpShopName!=='string'||data.erpShopName.length>200))throw Error('ERP 店铺名称无效');
   if(type==='settings'&&(!['intel','gigabyte','jonsbo'].includes(id)||!safeInteger(data.couponCents)))throw Error('云端店设置格式无效');
   if(['template','gallery'].includes(type)&&data.id!==id)throw Error('云端记录 ID 不一致');
   if(type==='workspace_meta'&&(id!=='root'||data.format!==2))throw Error('云端工作区标记无效');

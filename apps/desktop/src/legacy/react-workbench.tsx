@@ -2,6 +2,10 @@
 import { useLayoutEffect, useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
+import {EditorPanel,AddonStatus,type EditorModel} from './editor-panels';
+import {TemplateArea,TemplatePicker,TemplateSave} from './template-panels';
+import {AddonShell,AddonFields,AddonItems,AddonChoices,CostDialog,CostSummary} from './addon-panels';
+import type {Row} from './editor-controls';
 
 type FieldProps = { field: string; value: string; configId: string; attributes: Record<string, string>; checkpoint: () => void; edit: (field: string, value: string) => void };
 function ConfigField({field,value,attributes,checkpoint,edit}: FieldProps) {
@@ -30,7 +34,15 @@ function ConfigList({markup,document}: {markup: string; document: Document}) {
 export function createWorkbenchReactRenderer() {
  const roots=new Map<Element,Root>();
  const rootFor=(element:Element)=>{let root=roots.get(element);if(!root){root=createRoot(element);roots.set(element,root);}return root;};
+ // 先释放内部孤岛再释放外层，避免对话框关闭后残留 detached React roots。
+ const release=(container:Element)=>{for(const [element,root] of [...roots].reverse())if(element===container||container.contains(element)){flushSync(()=>root.unmount());roots.delete(element);}};
+ const regions={templates:TemplatePicker,'template-save':TemplateSave,'addon-shell':AddonShell,'addon-fields':AddonFields,'addon-items':AddonItems,'addon-choices':AddonChoices,'config-cost':CostDialog,'cost-summary':CostSummary};
  return {
+  editor(container:HTMLElement,model:EditorModel){flushSync(()=>rootFor(container).render(<EditorPanel key={String(model.config.id)+':'+model.tab} model={model}/>));},
+  templates(container:HTMLElement,model:Row){let surface=container.querySelector<HTMLElement>(':scope > [data-react-templates]');if(!surface){surface=container.ownerDocument.createElement('div');surface.dataset.reactTemplates='true';surface.style.display='contents';container.append(surface);}flushSync(()=>rootFor(surface!).render(<TemplateArea model={model}/>));},
+  dialog(container:HTMLElement,kind:string,model:Row){const Panel=regions[kind as keyof typeof regions];if(!Panel)throw Error('未知 React 编辑区 '+kind);flushSync(()=>rootFor(container).render(<Panel model={model}/>));},
+  status(container:HTMLElement,model:Row){flushSync(()=>rootFor(container).render(<AddonStatus status={model}/>));},
+  release,
   list(container:HTMLElement,markup:string) {
    let surface=container.querySelector<HTMLElement>(':scope > [data-react-list]');
    if(!surface){container.replaceChildren();surface=container.ownerDocument.createElement('div');surface.dataset.reactList='true';surface.style.display='contents';container.append(surface);}
@@ -47,6 +59,6 @@ export function createWorkbenchReactRenderer() {
     flushSync(()=>rootFor(surface).render(<ConfigField key={String(config.id)} field={field} configId={String(config.id)} value={String(config[field]??'')} attributes={attributes} checkpoint={checkpoint} edit={edit}/>));
    }
   },
-  dispose(){for(const root of roots.values())root.unmount();roots.clear();},
+  dispose(){for(const [,root] of [...roots].reverse())root.unmount();roots.clear();},
  };
 }

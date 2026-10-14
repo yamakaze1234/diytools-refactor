@@ -6,6 +6,14 @@ import {applySourceSync} from '../../public/workbench/source-sync-data.js';
 const row=(name='A',upgrade='old',shopId='intel')=>({sourceId:'s',goodsId:'1',shopId,name,upgrade,tax:10});
 const config=(name='A',upgrade='old',shopId='intel')=>({id:'c',productId:'p',product:'Product',name:'Config',shopId,parts:[{sourceId:'s',goodsId:'1',slot:'CPU',name,upgrade,tax:10}],actualParts:[{name:'cost'}],addons:[{text:'manual addon'}]});
 
+// 未绑定来源的手工配件也必须可以编辑，且后续绑定来源不丢失手工内容。
+test('unbound parts initialize manual field records before saving display and upgrade edits',()=>{
+ const part={slot:'内存',name:'手工内存',displayName:'展示内存',upgrade:'升级说明'};
+ markSourceFieldManual(part,'name');markSourceFieldManual(part,'upgrade');
+ assert.equal(part.sourceFollow.name.value,'展示内存');assert.equal(part.sourceFollow.upgrade.value,'升级说明');
+ assert.equal(part.sourceFollow.name.mode,'manual');assert.equal(part.sourceFollow.upgrade.mode,'manual');
+});
+
 test('source changes automatically follow both fields while preserving actual parts and addons',()=>{
  const c=config(),before=structuredClone(c);initializeSourceFollow([c],[row()]);
  const result=followSourceChanges([c],[row()],[row('B','new')]);

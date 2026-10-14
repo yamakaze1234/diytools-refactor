@@ -48,7 +48,7 @@ export function bindConfigCosts(el,config,api){
  const parts=api.parts;
  el.querySelectorAll('[data-config-cost]').forEach(button=>button.onclick=()=>{
   const part=parts[Number(button.dataset.configCost)];
-  api.openDialog('单独修改含税单价',`<p class="hint">仅修改当前配置该行的含税单价，保存后重新计算成本和利润。</p><label class="field">含税单价<input id="config-cost-value" type="number" min="0" step="0.01" value="${part.tax??''}"></label><p id="config-cost-error" class="danger" role="alert"></p><div class="actions"><button id="config-cost-save" class="primary">保存价格</button></div>`);
+  api.openDialog('单独修改含税单价','');if(!api.react?.dialog(document.querySelector('#dialog-body'),'config-cost',{tax:part.tax}))api.openDialog('单独修改含税单价',`<p class="hint">仅修改当前配置该行的含税单价，保存后重新计算成本和利润。</p><label class="field">含税单价<input id="config-cost-value" type="number" min="0" step="0.01" value="${part.tax??''}"></label><p id="config-cost-error" class="danger" role="alert"></p><div class="actions"><button id="config-cost-save" class="primary">保存价格</button></div>`);
   const input=document.querySelector('#config-cost-value');input.focus();input.select();
   document.querySelector('#config-cost-save').onclick=()=>{
    try{const value=parseCostPrice(input.value);api.checkpoint();setConfigCost(part,value);config.taxUpdatedAt=new Date().toISOString();api.changed('单独修改含税单价');api.closeDialog();api.render();}
