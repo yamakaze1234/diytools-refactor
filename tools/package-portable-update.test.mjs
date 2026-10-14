@@ -25,3 +25,29 @@ test('refuse an old Python ZIP, wrong architecture and invalid release version',
   assert.throws(() => makeEnvelope({ binary: arm, version: '0.1.1', privateKey }), /PE/);
   assert.throws(() => makeEnvelope({ binary: binary(), version: '../bad', privateKey }), /版本/);
 });
+
+// 新旧清单必须指向同一程序，区别仅为签名内的下载来源；旧版仍能读取 GitHub 单地址清单。
+test('Gitea preferred and GitHub compatibility manifests describe identical signed bytes', () => {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const input = { binary: binary(), version: '0.2.2', notes: '优先使用 Gitea 更新', publishedAt: '2026-10-14T00:00:00.000Z', privateKey };
+  const preferred = makeEnvelope({ ...input, sources: ['gitea', 'github'] });
+  const compatible = makeEnvelope(input);
+  assert.deepEqual(preferred.payload.artifact.urls, [
+    'https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.2/diytools-refactor-0.2.2-windows-x86_64.exe',
+    compatible.payload.artifact.urls[0],
+  ]);
+  assert.equal(compatible.payload.artifact.urls.length, 1);
+  const withoutUrls = payload => ({ ...payload, artifact: { ...payload.artifact, urls: [] } });
+  assert.deepEqual(withoutUrls(preferred.payload), withoutUrls(compatible.payload));
+  for (const { envelope } of [preferred, compatible]) {
+    assert.equal(verify(null, Buffer.from(envelope.payload, 'base64'), publicKey, Buffer.from(envelope.signature, 'base64')), true);
+  }
+});
+
+// 来源参数不能重复、留空或注入外部域名，否则已签名清单会失去固定仓库边界。
+test('manifest refuses duplicate, empty and arbitrary update sources', () => {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  for (const sources of [[], ['github', 'github'], ['gitea', 'github', 'gitea'], ['https://example.com'], 'gitea', null]) {
+    assert.throws(() => makeEnvelope({ binary: binary(), version: '0.2.2', privateKey, sources }), /更新来源/);
+  }
+});

@@ -412,3 +412,59 @@ fn replacement_and_launch_failure_roll_back_without_overwriting_backups() {
         b"previous-backup"
     );
 }
+
+// 主源成功不能触碰备用凭据，主源校验失败也不能被备用成功掩盖。
+#[test]
+fn primary_source_is_lazy_and_security_errors_stop_fallback() {
+    assert_eq!(
+        prefer_primary(Ok(Some(7)), || -> Result<i32, String> {
+            panic!("不应读取备用凭据")
+        })
+        .unwrap(),
+        7
+    );
+    assert_eq!(prefer_primary(Ok(None), || Ok(9)).unwrap(), 9);
+    assert_eq!(
+        prefer_primary(Err("签名错误".into()), || Ok(9)).unwrap_err(),
+        "签名错误"
+    );
+}
+#[test]
+fn signed_sources_accept_gitea_and_legacy_but_reject_duplicates() {
+    let add_gitea = |v: &mut serde_json::Value| {
+        let url = format!(
+            "https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v{}/{}",
+            v["version"].as_str().unwrap(),
+            v["artifact"]["name"].as_str().unwrap()
+        );
+        v["artifact"]["urls"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, url.into());
+    };
+    let (envelope, key) = signed(add_gitea, b"new");
+    assert_eq!(
+        verify_envelope(&envelope, &key, "0.1.0")
+            .unwrap()
+            .artifact
+            .urls
+            .len(),
+        2
+    );
+    let (envelope, key) = signed(
+        |v| {
+            add_gitea(v);
+            v["artifact"]["urls"].as_array_mut().unwrap().pop();
+        },
+        b"new",
+    );
+    assert!(verify_envelope(&envelope, &key, "0.1.0").is_ok());
+    let (envelope, key) = signed(
+        |v| {
+            let url = v["artifact"]["urls"][0].clone();
+            v["artifact"]["urls"].as_array_mut().unwrap().push(url);
+        },
+        b"new",
+    );
+    assert!(verify_envelope(&envelope, &key, "0.1.0").is_err());
+}

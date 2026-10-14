@@ -64,7 +64,9 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
     }).catch(error => { if (!disposed) setEventError('更新关闭保护未能安装：' + String(error)); });
     return () => { disposed = true; remove?.(); removeClose?.(); controller.dispose(); accessController.dispose(); if (controllerRef.current === controller) controllerRef.current = null; if (accessRef.current === accessController) accessRef.current = null; };
   }, []);
-  useEffect(() => { setToken(''); if (open) void controllerRef.current?.check().then(() => accessRef.current?.refresh()); }, [open]);
+  useEffect(() => { setToken(''); if (open) void controllerRef.current?.check(); }, [open]);
+  // Gitea 匿名更新不读取 GitHub 凭据；仅展开备用授权设置时查询本机授权状态。
+  useEffect(() => { if (open && accessOpen) void accessRef.current?.refresh(); }, [open, accessOpen]);
   useEffect(() => { if (/访问受限|授权|权限|private|unauthorized|forbidden|401|403/i.test(state.error)) setAccessOpen(true); }, [state.error]);
   useEffect(() => {
     if (!open) return;
@@ -103,15 +105,16 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     }}>
       <div className="update-heading"><div><p className="eyebrow">桌面程序</p><h2 id="update-title">检查更新</h2></div><button className="text-button" onClick={close} disabled={installing} aria-label="关闭更新窗口">关闭</button></div>
-      <dl className="update-versions"><div><dt>当前版本</dt><dd>{state.release?.currentVersion ?? (currentVersion || '等待检查')}</dd></div><div><dt>可用版本</dt><dd>{state.downloaded?.version ?? state.release?.version ?? '—'}</dd></div><div><dt>更新来源</dt><dd>{state.downloaded?.source ?? state.release?.source ?? 'GitHub · yamakaze1234/diytools-refactor'}</dd></div></dl>
+      <dl className="update-versions"><div><dt>当前版本</dt><dd>{state.release?.currentVersion ?? (currentVersion || '等待检查')}</dd></div><div><dt>可用版本</dt><dd>{state.downloaded?.version ?? state.release?.version ?? '—'}</dd></div><div><dt>更新来源</dt><dd>{state.downloaded?.source ?? state.release?.source ?? 'Gitea 优先 · GitHub 备用'}</dd></div></dl>
+      <p className="storage-note">优先从 Gitea 获取更新，无需填写令牌；暂时无法访问时尝试 GitHub 备用源。</p>
       <p className="update-message" role="status">{state.phase === 'checking' ? '正在查询兼容的桌面程序版本…' : state.phase === 'downloading' ? state.restartAfterDownload ? '正在下载并校验，完成后保存修改并重启。关闭此窗口可继续编辑，并暂停自动重启。' : '正在下载并校验，可关闭此窗口继续编辑；完成后等待手动重启更新。' : installing ? '正在保存修改并准备重启，请稍候…' : state.phase === 'downloaded' ? '更新包已下载并校验，点击下方按钮保存修改并重启。' : state.release?.message ?? '准备检查更新。'}</p>
       {state.phase === 'downloading' && <div className="update-progress"><progress max="100" {...(percent === null ? {} : { value: percent })} aria-label="更新包下载进度" /><span>{progress ? bytes(progress.received) + (progress.total ? ' / ' + bytes(progress.total) : '') : '等待下载进度'}{percent === null ? '' : ` · ${percent}%`}</span></div>}
       {state.release?.notes && <div className="update-notes"><h3>更新说明</h3><p>{state.release.notes}</p></div>}
       {(state.error || eventError) && <p className="notice error" role="alert">{state.error || eventError}</p>}
       <details className="update-access" open={accessOpen} onToggle={event => setAccessOpen(event.currentTarget.open)}>
-        <summary>更新授权设置</summary>
-        <p>{access.status?.source === 'gh' ? '已复用本机 GitHub 登录。' : access.status?.configured ? '已保存本机更新授权。' : '公开仓库无需授权；私有仓库可复用本机 GitHub 登录，或填写令牌。'}</p>
-        <p className="storage-note">令牌需有本仓库内容读取权限，仅保存在本机。</p>
+        <summary>GitHub 备用源授权（可选）</summary>
+        <p>{access.status?.source === 'gh' ? '备用源已复用本机 GitHub 登录。' : access.status?.configured ? '已保存 GitHub 备用源授权。' : '仅当 GitHub 备用仓库需要授权时，复用本机 GitHub 登录或填写令牌。'}</p>
+        <p className="storage-note">令牌仅用于 GitHub 备用仓库的内容读取，保存在本机，不影响 Gitea 更新。</p>
         <label htmlFor="updater-token">GitHub 令牌（可选）</label>
         <input id="updater-token" type="password" autoComplete="off" spellCheck={false} value={token} onChange={event => setToken(event.target.value)} disabled={busy || access.busy} />
         <div className="update-actions"><button className="secondary" disabled={busy || access.busy || access.status?.source !== 'credential'} onClick={async () => { setToken(''); if (await accessRef.current?.clear()) await controllerRef.current?.check(); }}>清除本机令牌</button><button disabled={busy || access.busy || !token.trim()} onClick={() => void saveAccess()}>保存授权并检查</button></div>

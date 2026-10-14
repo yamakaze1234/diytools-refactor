@@ -20,17 +20,24 @@ if (versions.some(version => version !== config.version)) throw Error('根包、
 const binary = readFileSync(args.exe), privateKey = createPrivateKey(readFileSync(args.key));
 if (readFileSync(resolve(root, 'apps/desktop/src-tauri/updater-public-key.txt'), 'utf8').trim() !== publicKeyBase64(privateKey)) throw Error('更新公私钥不匹配');
 const notes = args.notes ? readFileSync(args.notes, 'utf8') : '独立仓库发行版；软件内支持签名校验和一键更新。';
-const { envelope, payload } = makeEnvelope({ binary, version: config.version, notes, privateKey });
+// 两份清单共用程序、版本和发布时间；旧客户端仍读取单 GitHub 地址格式，先升级再使用 Gitea。
+const publishedAt = new Date().toISOString();
+const { envelope, payload } = makeEnvelope({ binary, version: config.version, notes, privateKey, publishedAt, sources: ['gitea', 'github'] });
+const githubEnvelope = makeEnvelope({ binary, version: config.version, notes, privateKey, publishedAt }).envelope;
 const output = resolve(args.out);
 mkdirSync(output);
 const portable = resolve(output, `DIYTools-${config.version}-Windows-x64`);
 mkdirSync(portable);
 writeFileSync(resolve(output, manifestName), JSON.stringify(envelope, null, 2) + '\n', { flag: 'wx' });
+mkdirSync(resolve(output, 'github-compat'));
+writeFileSync(resolve(output, 'github-compat', manifestName), JSON.stringify(githubEnvelope, null, 2) + '\n', { flag: 'wx' });
+writeFileSync(resolve(output, 'release-notes.md'), notes, { flag: 'wx' });
 writeFileSync(resolve(output, payload.artifact.name), binary, { flag: 'wx' });
 writeFileSync(resolve(portable, 'DIYTools.exe'), binary, { flag: 'wx' });
 writeFileSync(resolve(portable, 'diytools-portable.json'), '{"mode":"portable"}\n', { flag: 'wx' });
 copyFileSync(resolve(root, 'docs/PUBLIC-USAGE.md'), resolve(portable, '使用说明.md'));
 const result = { version: config.version, portable, artifact: payload.artifact.name, manifest: manifestName,
+  githubManifest: `github-compat/${manifestName}`, releaseNotes: 'release-notes.md',
   sha256: createHash('sha256').update(binary).digest('hex'), size: binary.length,
   policy: 'EXE + marker + usage only; no data, private runtime, service config, or credentials' };
 writeFileSync(resolve(output, 'release-build.json'), JSON.stringify(result, null, 2) + '\n', { flag: 'wx' });

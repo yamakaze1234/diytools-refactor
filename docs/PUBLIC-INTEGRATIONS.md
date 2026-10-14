@@ -4,7 +4,7 @@
 
 ## 配置位置
 
-配置只从应用实际数据目录的 `data/integrations.json` 读取；开发时同样使用宿主选定的数据目录。此文件禁止提交或包含在 GitHub Release 资产中，也不允许通过构建变量写进 EXE。结构示例见 [integrations.example.json](./integrations.example.json)，示例保留域名不能用于实际连接。
+配置只从应用实际数据目录的 `data/integrations.json` 读取；开发时同样使用宿主选定的数据目录。此文件禁止提交或包含在 Release 附件中，也不允许通过构建变量写进 EXE。结构示例见 [integrations.example.json](./integrations.example.json)，示例保留域名不能用于实际连接。
 
 文件根对象使用 `version: 1`。`cloud` 与 `erp` 都可省略或置为 `null`。只需要本地功能时不创建文件，或只写 `{"version":1}`。
 

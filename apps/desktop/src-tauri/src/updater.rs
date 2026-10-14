@@ -16,6 +16,7 @@ use std::{
 };
 use tauri::{Emitter, Manager};
 pub(crate) mod access;
+mod gitea;
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const MANIFEST_NAME: &str = "diytools-refactor-windows-x86_64.json";
@@ -148,13 +149,19 @@ fn verify_envelope(
         || artifact.size > MAX_BINARY
         || artifact.sha256.len() != 64
         || !artifact.sha256.bytes().all(|c| c.is_ascii_hexdigit())
-        || artifact.urls.len() != 1
+        || artifact.urls.is_empty()
+        || artifact.urls.len() > 2
+        || (artifact.urls.len() == 2 && artifact.urls[0] == artifact.urls[1])
     {
         return Err("更新产物名称/长度/摘要无效".into());
     }
     for url in &artifact.urls {
         let url = Url::parse(url).map_err(|_| "更新下载地址无效")?;
         if !download_url_matches(
+            &url,
+            &format!("refactor-v{}", manifest.version),
+            &artifact.name,
+        ) && !gitea::download_matches(
             &url,
             &format!("refactor-v{}", manifest.version),
             &artifact.name,
@@ -392,7 +399,7 @@ fn release_url(tag: &str) -> Result<Url, String> {
     }
     Ok(url)
 }
-fn check_source(client: &Client, token: Option<&str>) -> Result<Checked, String> {
+fn check_github(client: &Client, token: Option<&str>) -> Result<Checked, String> {
     let release: serde_json::Value =
         serde_json::from_slice(&get_metadata(client, &release_url(CHANNEL_TAG)?, token)?)
             .map_err(|_| "发布信息格式无效")?;
@@ -411,7 +418,7 @@ fn check_source(client: &Client, token: Option<&str>) -> Result<Checked, String>
     })
 }
 // 下载前重新核对版本发布附件与已签名 URL；私有和公开仓库共用附件 API。
-fn artifact_response(
+fn github_artifact_response(
     client: &Client,
     manifest: &Manifest,
     token: Option<&str>,
@@ -431,20 +438,65 @@ fn artifact_response(
     Ok(response)
 }
 
+// 主源成功时完全不读取备用凭据；主源安全校验失败时禁止静默降级。
+fn prefer_primary<T>(
+    primary: Result<Option<T>, String>,
+    fallback: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    match primary {
+        Ok(Some(value)) => Ok(value),
+        Ok(None) => fallback(),
+        Err(error) => Err(error),
+    }
+}
+fn check_source(client: &Client) -> Result<Checked, String> {
+    prefer_primary(gitea::check(client), || {
+        let token = access::resolve()?;
+        check_github(client, token.as_ref().map(access::Token::value))
+            .map_err(|error| format!("Gitea 暂不可用；备用源：{error}"))
+    })
+}
+// 只尝试清单已签名的源；备用下载的实际来源同步呈现给用户。
+fn artifact_response(
+    client: &Client,
+    manifest: &Manifest,
+) -> Result<(reqwest::blocking::Response, String), String> {
+    let tag = format!("refactor-v{}", manifest.version);
+    let signed_source = |gitea_source: bool| {
+        manifest.artifact.urls.iter().any(|text| {
+            Url::parse(text).is_ok_and(|url| {
+                if gitea_source {
+                    gitea::download_matches(&url, &tag, &manifest.artifact.name)
+                } else {
+                    download_url_matches(&url, &tag, &manifest.artifact.name)
+                }
+            })
+        })
+    };
+    let primary = if signed_source(true) {
+        gitea::artifact(client, manifest)?.map(|response| (response, "Gitea".into()))
+    } else {
+        None
+    };
+    prefer_primary(Ok(primary), || {
+        if !signed_source(false) {
+            return Err("Gitea 下载暂不可用，清单未包含备用下载源".into());
+        }
+        let token = access::resolve()?;
+        github_artifact_response(client, manifest, token.as_ref().map(access::Token::value))
+            .map(|response| (response, "GitHub".into()))
+    })
+}
+
 // 无窗口线上验收只写独立输出目录：检查签名并下载核验 EXE，绝不启动或替换程序。
 fn download_probe(output: &Path) -> Result<serde_json::Value, String> {
     fs::create_dir_all(output).map_err(|_| "无法创建更新验收目录")?;
     plain_path(output)?;
     let directory = output.join(uuid::Uuid::new_v4().to_string());
     fs::create_dir(&directory).map_err(|_| "无法创建独立更新验收目录")?;
-    let token = access::resolve()?;
     let client = client()?;
-    let checked = check_source(&client, token.as_ref().map(access::Token::value))?;
-    let response = artifact_response(
-        &client,
-        &checked.manifest,
-        token.as_ref().map(access::Token::value),
-    )?;
+    let checked = check_source(&client)?;
+    let (response, source) = artifact_response(&client, &checked.manifest)?;
     let artifact_path = directory.join(&checked.manifest.artifact.name);
     let mut file = fs::OpenOptions::new()
         .create_new(true)
@@ -458,9 +510,9 @@ fn download_probe(output: &Path) -> Result<serde_json::Value, String> {
     )
     .map_err(|_| "无法保存签名清单")?;
     let report = serde_json::json!({"currentVersion":CURRENT,"version":checked.manifest.version,
-        "source":"GitHub","signatureVerified":true,"sha256Verified":true,"lengthVerified":true,
+        "source":source,"signatureVerified":true,"sha256Verified":true,"lengthVerified":true,
         "artifact":artifact_path,"size":checked.manifest.artifact.size,"sha256":checked.manifest.artifact.sha256,
-        "access":access::status()?,"installed":false,"started":false});
+        "access":if source == "Gitea" { serde_json::json!({"source":"anonymous","configured":false}) } else { serde_json::to_value(access::status()?).map_err(|_| "授权状态编码失败")? },"installed":false,"started":false});
     fs::write(
         directory.join("probe-result.json"),
         serde_json::to_vec_pretty(&report).map_err(|_| "无法保存验收结果")?,
@@ -533,8 +585,7 @@ pub async fn updater_check(app: tauri::AppHandle) -> Result<CheckReport, String>
         let mut inner = state.0.try_lock().map_err(|_| "另一项更新操作正在进行")?;
         inner.checked = None;
         inner.pending = None;
-        let token = access::resolve()?;
-        let checked = check_source(&client()?, token.as_ref().map(access::Token::value))?;
+        let checked = check_source(&client()?)?;
         let available = Version::parse(&checked.manifest.version).map_err(|e| e.to_string())?
             > Version::parse(CURRENT).map_err(|e| e.to_string())?;
         let capability = install_capability();
@@ -605,14 +656,11 @@ pub async fn updater_download(app: tauri::AppHandle) -> Result<DownloadReport, S
         verify_envelope(&checked.envelope, &public_key()?, CURRENT)?;
         let root = executable_root()?.1;
         let client = client()?;
-        let token = access::resolve()?;
         let directory = create_directory(&root)?;
+        let mut download_source = checked.source.clone();
         let outcome = (|| {
-            let response = artifact_response(
-                &client,
-                &checked.manifest,
-                token.as_ref().map(access::Token::value),
-            )?;
+            let (response, source) = artifact_response(&client, &checked.manifest)?;
+            download_source = source;
             let mut file = fs::OpenOptions::new()
                 .create_new(true)
                 .write(true)
@@ -646,7 +694,7 @@ pub async fn updater_download(app: tauri::AppHandle) -> Result<DownloadReport, S
         }
         let report = DownloadReport {
             version: checked.manifest.version.clone(),
-            source: checked.source.clone(),
+            source: download_source,
         };
         inner.pending = Some(Pending { checked, directory });
         Ok(report)
@@ -1041,8 +1089,7 @@ pub fn helper_entry() -> Option<i32> {
         });
     }
     if first == "--check-updates" {
-        let result = access::resolve()
-            .and_then(|token| check_source(&client()?, token.as_ref().map(access::Token::value)));
+        let result = client().and_then(|client| check_source(&client));
         match result {
             Ok(checked) => {
                 println!(

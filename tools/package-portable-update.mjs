@@ -10,19 +10,20 @@ export function publicKeyBase64(key) {
   return Buffer.from(createPublicKey(key).export({ format: 'jwk' }).x, 'base64url').toString('base64');
 }
 // 先限定正式版本号、x64 PE 和大小，再将程序哈希及独立仓库地址签名并本地回验。
-export function makeEnvelope({ binary, version, notes = '', publishedAt = new Date().toISOString(), privateKey }) {
+export function makeEnvelope({ binary, version, notes = '', publishedAt = new Date().toISOString(), privateKey, sources = ['github'] }) {
   if (!/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(version)) throw Error('版本必须为正式语义版本，例如 0.1.1');
   const pe = binary.length >= 64 ? binary.readUInt32LE(0x3c) : 0;
   if (binary.toString('ascii', 0, 2) !== 'MZ' || pe < 64 || pe + 6 > binary.length || binary.readUInt32LE(pe) !== 0x4550 || binary.readUInt16LE(pe + 4) !== 0x8664) throw Error('只接受 Windows x86_64 PE 程序');
   if (binary.length > 512 * 1024 * 1024) throw Error('更新程序超过 512 MiB');
   if (Buffer.byteLength(notes) > 16000) throw Error('更新说明超过 16000 字节');
+  // 只接受内置发行源，禁止将任意网址签入更新清单；默认保留旧客户端单 GitHub 地址格式。
+  if (!Array.isArray(sources) || !sources.length || sources.length > 2 || new Set(sources).size !== sources.length || sources.some(source => !['gitea', 'github'].includes(source))) throw Error('更新来源只允许不重复的 gitea、github');
   const name = `diytools-refactor-${version}-windows-x86_64.exe`;
+  const releaseRoots = { gitea: 'https://gitea.cq360.top/CoreStudio/diy-tools-refactor', github: 'https://github.com/yamakaze1234/diytools-refactor' };
   const payload = {
     schema: 1, appId: 'io.diytools.refactor', channel: 'refactor', platform: 'windows-x86_64',
     version, publishedAt, notes,
-    artifact: { name, size: binary.length, sha256: createHash('sha256').update(binary).digest('hex'), urls: [
-      `https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v${version}/${name}`,
-    ] },
+    artifact: { name, size: binary.length, sha256: createHash('sha256').update(binary).digest('hex'), urls: sources.map(source => `${releaseRoots[source]}/releases/download/refactor-v${version}/${name}`) },
   };
   // 签名覆盖确切的序列化字节；接收方应验证 payload 原文，而不是重排 JSON 后再验证。
   const bytes = Buffer.from(JSON.stringify(payload));

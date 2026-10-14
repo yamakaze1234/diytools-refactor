@@ -38,14 +38,16 @@ $build = Get-Content (Join-Path $output 'release-build.json') -Raw | ConvertFrom
 $archive = Join-Path $output "DIYTools-$version-Windows-x64.zip"
 Compress-Archive -LiteralPath $build.portable -DestinationPath $archive
 $artifact = Join-Path $output $build.artifact
-$manifest = Join-Path $output $build.manifest
+# GitHub 保留旧客户端兼容清单；双来源清单由 Gitea 发布流程使用。
+$manifest = Join-Path $output $build.githubManifest
+$releaseNotes = Join-Path $output $build.releaseNotes
 $commit = git rev-parse HEAD
 Run-Checked git @('push', 'origin', 'HEAD')
-Run-Checked gh @('release', 'create', $tag, $artifact, $archive, $manifest, '--repo', $repository, '--target', $commit, '--title', "DIY Tools $version", '--notes-file', $NotesPath, '--draft')
+Run-Checked gh @('release', 'create', $tag, $artifact, $archive, $manifest, $releaseNotes, '--repo', $repository, '--target', $commit, '--title', "DIY Tools $version", '--notes-file', $releaseNotes, '--draft')
 # 下载已上传附件到新的验证目录，逐文件摘要相等后才发布和更新通道。
 $verify = Join-Path $output 'verify'
 Run-Checked gh @('release', 'download', $tag, '--repo', $repository, '--dir', $verify)
-foreach ($file in @($artifact, $archive, $manifest)) {
+foreach ($file in @($artifact, $archive, $manifest, $releaseNotes)) {
   if ((Get-FileHash -LiteralPath $file).Hash -ne (Get-FileHash -LiteralPath (Join-Path $verify (Split-Path -Leaf $file))).Hash) { throw '远端附件摘要不符，通道未更新' }
 }
 Run-Checked gh @('release', 'edit', $tag, '--repo', $repository, '--draft=false', '--latest')
