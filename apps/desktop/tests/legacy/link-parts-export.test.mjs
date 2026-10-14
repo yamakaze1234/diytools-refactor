@@ -72,7 +72,7 @@ test('保存回执范围准备失败明确标记已保存，不回退或导出�
 
 test('指定单一图种保留命名、完整SPU与每套样式，旧入口默认两张',()=>{
  const configs=[config('1'),config('2')];
- for(const kind of ['long','square','both']){const entries=exportEntries(configs,['a'],kind);assert.equal(entries.length,kind==='both'?4:2);assert.ok(entries.every(e=>e.name.startsWith('888888888888888888_链接a/')));assert.ok(entries.every(e=>e.config.theme==='paper'&&e.config.skuMode==='full'));if(kind!=='both')assert.ok(entries.every(e=>e.config.layout===kind));}
+ for(const kind of ['long','square','both']){const entries=exportEntries(configs,['a'],kind);assert.equal(entries.length,kind==='both'?4:2);assert.ok(entries.every(e=>e.name.startsWith('链接a_')));assert.ok(entries.every(e=>e.config.theme==='paper'&&e.config.skuMode==='full'));if(kind!=='both')assert.ok(entries.every(e=>e.config.layout===kind));}
  assert.equal(exportEntries(configs,['a']).length,4);assert.throws(()=>exportEntries(configs,['a'],'bad'),/请选择/);
 });
 
@@ -80,7 +80,7 @@ test('快照导图跳过再次保存，以1400px渲染选定图种并写出导�
  const snapshots=[config('1'),config('2')],rendered=[],messages=[];let folderFiles,saves=0,downloads=0;
  await exportBatchImages({save:async()=>saves++,getConfigs:()=>{throw Error('不能读后续编辑');},renderImage:async(c,width)=>{rendered.push({c,width});return renderer(c);},saveFolder:async files=>{folderFiles=files;return {directory:'测试文件夹'};},download:()=>downloads++},['a'],message=>messages.push(message),{snapshots,imageKind:'square'});
  assert.equal(saves,0);assert.equal(downloads,0);assert.equal(rendered.length,2);assert.ok(rendered.every(r=>r.width===1400&&r.c.layout==='square'&&r.c.theme==='paper'&&r.c.skuMode==='full'));
- assert.deepEqual(folderFiles.map(f=>f.name),['888888888888888888_链接a/SKU图/888888888888888888_配置1.png','888888888888888888_链接a/SKU图/888888888888888888_配置2.png','导出清单.json']);assert.match(messages.at(-1),/导出 2 张图片/);
+ assert.deepEqual(folderFiles.map(f=>f.name),['888888888888888888_配置1.png','888888888888888888_配置2.png','导出清单.json']);assert.match(messages.at(-1),/导出 2 张图片/);
 });
 
 test('原批量入口仍先保存并默认导出两种图片',async()=>{

@@ -1,5 +1,5 @@
 /** 输出源同步计划：逐字段展示配置差异，核验后应用，并提取受影响的图片导出任务。 */
-import {numberedImageEntries} from './image-export-order.js';
+import {numberedImageEntries,imageFolderName} from './image-export-order.js';
 import {sourceDiff,syncSource} from './source.js';
 import {createConfigPartIndex} from './component-index.js';
 import {selectableComponents} from './component-policy.js';
@@ -43,5 +43,5 @@ const safe=v=>String(v||'未命名').replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').repla
 export function sourceImageEntries(configs){
  const groups=new Map(),folders=new Set();
  for(const c of configs){const key=JSON.stringify([c.shopId,c.productId||c.product||c.spu||'']);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(c);}
- return [...groups.values()].flatMap(rows=>{const first=rows[0],base=`${safe(first.spu||first.productId)}_${safe(first.product)}`;let folder=base,n=2;while(folders.has(folder))folder=base+'_'+n++;folders.add(folder);return numberedImageEntries(rows).flatMap(({config:c,name})=>['long','square'].map(layout=>({name:`${folder}/${layout==='long'?'配置清单图':'SKU图'}/${name}`,config:{...structuredClone(c),layout}})));});
+ return [...groups.values()].flatMap(rows=>{const first=rows[0],base=safe(first.product);let folder=base,n=2;while(folders.has(folder.toLowerCase()))folder=base+'_'+n++;folders.add(folder.toLowerCase());return numberedImageEntries(rows).flatMap(({config:c,name})=>['long','square'].map(layout=>({name:`${imageFolderName(folder,layout)}/${name}`,config:{...structuredClone(c),layout}})));});
 }

@@ -1317,6 +1317,38 @@ pub async fn workbench_read_asset(
         .map_err(|e| e.to_string())?
 }
 // 先校验全部文件名和总体积，再新建独立导出目录，避免覆盖用户已有文件。
+// 只接受 Windows 普通文件名，禁止设备名、尾随点空格和路径穿越。
+fn export_segment_valid(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+    !name.is_empty()
+        && name.encode_utf16().count() <= 160
+        && !name.ends_with(['.', ' '])
+        && !name
+            .chars()
+            .any(|c| c.is_control() || "<>:\"/\\|?*".contains(c))
+        && !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        && !(stem.len() == 4
+            && (stem.starts_with("COM") || stem.starts_with("LPT"))
+            && matches!(stem.as_bytes()[3], b'1'..=b'9'))
+}
+
+// 独占创建建议文件夹，遇同名只加序号，保留用户以前导出的所有图片。
+fn create_export_folder(directory: &Path, name: &str) -> Result<PathBuf> {
+    for index in 1..=1000 {
+        let candidate = directory.join(if index == 1 {
+            name.to_owned()
+        } else {
+            format!("{name}_{index}")
+        });
+        match fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    Err("同名导出目录过多，请选择其他目录".into())
+}
+
 fn export_files(payload: &Value, directory: &Path) -> Result<Value> {
     let rows = payload["files"]
         .as_array()
@@ -1342,11 +1374,10 @@ fn export_files(payload: &Value, directory: &Path) -> Result<Value> {
     let mut total = 0usize;
     for row in rows {
         let name = row["name"].as_str().ok_or("导出文件名无效")?;
-        if name.is_empty()
-            || name.contains(['/', '\\', ':'])
-            || Path::new(name)
-                .components()
-                .any(|c| !matches!(c, Component::Normal(_)))
+        // 前端可传普通文件或“链接名称_图种/文件”，不接受更多层级或绝对路径。
+        let segments = name.split('/').collect::<Vec<_>>();
+        if segments.len() > 2
+            || !segments.iter().all(|segment| export_segment_valid(segment))
             || !names.insert(name.to_lowercase())
         {
             return Err("导出文件名重复或包含路径".into());
@@ -1361,9 +1392,28 @@ fn export_files(payload: &Value, directory: &Path) -> Result<Value> {
         }
         files.push((name.to_owned(), raw));
     }
-    let folder = directory.join(format!("DIY配置导出-{}", unique()));
-    fs::create_dir(&folder).map_err(|e| e.to_string())?;
+    // 写入前检查文件与目录同名，避免写了一半才发现结构冲突。
+    for (name, _) in &files {
+        if let Some((parent, _)) = name.split_once('/')
+            && names.contains(&parent.to_lowercase())
+        {
+            return Err("导出目录与文件同名".into());
+        }
+    }
+    let fallback = format!("DIY配置导出-{}", unique());
+    let suggested = payload["name"].as_str().unwrap_or(&fallback);
+    if !export_segment_valid(suggested) {
+        return Err("导出文件夹名称无效".into());
+    }
+    let folder = create_export_folder(directory, suggested)?;
+    let mut created = HashSet::new();
     for (name, raw) in &files {
+        if let Some((parent, _)) = name.split_once('/')
+            && created.insert(parent.to_lowercase())
+        {
+            // 父目录来自本次独占创建的空目录，拒绝接管已经存在的链接或目录。
+            fs::create_dir(folder.join(parent)).map_err(|e| e.to_string())?;
+        }
         write_new(&folder.join(name), raw)?;
     }
     Ok(
@@ -1943,6 +1993,69 @@ mod tests {
         assert_eq!(
             format!("{:x}", Sha256::digest(fs::read(source).unwrap())),
             format!("{:x}", Sha256::digest(raw.as_bytes()))
+        );
+    }
+    #[test]
+    fn named_export_folders_preserve_previous_files_and_reject_unsafe_paths() {
+        let (_, root) = fixture();
+        let payload = json!({"name":"示例链接_配置图","files":[{"name":"1.png","base64":STANDARD.encode(b"png")} ]});
+        let first = export_files(&payload, &root).unwrap();
+        let second = export_files(&payload, &root).unwrap();
+        assert_eq!(
+            Path::new(first["directory"].as_str().unwrap())
+                .file_name()
+                .unwrap(),
+            "示例链接_配置图"
+        );
+        assert_eq!(
+            Path::new(second["directory"].as_str().unwrap())
+                .file_name()
+                .unwrap(),
+            "示例链接_配置图_2"
+        );
+        assert_eq!(
+            fs::read(root.join("示例链接_配置图/1.png")).unwrap(),
+            b"png"
+        );
+        let nested = export_files(
+            &json!({"name":"两种图片","files":[
+            {"name":"示例链接_配置图/1.png","base64":STANDARD.encode(b"long")},
+            {"name":"示例链接_sku图/1.png","base64":STANDARD.encode(b"sku")}]}),
+            &root,
+        )
+        .unwrap();
+        assert_eq!(nested["count"], 2);
+        assert_eq!(
+            fs::read(root.join("两种图片/示例链接_sku图/1.png")).unwrap(),
+            b"sku"
+        );
+        for name in [
+            "../bad.png",
+            "a/../b",
+            "/a.png",
+            "C:\\a.png",
+            "a/NUL.png",
+            "a./b.png",
+            "a/b/c.png",
+        ] {
+            assert!(
+                export_files(&json!({"files":[{"name":name,"base64":""}]}), &root).is_err(),
+                "{name}"
+            );
+        }
+        assert!(
+            export_files(
+                &json!({"name":"../outside","files":[{"name":"a.png","base64":""}]}),
+                &root
+            )
+            .is_err()
+        );
+        assert!(
+            export_files(
+                &json!({"files":[{"name":"a","base64":""},{"name":"A/b.png","base64":""}]}),
+                &root
+            )
+            .is_err()
         );
     }
     #[test]

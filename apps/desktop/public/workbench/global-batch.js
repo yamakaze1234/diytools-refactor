@@ -1,3 +1,4 @@
+import {imageFolderName} from './image-export-order.js';
 /** 跨链接批量配件维护：查询使用范围、预览替换及文案调整，并导出修改后的图片。 */
 import {markSourceFieldManual} from './source-follow.js';
 import {mountProductSearch} from './product-search.js';
@@ -118,8 +119,9 @@ export function exportEntries(configs,productIds,imageKind='both',{deduplicateNa
  const layouts=imageKind==='both'?['long','square']:['long','square'].includes(imageKind)?[imageKind]:null;
  if(!layouts)throw Error('请选择配置图、SKU 图或两者');
  const groups=productGroups(configs.filter(c=>!c.deletedAt)).filter(g=>productIds.includes(g.id)),entries=[],folders=new Set(),paths=new Set();
- for(const g of groups){if(g.configs.some(c=>!/^\d+$/.test(c.spu||'')))throw Error(`“${g.name}”缺少有效 SPU，请先补齐，或取消自动导出`);let folder=safe(`${g.configs[0].spu}_${g.name}`),base=folder,n=1;while(folders.has(folder))folder=`${base}_${++n}`;folders.add(folder);
-  g.configs.forEach((c,i)=>{const number=/^配置\s*([\d一二三四五六七八九十百]+)$/.exec(c.name||'');const label=number?`配置${number[1]}`:`配置${i+1}`;for(const layout of layouts){const dir=layout==='long'?'配置清单图':'SKU图',base=`${folder}/${dir}/${safe(c.spu+'_'+label)}`;let name=base+'.png',duplicate=1;while(paths.has(name)&&deduplicateNames)name=base+'_'+(++duplicate)+'.png';if(paths.has(name))throw Error(`“${g.name}”存在重复配置编号，请先修改配置名称`);paths.add(name);entries.push({name,config:{...clone(c),layout}});}});
+ for(const g of groups){if(g.configs.some(c=>!/^\d+$/.test(c.spu||'')))throw Error(`“${g.name}”缺少有效 SPU，请先补齐，或取消自动导出`);// 同名链接保留独立目录，比较时忽略大小写以符合 Windows 文件系统。
+ let folder=safe(g.name).slice(0,80),base=folder,n=1;while(folders.has(folder.toLowerCase()))folder=`${base}_${++n}`;folders.add(folder.toLowerCase());
+  g.configs.forEach((c,i)=>{const number=/^配置\s*([\d一二三四五六七八九十百]+)$/.exec(c.name||'');const label=number?`配置${number[1]}`:`配置${i+1}`;for(const layout of layouts){const base=`${imageFolderName(folder,layout)}/${safe(c.spu+'_'+label)}`;let name=base+'.png',duplicate=1;while(paths.has(name)&&deduplicateNames)name=base+'_'+(++duplicate)+'.png';if(paths.has(name))throw Error(`“${g.name}”存在重复配置编号，请先修改配置名称`);paths.add(name);entries.push({name,config:{...clone(c),layout}});}});
  }return entries;
 }
 
@@ -179,13 +181,17 @@ export async function exportBatchImages(api,exportIds,status,options={}){
   const active=()=>{if(options.signal?.aborted)throw options.signal.reason||new DOMException('图片导出已取消','AbortError');};
   active();if(!options.snapshots)await api.save?.();active();const entries=exportEntries(options.snapshots||api.getConfigs(),exportIds,options.imageKind||'both',{deduplicateNames:options.deduplicateNames===true}),files=[],failures=[];
   if(!entries.length)throw Error('本次没有可导出的链接配置');
+  // 单链接单图种直接使用目标文件夹，多链接或两种图保留各自子目录。
+  const directories=[...new Set(entries.map(entry=>entry.name.split('/')[0]))];
+  const name=directories.length===1?directories[0]:`批量导出图片_${Date.now()}`;
+  if(directories.length===1)for(const entry of entries)entry.name=entry.name.slice(name.length+1);
   for(const [i,entry] of entries.entries()){
    status(`配置已保存，正在导出 ${i+1}/${entries.length}：${entry.name}`);active();
    try{const result=await (api.renderImage||renderPoster)(entry.config,1400);active();if(result.overflow)throw Error('图片内容超出，请调整模块或字号');const blob=await new Promise(resolve=>result.canvas.toBlob(resolve,'image/png'));active();if(!blob)throw Error('图片生成失败');const bytes=new Uint8Array(await blob.arrayBuffer());active();files.push({name:entry.name,bytes});}catch(error){active();failures.push({name:entry.name,error:error.message});}
   }
   if(!files.length)throw Error('全部图片生成失败：'+failures.map(f=>f.error).join('；'));
   const count=files.length;files.push({name:'导出清单.json',bytes:new TextEncoder().encode(JSON.stringify({createdAt:new Date().toISOString(),success:files.map(f=>f.name),failures},null,2))});
-  status('修改已保存，正在选择图片导出位置…');active();const name=`批量修改配置图_${Date.now()}`,folder=await (api.saveFolder||saveImageFolder)(files,name,{signal:options.signal});active();
+  status('修改已保存，正在选择图片导出位置…');active();const folder=await (api.saveFolder||saveImageFolder)(files,name,{signal:options.signal});active();
   if(folder?.cancelled){status('修改已保存，已取消图片导出。可点击下方按钮重新导出。');return;}
   if(!folder)api.download(makeZip(files),name+'.zip');
   status(`已保存修改并导出 ${count} 张图片，失败 ${failures.length} 张。${folder?'文件夹：'+folder.directory:'已下载 ZIP。'}${failures.length?'失败详情见导出清单。':''}`);
