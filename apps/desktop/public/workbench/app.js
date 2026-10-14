@@ -87,6 +87,7 @@ import {renderPoster,defaultPosterWidth} from './poster.js';
 import {makeZip} from './zip.js';
 import {numberedImageEntries,imageArchiveName} from './image-export-order.js';
 import {saveImageFolder} from './folder-export.js';
+import {exportSingleImage} from './single-image-export.js';
 import {suggestedName} from './legacy-names.js';
 import {mountNameFormatPreview,mountNameFormatEntry,openNameFormatBatch,applyNameFormatPlan,validateNameFormatPlan} from './name-format-batch.js';
 import {ordinaryConfigs,legacyTemplateConfigs,isLegacyTemplateConfig,templateConfigLabel,migrateSavedTemplates,editableTemplateLibrary} from './template-library.js';
@@ -669,7 +670,7 @@ async function exportCurrent(){
  const source=current();if(!source)return toast('请先选择配置');
  const c=clone(source),width=Number($('#export-width').value)||defaultPosterWidth(source),draft=dirty||!!savePromise||conflict;
  exportJobs++;
- try{const r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容超出，请先调整或切换长图');downloadBlob(await toBlob(r.canvas),filename(c));toast(draft?'PNG 已按当前草稿生成；本机保存另行进行':'PNG 已生成并开始下载');}
+ try{const r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容超出，请先调整或切换长图');toast(await exportSingleImage(await toBlob(r.canvas),filename(c),{download:downloadBlob,draft}));}
  catch(e){toast(e.message);}finally{exportJobs--;scheduleImageSave();}
 }
 // 按配置和版式生成可识别的图片文件名。
@@ -680,7 +681,7 @@ async function batchExportFull(){
  const selectedConfig=current(),layout=selectedConfig.layout,theme=selectedConfig.theme,width=Number($('#export-width').value)||defaultPosterWidth(selectedConfig),skuMode=selectedConfig.skuMode||'dedicated';
  const exportEntries=numberedImageEntries(configs,layout),snapshots=exportEntries.map(({config:c})=>({...clone(c),layout,theme,skuMode})),draft=dirty||!!savePromise||conflict,revision=state.revision,shopId=activeShopId,shopName=currentShop().name;
  exportJobs++;
- try{if(snapshots.length===1){const c=snapshots[0],r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容溢出');downloadBlob(await toBlob(r.canvas),filename(c));toast(draft?'PNG 已按当前草稿生成并开始下载':'PNG 已生成并开始下载');return;}
+ try{if(snapshots.length===1){const c=snapshots[0],r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容溢出');toast(await exportSingleImage(await toBlob(r.canvas),filename(c),{download:downloadBlob,draft}));return;}
  const report={shopId,shop:shopName,revision:draft?null:revision,source:draft?'点击时的当前草稿':'已保存配置',layout,theme,width,entries:exportEntries.map(e=>({file:e.name,config:e.config.name,id:e.config.id,product:e.config.product}))};
  // 任务保存起始快照；关闭业务弹窗或继续编辑都不会替换任务输入。
  const task=startImageExportTask({entries:snapshots.map((config,i)=>({config,name:exportEntries[i].name})),name:imageArchiveName(snapshots,layout),title:'批量配置图片',width,report,download:downloadBlob,renderImage:(config,size)=>imageRenderGate.run(({beforeDraw})=>renderPoster(config,size,{beforeDraw}))});

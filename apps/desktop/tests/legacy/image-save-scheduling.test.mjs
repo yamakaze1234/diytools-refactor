@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
+import {exportSingleImage} from '../../public/workbench/single-image-export.js';
 const app=await fs.readFile(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
 const schedule=app.slice(app.indexOf('function scheduleImageSave(){'),app.indexOf('function openConflict('));
 const exportCode=app.slice(app.indexOf('async function exportCurrent(){'),app.indexOf('function filename('));
@@ -15,8 +16,8 @@ test('saving edited configurations schedules no image work and releases stale pe
 
 test('explicit export downloads the click-time draft directly without an application cache copy',async()=>{
  let config={id:'one',name:'first',layout:'long'},finish;const waits=new Promise(resolve=>finish=resolve),rendered=[],downloads=[];
- const context={current:()=>config,clone:structuredClone,$:()=>({value:'1400'}),defaultPosterWidth:()=>1000,dirty:true,savePromise:null,conflict:false,exportJobs:0,
- imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async(c,w)=>{rendered.push([c,w]);await waits;return{canvas:'canvas'};},toBlob:async()=>({png:true}),filename:c=>c.name+'.png',downloadBlob:(blob,name)=>downloads.push({blob,name}),toast(){},scheduleImageSave(){},request(){throw Error('No intermediate disk cache');}};
+ const context={exportSingleImage:(blob,name,options)=>exportSingleImage(blob,name,{...options,saveFolder:async()=>null}),current:()=>config,clone:structuredClone,$:()=>({value:'1400'}),defaultPosterWidth:()=>1000,dirty:true,savePromise:null,conflict:false,exportJobs:0,
+ imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async(c,w)=>{rendered.push([c,w]);await waits;return{canvas:'canvas'};},toBlob:async()=>new Blob(['png']),filename:c=>c.name+'.png',downloadBlob:(blob,name)=>downloads.push({blob,name}),toast(){},scheduleImageSave(){},request(){throw Error('No intermediate disk cache');}};
  vm.runInNewContext(exportCode,context);const pending=context.exportCurrent();config.name='changed';finish();await pending;
  assert.equal(rendered[0][0].name,'first');assert.equal(rendered[0][1],1400);assert.equal(downloads[0].name,'first.png');assert.equal(context.exportJobs,0);
 });
