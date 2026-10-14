@@ -363,10 +363,10 @@ fn bounded_assets(
     }
 }
 
-/// First connection is local only: consume the packaged, verified migration seed
-/// from this database's own data directory. Never derive publish records from an
-/// unbound nonempty local state or ask the renderer for a filesystem path/token.
-// 首次绑定只消费本数据目录中的已校验准备文件；事务内再次核对成员、版本和原文摘要。
+/// First connection is local only: use the verified migration seed when present,
+/// otherwise bind only a factory-empty workspace for downloading existing records.
+/// Never derive publish records from unbound business data or renderer paths/tokens.
+// 有准备文件时保留迁移流程；无准备文件只允许全新空库从当前成员下载云端已有数据。
 fn connect_seed(
     store: &WorkbenchStore,
     owner: &Value,
@@ -385,13 +385,14 @@ fn connect_seed(
         .parent()
         .ok_or("本机数据目录无效")?
         .join("cloud-bootstrap.json");
-    let file = fs::File::open(&path).map_err(|error| {
-        if error.kind() == std::io::ErrorKind::NotFound {
-            "本机同步准备信息缺失，数据已保留。请更新工作台后重试。".to_string()
-        } else {
-            "无法读取本机同步准备信息，数据已保留。".to_string()
+    let file = match fs::File::open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let status = workbench_store::cloud_checkpoint_bind_empty(store, owner, check_session)?;
+            return Ok(json!({"ok":true,"connected":true,"initialized":true,"imported":false,"checkpoint":status}));
         }
-    })?;
+        Err(_) => return Err("无法读取本机同步准备信息，数据已保留。".into()),
+    };
     let mut bytes = Vec::new();
     file.take(512 * 1024 * 1024 + 1)
         .read_to_end(&mut bytes)
@@ -526,6 +527,8 @@ fn dispatch_bound(
         "load" => {
             let owner = member(runtime)?;
             workbench_store::cloud_checkpoint_authorize(store, &owner, None)?;
+            // 先转换旧上传引用，再给同步引擎建立基线；不改写已生成的云 mutation。
+            workbench_store::normalize_upload_references(store)?;
             return workbench_store::cloud_checkpoint_load(store);
         }
         "commit" => {
@@ -664,6 +667,84 @@ mod tests {
         )
         .unwrap();
         bytes
+    }
+
+    // 与 lib.rs 出厂初始化一致，不能用“删掉所有配置”冒充全新工作区。
+    fn factory_fixture() -> WorkbenchStore {
+        let empty = store();
+        let initial = empty.path.parent().unwrap().join("initial.json");
+        fs::write(&initial, r#"{"revision":0,"configs":[],"templates":[],"sourceCatalog":[],"costSource":[],"caseGallery":[],"shopSettings":{},"logs":[]}"#).unwrap();
+        workbench_store::initialize(&empty.path, &initial, &empty.assets).unwrap()
+    }
+
+    #[test]
+    fn factory_connect_without_seed_binds_empty_checkpoint_idempotently_and_isolates_owner() {
+        let store = factory_fixture();
+        let owner = json!({"uid":"fresh-member","workspaceId":"team"});
+        assert_eq!(connect_seed(&store, &owner, || Ok(())).unwrap()["connected"], true);
+        let first: Value = serde_json::from_str(&workbench_store::cloud_checkpoint_load(&store).unwrap().body).unwrap();
+        let document = &first["document"];
+        assert_eq!(document["cursor"], 0);
+        assert_eq!(document["records"], json!([]));
+        assert_eq!(document["outbox"], json!([]));
+        assert_eq!(document["materializedProjection"], json!([]));
+        assert!(uuid::Uuid::parse_str(document["deviceId"].as_str().unwrap()).is_ok());
+        connect_seed(&store, &owner, || Ok(())).unwrap();
+        let second: Value = serde_json::from_str(&workbench_store::cloud_checkpoint_load(&store).unwrap().body).unwrap();
+        assert_eq!(first, second);
+        assert!(connect_seed(&store, &json!({"uid":"other","workspaceId":"team"}), || Ok(())).is_err());
+        assert!(connect_seed(&store, &json!({"uid":"fresh-member","workspaceId":"other"}), || Ok(())).is_err());
+        let other = factory_fixture();
+        connect_seed(&other, &owner, || Ok(())).unwrap();
+        let third: Value = serde_json::from_str(&workbench_store::cloud_checkpoint_load(&other).unwrap().body).unwrap();
+        assert_ne!(third["document"]["deviceId"], document["deviceId"]);
+    }
+
+    #[test]
+    fn factory_connect_rejects_each_business_collection_unknown_fields_and_archived_data() {
+        let owner = json!({"uid":"u","workspaceId":"w"});
+        for key in ["configs","templates","sourceCatalog","costSource","caseGallery","shopSettings","unknownBusiness"] {
+            let store = factory_fixture();
+            let c = Connection::open(&store.path).unwrap();
+            let raw: String = c.query_row("SELECT document FROM workbench_state", [], |r| r.get(0)).unwrap();
+            let mut doc: Value = serde_json::from_str(&raw).unwrap();
+            doc[key] = json!([{"preserve":true}]);
+            c.execute("UPDATE workbench_state SET document=?1", [doc.to_string()]).unwrap();
+            assert!(connect_seed(&store, &owner, || Ok(())).is_err(), "{key}");
+            assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
+        }
+        for sql in ["UPDATE workbench_log_archive SET document='[{\"old\":true}]'", "CREATE TABLE future_business(value TEXT); INSERT INTO future_business VALUES('kept')", "INSERT INTO workbench_recovery VALUES('draft','now','{}')", "INSERT INTO workbench_history(at,revision,document) VALUES('old',1,'{}')"] {
+            let store = factory_fixture();
+            Connection::open(&store.path).unwrap().execute_batch(sql).unwrap();
+            assert!(connect_seed(&store, &owner, || Ok(())).is_err());
+            assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
+        }
+    }
+
+    #[test]
+    fn factory_connect_rechecks_state_session_and_rolls_back_failed_binding() {
+        use std::cell::Cell;
+        let owner = json!({"uid":"u","workspaceId":"w"});
+        let store = factory_fixture();
+        let calls = Cell::new(0);
+        assert!(connect_seed(&store, &owner, || {
+            calls.set(calls.get() + 1);
+            // connect首次检查、存储事务前、插入前、提交前：最后一次模拟退出。
+            if calls.get() == 4 { Err("session cancelled".into()) } else { Ok(()) }
+        }).is_err());
+        assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
+        let c = Connection::open(&store.path).unwrap();
+        c.execute_batch("CREATE TRIGGER reject_empty_binding BEFORE INSERT ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        assert!(connect_seed(&store, &owner, || Ok(())).is_err());
+        assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
+        c.execute_batch("DROP TRIGGER reject_empty_binding").unwrap();
+        let calls = Cell::new(0);
+        assert!(connect_seed(&store, &owner, || {
+            calls.set(calls.get() + 1);
+            if calls.get() == 2 { c.execute("UPDATE workbench_state SET document=json_set(document,'$.unknownBusiness','concurrent')", []).unwrap(); }
+            Ok(())
+        }).is_err());
+        assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
     }
     #[test]
     fn automatic_connect_uses_fixed_seed_preserves_deletions_outbox_and_is_idempotent() {
@@ -913,8 +994,9 @@ mod tests {
         }
     }
     fn store() -> WorkbenchStore {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../sandbox/windows-acceptance-20261013/cloud-native-review-tests")
+        // 使用短暂存根，避免源码在深层验收副本时使 Win32 测试文件名超过 MAX_PATH。
+        let root = std::env::temp_dir()
+            .join("diy-cloud-native-tests")
             .join(uuid::Uuid::new_v4().to_string());
         fs::create_dir_all(&root).unwrap();
         WorkbenchStore {

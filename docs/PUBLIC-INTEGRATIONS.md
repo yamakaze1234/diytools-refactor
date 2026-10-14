@@ -24,6 +24,12 @@
 
 ERP 网页未配置返回 `ERP_NOT_CONFIGURED`；缺少可选 worker 返回 `ERP_RUNTIME_UNAVAILABLE:`；缺少或不兼容的本机适配器返回 `PACKAGE_UNAVAILABLE`。这些只限制 ERP 功能，本地工作台继续使用。
 
+## 新电脑接收云端数据
+
+从 0.2.3 起，已配置服务的全新空工作台在成员登录后建立该成员的本机同步检查点，使用新的设备标识和零游标接收云端数据。首次下载前不会把空工作台发布到团队。接入与队列持久化为同一事务；已有资料或不同成员归属不会被自动清空或改绑。
+
+管理员可在内部单独分发 integrations.json 和所需私有运行时，不能把这些文件上传公开仓库或 Release。内部新电脑包不应携带个人会话、凭据、原成员同步检查点或本机数据库。
+
 ## ERP 可选运行时
 
 Windows 正式版仅从本机 `data/runtime/erp-worker.exe` 启动可选运行时，不内嵌私有公司包，不从页面指定路径，不自动下载安装。开发模式可回退到 `services/erp-worker/.venv` 的 Python，运行公开的通用 JSONL 服务。

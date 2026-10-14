@@ -31,6 +31,8 @@ mod lazy_workspace;
 mod cache;
 #[path = "workbench_store/image_cache.rs"]
 mod image_cache;
+#[path = "workbench_store/upload_assets.rs"]
+mod upload_assets;
 #[cfg(test)]
 #[path = "workbench_store/log_access_tests.rs"]
 mod log_access_tests;
@@ -40,12 +42,20 @@ mod log_access_tests;
 pub fn cloud_checkpoint_load(store: &WorkbenchStore) -> Result<ApiResponse> {
     cloud_state::load(store)
 }
+// 仅在云身份授权后修复本机旧原图引用；云检查点和待发队列仍由同步引擎管理。
+pub fn normalize_upload_references(store: &WorkbenchStore) -> Result<Value> {
+    upload_assets::normalize(store)
+}
 // 委托统一云检查点事务，避免同步队列和工作台正文分开提交。
 pub fn cloud_checkpoint_commit(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse> {
     cloud_state::commit(store, input)
 }
 pub fn cloud_checkpoint_status(store: &WorkbenchStore) -> Result<Value> {
     cloud_state::status(store)
+}
+// 新同事只允许把出厂空工作区绑定到已认证成员，已有业务数据须使用明确的接入方案。
+pub fn cloud_checkpoint_bind_empty(store: &WorkbenchStore, member: &Value, check_session: impl Fn() -> Result<()>) -> Result<Value> {
+    cloud_state::bind_empty(store, member, check_session)
 }
 pub fn cloud_checkpoint_authorize(store: &WorkbenchStore, member: &Value, request: Option<&Value>) -> Result<()> {
     cloud_state::authorize(store, member, request)
@@ -848,18 +858,7 @@ fn save_image(store: &WorkbenchStore, endpoint: &str, input: &Value) -> Result<A
     if !png && !jpeg {
         return Ok(failure(400, "请选择 PNG 或 JPG 图片"));
     }
-    let folder = if endpoint == "/api/image" {
-        "saved"
-    } else {
-        "uploads"
-    };
-    let name = format!(
-        "{}-{}.{}",
-        unique(),
-        format!("{:x}", Sha256::digest(&raw))[..16].to_owned(),
-        if png { "png" } else { "jpg" }
-    );
-    let mut receipt = json!({"url":format!("/{folder}/{name}")});
+    let mut receipt = json!({});
     // Keep the read transaction alive until the image is fully written, so a concurrent save
     // cannot validate one revision and then publish a different revision's image.
     let mut c = db(&store.path)?;
@@ -885,7 +884,7 @@ fn save_image(store: &WorkbenchStore, endpoint: &str, input: &Value) -> Result<A
         receipt["height"] = json!(u32::from_be_bytes(raw[20..24].try_into().unwrap()));
         receipt["url"] = json!(image_cache::save(&tx, store, input, &raw, chrono::Utc::now().timestamp())?);
     } else {
-        write_new(&store.assets.join(folder).join(name), &raw)?;
+        receipt["url"] = json!(upload_assets::save(store, &raw)?);
     }
     tx.commit().map_err(|e| e.to_string())?;
     Ok(response(200, receipt))

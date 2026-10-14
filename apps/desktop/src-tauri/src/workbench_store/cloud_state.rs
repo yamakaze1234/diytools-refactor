@@ -86,6 +86,61 @@ pub(super) fn status(store: &WorkbenchStore) -> Result<Value> {
     status_connection(&tx)
 }
 
+// 与程序首次启动写入的默认正文严格比较；未知字段也不能被当成空工作区忽略。
+fn check_factory_empty(c: &Connection) -> Result<()> {
+    let expected = json!({"revision":0,"configs":[],"templates":[],"sourceCatalog":[],"costSource":[],"caseGallery":[],"shopSettings":{}});
+    let reject = "本机同步准备信息缺失，且本机已有数据；已保留全部内容，不能自动绑定空工作区。";
+    // 未来存储迁移须显式适配空库契约，不能按旧表结构误判更高版本的数据库。
+    if c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())? != 0 { return Err("本机数据库版本不支持自动空库接入，请更新程序后重试。".into()); }
+    if state(c)? != expected { return Err(reject.into()); }
+    let archive: String = c.query_row("SELECT document FROM workbench_log_archive WHERE id=1", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if serde_json::from_str::<Value>(&archive).map_err(|e| e.to_string())? != json!([]) { return Err(reject.into()); }
+    let histories: Vec<String> = {
+        let mut q = c.prepare("SELECT document FROM workbench_history").map_err(|e| e.to_string())?;
+        q.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?.collect::<std::result::Result<_,_>>().map_err(|e| e.to_string())?
+    };
+    if histories.len() != 1 { return Err(reject.into()); }
+    let imported: Value = serde_json::from_str(&histories[0]).map_err(|e| e.to_string())?;
+    if imported["type"] != "import" || imported["configCount"] != 0 || imported["logCount"] != 0 { return Err(reject.into()); }
+    // 检查所有其他持久表，包含恢复草稿、历史版本、ERP预览和未来新增的业务表。
+    // 只放行明确的投影/缓存维护元数据，不能仅凭 configs=[] 认定新库。
+    let tables: Vec<String> = {
+        let mut q = c.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").map_err(|e| e.to_string())?;
+        q.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?.collect::<std::result::Result<_,_>>().map_err(|e| e.to_string())?
+    };
+    for table in tables {
+        if ["workbench_state","workbench_log_archive","workbench_history","workbench_state_header","workbench_config_projection_meta","workbench_cache_maintenance"].contains(&table.as_str()) { continue; }
+        let sql = format!("SELECT EXISTS(SELECT 1 FROM \"{}\")", table.replace('"', "\"\""));
+        if c.query_row(&sql, [], |r| r.get::<_, bool>(0)).map_err(|e| e.to_string())? { return Err(reject.into()); }
+    }
+    Ok(())
+}
+
+pub(super) fn bind_empty(store: &WorkbenchStore, member: &Value, check_session: impl Fn() -> Result<()>) -> Result<Value> {
+    let uid = identity(member, "uid")?;
+    let workspace = identity(member, "workspaceId")?;
+    let mut c = db(&store.path)?;
+    schema(&c)?;
+    check_session()?;
+    let tx = c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let (_, existing) = stored(&tx)?;
+    if !existing.is_null() {
+        if existing["uid"] != uid || existing["workspaceId"] != workspace { return Err("请使用当前数据所属的成员账号登录".into()); }
+        check_session()?;
+        return status_connection(&tx);
+    }
+    check_factory_empty(&tx)?;
+    // 首次队列和共享基线均为空，不创建任何上传请求，后续引擎从 cursor=0 拉取。
+    let document = json!({"format":1,"uid":uid,"workspaceId":workspace,"deviceId":uuid::Uuid::new_v4().to_string(),"cursor":0,"localRevision":0,"records":[],"outbox":[],"materializedProjection":[],"origin":"empty-workspace"});
+    validate_document(&document, &Value::Null)?;
+    check_session()?;
+    tx.execute("INSERT INTO workbench_cloud_state VALUES(1,1,?1)", [document.to_string()]).map_err(|e| e.to_string())?;
+    check_session()?;
+    let status = status_connection(&tx)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(status)
+}
+
 // 直接查询状态标量和冲突数量，状态栏不需要反序列化完整业务正文。
 fn status_connection(c: &Connection) -> Result<Value> {
     let row = c.query_row(
