@@ -1,3 +1,4 @@
+import DiagnosticExport from './DiagnosticExport';
 /** 启动登录表单：展示鉴权与准备阶段，提供登录、重试和退出会话入口。 */
 import { useState } from 'react';
 import type { FormEvent } from 'react';
@@ -52,6 +53,7 @@ export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogou
           <button type="submit" className="startup-login-submit" disabled={state.busy}>{state.busy ? '请稍候…' : '登录'}</button>
           {state.error && <button type="button" className="startup-login-other" disabled={state.busy} onClick={() => void onRetry()}>重新检查登录状态</button>}
         </form>}
+      {desktop && <DiagnosticExport />}
       <p className="startup-login-storage">配置先保存在本机，登录后自动同步。</p>
     </section>
   </main>;

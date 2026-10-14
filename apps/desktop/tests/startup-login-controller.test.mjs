@@ -154,3 +154,11 @@ test('failed projection never writes native state or starts cloud sync',async()=
  assert.equal(env.controller.status().phase,'choosing-data');assert.match(env.controller.status().error,/重叠冲突/);
  assert(!env.calls.some(c=>['migrateLegacyApply','connect','call'].includes(c.action)));
 });
+
+// 迁移原图缺失只在状态中保留数量，保留进入工作台后的提示。
+test('legacy missing image count survives preparation without recording paths',async()=>{
+ let first=true;
+ const env=fixture(action=>action==='login'?answer({authenticated:true,member}):action==='migrateLegacy'?(first=false,answer({initialized:true,summary:{missingImages:2,privatePath:'must-not-leak'}})):answer({initialized:true}),true,{firstUse:()=>answer({required:first})});
+ await env.controller.login('account','secret');await env.controller.chooseData('legacy');
+ assert.equal(env.controller.status().phase,'ready');assert.equal(env.controller.status().migrationMissingImages,2);assert(!JSON.stringify(env.controller.status()).includes('must-not-leak'));
+});

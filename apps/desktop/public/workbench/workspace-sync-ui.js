@@ -14,7 +14,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  const conflictCount=view=>Number(view.checkpoint.conflicts||view.summary?.conflicts||0);
  const pendingText=view=>typeof view.summary?.pending==='number'?`${view.summary.pending} 项`:view.checkpoint.localChangesPending?'有本机修改等待同步':'正在检查';
  const recentText=view=>{const value=view.checkpoint.lastSyncedAt||view.summary?.lastSyncedAt||lastSyncedAt;if(!value)return'尚未同步';const date=new Date(value);return Number.isNaN(date.getTime())?'尚未同步':date.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});};
- function showError(error){const text=error?.message||String(error);toast(text);const node=$('#cloud-message');if(node)node.textContent=text;}
+ function showError(error){const text=error?.message||String(error);toast(text);const node=$('#cloud-message');if(node){node.className='error';node.textContent=text;}}
  function render(view){
   if(wasRunning&&!view.running&&view.summary&&!view.error)lastSyncedAt=new Date().toISOString();wasRunning=view.running;
   const member=view.session.member;
@@ -22,7 +22,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   label.textContent=!available||localOnly(view)?'本机保存':view.running?(phase||'同步中…'):view.error?'同步未完成':!view.session.authenticated?'登录已失效':conflictCount(view)?'有同步冲突':!view.checkpoint.initialized?'正在准备同步':view.automatic?'自动同步已开启':'自动同步已暂停';
   label.title=localOnly(view)?'云同步未配置，配置保存在本机':view.error||'配置先保存在本机；登录后自动同步';
   operator.textContent=member?.name||(localOnly(view)?'本机工作台':'请登录');operator.title='成员与同步';onMember?.(member?{...member,name:member.name||'成员'}:null);
-  const message=$('#cloud-message');if(message)message.textContent=localOnly(view)?'':view.error||(view.running?(phase||'正在同步，请稍候…'):!view.session.authenticated?'登录已失效，当前输入仍保留。':'' );
+  const message=$('#cloud-message');if(message){message.className=view.error?'error':'hint';message.textContent=localOnly(view)?'':view.error||(view.running?(phase||'正在同步，请稍候…'):!view.session.authenticated?'登录已失效，当前输入仍保留。':'' );}
   const pending=$('#cloud-pending');if(pending)pending.textContent=pendingText(view);
   const recent=$('#cloud-recent');if(recent)recent.textContent=recentText(view);
   for(const node of document.querySelectorAll('[data-cloud-idle]'))node.disabled=view.running||leaving||cleaning;
@@ -36,8 +36,11 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   phase=progress.phase==='upload'?`正在上传修改：本批 ${count} 项，已处理 ${completed} 项…`
    :progress.phase==='assets-upload'?`正在检查并上传原图：本批 ${count} 张…`
    :progress.phase==='assets-download'?`正在接收原图：本批 ${count} 张…`
-   :progress.phase==='download'?'正在接收配置更新…'
-   :progress.phase==='checkpoint'?'正在保存同步结果…'
+   :progress.phase==='download-request'?`正在检查第 ${progress.page} 页更新，已接收 ${progress.received} 条变更…`
+   :progress.phase==='download'?`已接收 ${progress.received} 条变更（第 ${progress.page} 页），同步序号 ${progress.cursor} / ${progress.total}…`
+   :progress.phase==='checkpoint-request'?`正在下载当前数据：第 ${progress.page} 页，已接收 ${progress.received} 项${progress.attempt>1?'（云端变化后重新读取）':''}…`
+   :progress.phase==='checkpoint'?(Number.isSafeInteger(progress.page)&&Number.isSafeInteger(progress.received)?`已接收当前数据 ${progress.received} 项（第 ${progress.page} 页）…`:'正在保存同步结果…')
+   :progress.phase==='checkpoint-commit'?`正在将 ${progress.received} 项数据保存到本机…`
    :progress.phase==='assets'?'正在同步图片…':'正在同步…';
   render(controller.status());
  }});
@@ -117,8 +120,10 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  async function open(){
   // 先显示已知状态，避免打开面板也排队等待上传或一次额外的保存。
   const view=controller.status(),member=view.session.member;
-  openDialog('数据与同步',`<p>配置先保存在本机，登录后每 2 小时自动同步；本机缓存每 3 天自动清理。</p>${localOnly(view)?'<p>云同步未配置，当前使用本机保存。</p>':!available?'<p>请在 Windows 工作台中使用同步。</p>':!view.session.authenticated?'<p>登录已失效，当前输入仍保留。</p><button id="cloud-logout" class="primary">保存并重新登录</button>':`<p>成员：${esc(member?.name||'成员')}</p><p>最近同步：<span id="cloud-recent"></span></p><p>待同步：<span id="cloud-pending"></span></p><div class="actions"><button id="cloud-sync-now" class="primary" data-cloud-idle>立即同步</button><button id="cloud-pause">${view.automatic?'暂停同步':'继续同步'}</button><button id="cloud-conflicts" data-cloud-idle ${conflictCount(view)?'':'hidden'}>处理冲突</button><button id="cloud-logout">退出登录</button></div>`}<p id="cloud-message" class="error" role="status"></p><p class="hint">同步在后台进行，可关闭此窗口继续编辑，也可查看历史和缓存；还原、清理需等本轮同步完成。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-close">关闭</button></div>`);
+  openDialog('数据与同步',`<p>配置先保存在本机，登录后每 2 小时自动同步；本机缓存每 3 天自动清理。</p>${localOnly(view)?'<p>云同步未配置，当前使用本机保存。</p>':!available?'<p>请在 Windows 工作台中使用同步。</p>':!view.session.authenticated?'<p>登录已失效，当前输入仍保留。</p><button id="cloud-logout" class="primary">保存并重新登录</button>':`<p>成员：${esc(member?.name||'成员')}</p><p>最近同步：<span id="cloud-recent"></span></p><p>待同步：<span id="cloud-pending"></span></p><div class="actions"><button id="cloud-sync-now" class="primary" data-cloud-idle>立即同步</button><button id="cloud-pause">${view.automatic?'暂停同步':'继续同步'}</button><button id="cloud-conflicts" data-cloud-idle ${conflictCount(view)?'':'hidden'}>处理冲突</button><button id="cloud-logout">退出登录</button></div>`}<p id="cloud-message" class="error" role="status"></p><p class="hint">同步在后台进行，可关闭此窗口继续编辑，也可查看历史和缓存；还原、清理需等本轮同步完成。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-diagnostics">导出诊断日志</button><button id="cloud-close">关闭</button></div>`);
   $('#local-cache').onclick=guard(openCache);$('#offline-history').onclick=history.open;$('#offline-restore').onclick=history.restore;$('#offline-legacy-history').onclick=legacy.open;$('#cloud-close').onclick=close;
+  // 诊断导出独立于同步/保存互斥，下载卡住时仍可点击；取消不显示成功。
+  $('#cloud-diagnostics').onclick=async()=>{const button=$('#cloud-diagnostics');button.disabled=true;try{if(!window.workbenchExportDiagnostics)throw Error('诊断导出需要桌面程序');const result=await window.workbenchExportDiagnostics();toast(result==='saved'?'诊断日志已保存，不含账号与配置内容':'已取消导出');}catch{toast('诊断日志未保存，请重新选择可写目录');}finally{if($('#cloud-diagnostics')===button)button.disabled=false;}};
   if($('#cloud-logout'))$('#cloud-logout').onclick=guard(leave);
   if($('#cloud-sync-now'))$('#cloud-sync-now').onclick=guard(async()=>{await controller.run(true);toast('本轮同步完成');});
   if($('#cloud-conflicts'))$('#cloud-conflicts').onclick=guard(showConflicts);

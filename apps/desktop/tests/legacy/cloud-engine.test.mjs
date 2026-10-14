@@ -93,6 +93,88 @@ test('invalid seq/page/head cannot advance persisted cursor',async()=>{for(const
 test('fixed head remains stable across multiple pages',async()=>{const h=harness({onCall(req,api){if(req.action==='sync.pull'){if(req.payload.cursor===1)return {ok:true,headSeq:3,nextCursor:2,hasMore:true,changes:[change({...rowData(api),footer:'a'},2,2)]};assert.equal(req.payload.headSeq,3);return {ok:true,headSeq:4,nextCursor:3,hasMore:true,changes:[change({...rowData(api),footer:'b'},3,3)]};}}});await assert.rejects(h.engine.run({member,upload:false}));assert.equal(h.current.document.cursor,2);assert.equal(h.current.state.configs[0].footer,'a');});
 test('snapshot atomically stages complete pages and rebases offline edit',async()=>{const h=harness({onCall(req,api){if(req.action==='sync.pull'){return req.payload.cursor<10?{ok:false,code:'SNAPSHOT_REQUIRED'}:{ok:true,headSeq:11,nextCursor:11,hasMore:false,changes:req.payload.cursor===10?[change({...rowData(api),warranty:'后续增量'},3,11)]:[]};}if(req.action==='sync.snapshot'){if(req.payload.cursor===null)return {ok:true,checkpointSeq:10,records:[{...change({...rowData(api),footer:'远端字段'},2),seq:undefined}],nextCursor:['configuration','c1'],hasMore:true};assert.equal(api.current.document.cursor,1);assert.equal(req.payload.checkpointSeq,10);return {ok:true,checkpointSeq:10,records:[{type:'workspace_meta',id:'root',version:1,data:copy(api.current.document.records.find(r=>r.type==='workspace_meta').base)}],nextCursor:['workspace_meta','root'],hasMore:false};}}});h.edit(s=>s.configs[0].name='离线名');await h.engine.run({member,upload:false});assert.equal(h.current.document.cursor,11);assert.equal(h.current.state.configs[0].name,'离线名');assert.equal(h.current.state.configs[0].footer,'远端字段');assert.equal(h.current.state.configs[0].warranty,'后续增量');});
 test('snapshot failure, duplicate rows and changed checkpoint preserve cursor',async()=>{for(const mode of ['failure','duplicate','changed']){let page=0;const h=harness({onCall(req,api){if(req.action==='sync.pull')return {ok:false,code:'SNAPSHOT_REQUIRED'};if(req.action==='sync.snapshot'){page++;if(page===1)return {ok:true,checkpointSeq:10,records:[change(rowData(api),2)],nextCursor:['configuration','c1'],hasMore:true};if(mode==='failure')throw Error('断线');if(mode==='duplicate')return {ok:true,checkpointSeq:10,records:[change(rowData(api),2)],nextCursor:['configuration','c1'],hasMore:false};return {ok:true,checkpointSeq:11,records:[],nextCursor:['configuration','c1'],hasMore:false};}}});await assert.rejects(h.engine.run({member,upload:false}));assert.equal(h.current.document.cursor,1);}});
+
+test('empty first download uses current snapshot instead of replaying all historical changes',async()=>{
+ const fresh=fixture();fresh.state.configs=[];fresh.document.records=[];fresh.document.materializedProjection=[];fresh.document.cursor=0;
+ const config=fixture().document.records[0].base,events=[],rows=Array.from({length:120},(_,i)=>({type:'configuration',id:'c'+String(i).padStart(3,'0'),version:7,data:{...copy(config),id:'c'+String(i).padStart(3,'0'),name:'current-'+i}}));
+ rows.push({type:'workspace_meta',id:'root',version:1,data:{format:2,counts:{configuration:120},createdAt:'2026-01-01T00:00:00Z'}});
+ const h=harness({snapshot:fresh,onProgress:event=>events.push(event),onCall(req,api){
+  if(req.action==='sync.snapshot'){
+   assert.equal(api.current.document.cursor,0);assert.equal(api.current.state.configs.length,0);
+   const start=req.payload.cursor===null?0:100,records=rows.slice(start,start+100),last=records.at(-1);
+   return{ok:true,checkpointSeq:63251,records,nextCursor:[last.type,last.id],hasMore:start+100<rows.length};
+  }
+  if(req.action==='sync.pull'){
+   assert.equal(req.payload.cursor,63251,'fresh client must skip superseded historical versions');
+   return{ok:true,headSeq:63251,nextCursor:63251,hasMore:false,changes:[]};
+  }
+ }});
+ await h.engine.run({member,upload:false});
+ assert.deepEqual(h.calls.map(req=>req.action),['sync.snapshot','sync.snapshot','sync.pull']);assert.equal(h.current.state.configs.length,120);
+ assert.equal(h.current.document.cursor,63251);assert.equal(h.current.document.records.length,121);assert.equal(h.commits,2);
+ assert.ok(events.some(event=>event.phase==='checkpoint'&&event.received===121&&event.page===2));
+});
+
+test('initial snapshot interruption preserves empty cursor and retries without any upload',async()=>{
+ const fresh=fixture();fresh.state.configs=[];fresh.document.records=[];fresh.document.materializedProjection=[];fresh.document.cursor=0;
+ let calls=0;const h=harness({snapshot:fresh,onCall(req){assert.equal(req.action,'sync.snapshot');calls++;if(calls===1)return{ok:true,checkpointSeq:100,records:[change(fixture().document.records[0].base,1)],nextCursor:['configuration','c1'],hasMore:true};throw Error('snapshot network interrupted');}});
+ await assert.rejects(h.engine.run({member,upload:false}),/interrupted/);
+ assert.equal(h.current.document.cursor,0);assert.deepEqual(h.current.document.records,[]);assert.equal(h.current.state.configs.length,0);assert.equal(h.commits,0);
+});
+
+test('pause during the final initial snapshot response does not publish a partial first workspace',async()=>{
+ const fresh=fixture();fresh.state.configs=[];fresh.document.records=[];fresh.document.materializedProjection=[];fresh.document.cursor=0;
+ const h=harness({snapshot:fresh,onCall(req){assert.equal(req.action,'sync.snapshot');h.engine.stop();return{ok:true,checkpointSeq:100,records:[change(fixture().document.records[0].base,1)],nextCursor:['configuration','c1'],hasMore:false};}});
+ await assert.rejects(h.engine.run({member,upload:false}),error=>error.code==='SYNC_STOPPED');
+ assert.equal(h.current.document.cursor,0);assert.equal(h.commits,0);assert.equal(h.current.state.configs.length,0);
+});
+
+test('cursor zero with existing local edits keeps incremental merge instead of fresh snapshot',async()=>{
+ for(const unaligned of [false,true]){
+  const current=fixture();current.document.cursor=0;current.document.records=unaligned?[]:current.document.records.map(row=>({...row,version:0,base:null}));if(unaligned)current.document.materializedProjection=[];
+  const h=harness({snapshot:current,onCall(req){assert.equal(req.action,'sync.pull');return{ok:true,headSeq:0,nextCursor:0,hasMore:false,changes:[]};}});
+  await h.engine.run({member,upload:false});assert.equal(h.current.state.configs[0].name,'旧名');assert.equal(h.current.document.records[0].base,null);
+ }
+});
+
+test('unfinished download from empty origin resumes via snapshot once, then remains incremental after completion',async()=>{
+ const partial=fixture();partial.document.origin='empty-workspace';partial.document.cursor=300;
+ const h=harness({snapshot:partial,onCall(req,api){
+  if(req.action==='sync.snapshot')return{ok:true,checkpointSeq:900,records:api.current.document.records.map(row=>({type:row.type,id:row.id,version:row.version+1,data:{...copy(row.base),...(row.type==='configuration'?{name:'latest snapshot'}:{})}})),nextCursor:['workspace_meta','root'],hasMore:false};
+  assert.equal(req.action,'sync.pull');assert.equal(req.payload.cursor,900);return{ok:true,headSeq:900,nextCursor:900,hasMore:false,changes:[]};
+ }});
+ await h.engine.run({member});assert.equal(h.current.state.configs[0].name,'latest snapshot');assert.equal(h.current.document.origin,'empty-workspace');assert.ok(h.current.document.lastSyncedAt);
+ assert.deepEqual(h.calls.map(req=>req.action),['sync.snapshot','sync.pull','sync.pull']);
+ await h.engine.run({member,upload:false});assert.equal(h.calls.filter(req=>req.action==='sync.snapshot').length,1);
+});
+
+test('partial download with missing origin, migration origin, completed sync, conflict or local draft never switches to snapshot',async()=>{
+ for(const reason of ['missing-origin','migration','synced','draft','unaligned-edit','conflict']){
+  const partial=fixture();partial.document.origin='empty-workspace';partial.document.cursor=300;
+  if(reason==='missing-origin')delete partial.document.origin;
+  if(reason==='migration')partial.document.origin='cutover-preflight';
+  if(reason==='synced')partial.document.lastSyncedAt='2026-10-14T01:00:00Z';
+  if(reason==='draft'){partial.document.records[0].draft.name='local draft';partial.state.configs[0].name='local draft';partial.document.materializedProjection=projectWorkspace(partial.state);}
+  if(reason==='unaligned-edit')partial.state.configs[0].name='unsynchronized local edit';
+  if(reason==='conflict'){const row=partial.document.records[0];row.conflict={fields:['name'],remote:{type:row.type,id:row.id,version:row.version,data:copy(row.base)}};}
+  const originalName=partial.state.configs[0].name;
+  const h=harness({snapshot:partial,onCall(req){assert.equal(req.action,'sync.pull',reason);return{ok:true,headSeq:300,nextCursor:300,hasMore:false,changes:[]};}});
+  await h.engine.run({member,upload:false});assert.equal(h.current.state.configs[0].name,originalName,reason);
+ }
+});
+
+test('local edit arriving during partial first snapshot is preserved by checkpoint CAS merge',async()=>{
+ const partial=fixture();partial.document.origin='empty-workspace';partial.document.cursor=300;
+ const h=harness({snapshot:partial,onCall(req,api){
+  if(req.action==='sync.snapshot'){
+   api.edit(state=>{state.configs[0].footer='typed while downloading';});
+   return{ok:true,checkpointSeq:900,records:partial.document.records.map(row=>({type:row.type,id:row.id,version:row.version+1,data:{...copy(row.base),...(row.type==='configuration'?{name:'snapshot name'}:{})}})),nextCursor:['workspace_meta','root'],hasMore:false};
+  }
+  assert.equal(req.action,'sync.pull');return{ok:true,headSeq:900,nextCursor:900,hasMore:false,changes:[]};
+ }});
+ await h.engine.run({member,upload:false});assert.equal(h.current.state.configs[0].footer,'typed while downloading');assert.equal(h.current.state.configs[0].name,'snapshot name');
+ assert.equal(h.current.document.records.find(row=>row.id==='c1').draft.footer,'typed while downloading');assert.equal((await h.engine.status()).pending,1);
+});
 test('partial batch persists confirmed result and leaves failed immutable outbox',async()=>{const s=fixture();s.state.configs.push({...copy(s.state.configs[0]),id:'c2'});s.document.materializedProjection=projectWorkspace(s.state);s.document.records.push({...copy(s.document.records[0]),id:'c2',base:{...copy(s.document.records[0].base),id:'c2'},draft:{...copy(s.document.records[0].draft),id:'c2'}});const h=harness({snapshot:s,onCall(req){if(req.action==='sync.pushBatch')return {ok:true,results:req.payload.requests.map((r,i)=>i===0?{ok:true,mutationId:r.payload.mutationId,record:{type:r.payload.entityType,id:r.payload.entityId,version:2,data:r.payload.after}}:{ok:false,code:'RETRYABLE'})};}});h.edit(s=>s.configs.forEach(c=>c.name='新'));await assert.rejects(h.engine.run({member}),/RETRYABLE/);assert.equal(h.current.document.outbox.length,1);assert.equal(h.current.document.records.find(r=>r.id==='c1').version,2);assert.equal(h.current.document.records.find(r=>r.id==='c2').version,1);});
 test('wrong identity/version/mutation and expired receipt retain original outbox',async()=>{for(const mode of ['identity','version','mutation','expired']){const h=harness({onCall(req){if(req.action==='sync.pushBatch'){const r=req.payload.requests[0],p=r.payload;return {ok:true,results:[mode==='expired'?{ok:false,code:'RECEIPT_EXPIRED'}:{ok:true,mutationId:mode==='mutation'?'other':p.mutationId,record:{type:'configuration',id:mode==='identity'?'other':p.entityId,version:mode==='version'?0:2,data:p.after}}]};}}});h.edit(s=>s.configs[0].name='新');await assert.rejects(h.engine.run({member}));assert.equal(h.current.document.outbox.length,1);assert.equal(h.current.state.configs[0].name,'新');}});
 test('local image blocks push without uploader; uploader covers pending and immutable refs',async()=>{const url='/uploads/'+'a'.repeat(64)+'.png';const h=harness();h.edit(s=>s.configs[0].caseImage=url);await assert.rejects(h.engine.run({member}),/原图上传/);assert.equal(h.calls.filter(r=>r.action==='sync.pushBatch').length,0);assert.equal(h.current.state.configs[0].caseImage,url);let verified=false;const a=harness({downloadAssets(){},uploadAssets(payload){assert.deepEqual(payload.urls,[url]);verified=true;},onCall(req){if(req.action==='sync.pushBatch')assert.equal(verified,true);}});a.edit(s=>s.configs[0].caseImage=url);await a.engine.run({member});assert.equal(a.current.document.outbox.length,0);});

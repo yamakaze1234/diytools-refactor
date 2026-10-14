@@ -2158,3 +2158,21 @@ mod tests {
         assert_eq!(status["scope"], "local-state");
     }
 }
+// 诊断 JSON 复用原生导出契约：不以图片计数判断是否写盘。
+#[cfg(test)]
+mod diagnostic_export_tests {
+    use super::*;
+    #[test]
+    fn diagnostics_json_export_writes_exact_text_and_acknowledges_file() {
+        use base64::Engine;
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../sandbox/diagnostic-export-20261014").join(uuid::Uuid::new_v4().to_string());
+        fs::create_dir_all(&root).unwrap();
+        let text = br#"{"schema":1,"privacy":"metadata-only","events":[]}"#;
+        let payload = json!({"name":"diagnostics-test","files":[{"name":"diagnostics.json","base64":base64::engine::general_purpose::STANDARD.encode(text)}]});
+        let result = export_files(&payload, &root).unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["count"], 0);
+        assert_eq!(result["files"][0], "diagnostics.json");
+        assert_eq!(fs::read(PathBuf::from(result["directory"].as_str().unwrap()).join("diagnostics.json")).unwrap(), text);
+    }
+}

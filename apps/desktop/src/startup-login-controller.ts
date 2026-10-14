@@ -1,3 +1,4 @@
+import { diagnostics, trackDiagnostic, cloudDiagnosticStage } from './diagnostics.ts';
 /** 启动登录状态机：鉴权和本机接入准备完成后才允许挂载工作台，避免未绑定时写入业务状态。 */
 export interface CloudMember { uid: string; workspaceId: string; name?: string }
 export interface CloudSession { authenticated: boolean; member: CloudMember | null }
@@ -11,6 +12,7 @@ export interface StartupLoginState {
   message: string;
   localOnly: boolean;
   firstUse: boolean;
+  migrationMissingImages?: number;
 }
 const emptySession = (): CloudSession => ({ authenticated: false, member: null });
 /** 桌面环境先检查已保存会话；网页预览从未登录状态开始。 */
@@ -21,7 +23,7 @@ function message(error: unknown) { return error instanceof Error ? error.message
 
 /** 校验原生桥接回执状态码和 JSON 形状，再把业务错误交给登录页。 */
 export async function requestStartupCloud(invoke: CloudInvoke, action: string, payload: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
-  const response = await invoke('cloud_native_json_request', { action, payloadJson: JSON.stringify(payload) });
+  const response = await trackDiagnostic(cloudDiagnosticStage(action), () => invoke('cloud_native_json_request', { action, payloadJson: JSON.stringify(payload) }));
   if (!response || !Number.isInteger(response.status) || response.status < 200 || response.status > 599 || typeof response.body !== 'string') throw Error('登录返回格式无效，请重试。');
   let value: Record<string, unknown>;
   try { value = JSON.parse(response.body); } catch { throw Error('登录返回格式无效，请重试。'); }
@@ -96,13 +98,19 @@ export function createStartupLoginController({ desktop, invoke, onState, buildMi
   /** 只有明确选择后才绑定空库或打开原生目录选择器；工作台在迁移提交前保持卸载。 */
   function chooseData(source: 'cloud' | 'legacy') { return perform(async () => {
     if (!state.session.authenticated || !state.firstUse || state.phase !== 'choosing-data') throw Error('请先完成登录并选择数据来源。');
-    emit({ message: source === 'legacy' ? '请选择已退出的旧程序的 data 目录，随后将自动迁移…' : '正在接入云端，进入工作台后下载全部配置与原图…' });
+    emit({ migrationMissingImages: 0, message: source === 'legacy' ? '请选择已退出的旧程序的 data 目录，随后将自动迁移…' : '正在接入云端，进入工作台后下载全部配置与原图…' });
     let result = await requestStartupCloud(invoke, source === 'legacy' ? 'migrateLegacy' : 'connect');
     if (disposed) return;
+    // 只显示缺失数量，不向界面或诊断暴露旧目录、文件名和业务标识。
+    const missingImages = (result.summary as { missingImages?: unknown } | undefined)?.missingImages;
+    if (typeof missingImages === 'number' && Number.isSafeInteger(missingImages) && missingImages >= 0) emit({ migrationMissingImages: missingImages });
     if (result.cancelled === true) { emit({ phase: 'choosing-data', message: '' }); return; }
     if (source === 'legacy' && result.prepared === true) {
       emit({ message: '正在核对配置、原图和未同步修改…' });
-      const plan = await buildMigrationPlan(result);
+      const finishProjection = diagnostics.begin('legacy-project');
+      let plan: Record<string, unknown>;
+      try { plan = await buildMigrationPlan(result); finishProjection(); }
+      catch (error) { finishProjection(error); throw error; }
       if (disposed) return;
       emit({ message: '正在保存迁移资料，请保持程序打开…' });
       result = await requestStartupCloud(invoke, 'migrateLegacyApply', plan);
@@ -114,10 +122,10 @@ export function createStartupLoginController({ desktop, invoke, onState, buildMi
   }); }
   function logout() { return perform(async () => {
     await requestStartupCloud(invoke, 'logout');
-    emit({ phase: 'signed-out', session: emptySession(), firstUse: false, message: '', error: '' });
+    emit({ phase: 'signed-out', session: emptySession(), firstUse: false, migrationMissingImages: 0, message: '', error: '' });
   }); }
   return { initialize, login, retry, logout, chooseData,
-    signedOut: () => emit({ phase: 'signed-out', session: emptySession(), firstUse: false, busy: false, message: '', error: '' }),
+    signedOut: () => emit({ phase: 'signed-out', session: emptySession(), firstUse: false, migrationMissingImages: 0, busy: false, message: '', error: '' }),
     dispose: () => { disposed = true; }, status: () => state };
 }
 

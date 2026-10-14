@@ -1,12 +1,12 @@
 # DIY 配置工作台 · 重构版
 
-面向 DIY 整机业务的 Windows 本地优先工作台，用于维护商品配置、核算成本与利润、读取 ERP 库存和制作配置图。当前源码版本为 **0.2.7**，采用 Rust、Tauri 2 与 React/TypeScript；现有工作台页面由 React 宿主承载，本机 SQLite 保存业务数据。
+面向 DIY 整机业务的 Windows 本地优先工作台，用于维护商品配置、核算成本与利润、读取 ERP 库存和制作配置图。当前源码版本为 **0.2.8**，采用 Rust、Tauri 2 与 React/TypeScript；现有工作台页面由 React 宿主承载，本机 SQLite 保存业务数据。
 
 源码仓库：[Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor) · [GitHub](https://github.com/yamakaze1234/diytools-refactor)。版本以根目录 `package.json`、桌面 `package.json`、Tauri 配置与 Cargo 包版本为准。
 
 ## 本次更新
 
-0.2.7 修复后台同步期间普通编辑和批量修改的空成本字段误冲突，保留真实业务冲突保护。详见 [更新说明](docs/RELEASE-0.2.7.md)。
+0.2.8 支持大型旧库只读迁移、首次云下载快照提速与安全续接，并新增诊断日志导出。详见 [更新说明](docs/RELEASE-0.2.8.md)。
 
 ## 快速入口
 

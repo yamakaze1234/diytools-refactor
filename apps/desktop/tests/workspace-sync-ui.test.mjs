@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const source=readFileSync(new URL('../public/workbench/workspace-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function bindWorkspaceSync','async function bindWorkspaceSync');
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};}
-async function harness({save=async()=>{},stop=async()=>{},start=async()=>{},authenticated=true,configured=true,maintenance=async()=>({skipped:true}),fetcher=async()=>{throw Error('unexpected fetch');}}={}){
+async function harness({diagnosticExport,save=async()=>{},stop=async()=>{},start=async()=>{},authenticated=true,configured=true,maintenance=async()=>({skipped:true}),fetcher=async()=>{throw Error('unexpected fetch');}}={}){
  const elements=new Map(),calls=[],messages=[],posted=[],intervals=[],dialogs=[];let options,historyOptions,legacyOptions;
  const node=()=>({textContent:'',title:'',disabled:false,hidden:false,dataset:{},open:true,addEventListener(){},close(){this.open=false;calls.push('close');}});
  for(const id of ['#workspace-sync','#workspace-sync-status','#operator-open','#dialog'])elements.set(id,node());
@@ -12,7 +12,7 @@ async function harness({save=async()=>{},stop=async()=>{},start=async()=>{},auth
  const controller={status:()=>view,refresh:async()=>{calls.push('refresh');options.onChange(view);},start:async()=>{calls.push('start');await start();},tick:async()=>calls.push('tick'),run:async upload=>{calls.push(['run',upload]);view.automatic=true;options.onChange(view);},stop:async()=>{calls.push('stop');await stop();view.automatic=false;options.onChange(view);},logout:async()=>{calls.push('logout');view.session={authenticated:false,member:null};options.onChange(view);},pause:()=>{},deliver:async()=>{},conflicts:async()=>({rows:[],total:0})};
  const document={querySelector:selector=>elements.get(selector)||null,querySelectorAll:selector=>selector==='[data-cloud-idle]'?[...elements.values()].filter(n=>n.idle):[]};
  const parent={postMessage:(value,origin)=>posted.push({value,origin}),workbenchClosePending:false,workbenchUpdatePending:false};
- const context=vm.createContext({document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
+ const context=vm.createContext({document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
  vm.runInContext(source,context);
  const ui=await context.bindWorkspaceSync({flush:async()=>{calls.push('save');await save();},receive:async()=>true,esc:String,toast:text=>messages.push(text),openDialog:(title,html)=>{dialogs.push({title,html});for(const match of html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)){const element=node();element.idle=match[0].includes('data-cloud-idle');elements.set('#'+match[1],element);}}});
  await new Promise(resolve=>setImmediate(resolve));
@@ -182,10 +182,25 @@ test('sync progress shows confirmed item counts and asset stages without invente
  env.options.onProgress({phase:'assets-upload',count:3});assert.match(env.elements.get('#cloud-message').textContent,/上传原图：本批 3 张/);
  env.options.onProgress({phase:'assets-download',count:2});assert.match(env.elements.get('#cloud-message').textContent,/接收原图：本批 2 张/);
  env.options.onProgress({phase:'checkpoint'});assert.match(env.elements.get('#cloud-message').textContent,/保存同步结果/);
+ env.options.onProgress({phase:'checkpoint-request',page:8,received:700,attempt:1});assert.match(env.elements.get('#cloud-message').textContent,/第 8 页，已接收 700 项/);
+ env.options.onProgress({phase:'checkpoint-commit',received:19820});assert.match(env.elements.get('#cloud-message').textContent,/19820 项数据保存到本机/);
+ env.options.onProgress({phase:'download',page:2,received:150,cursor:63000,total:63251});assert.match(env.elements.get('#cloud-message').textContent,/150 条变更.*同步序号 63000 \/ 63251/);assert.doesNotMatch(env.elements.get('#cloud-message').textContent,/undefined|%/);
 });
 
 
 test('closing a slow cache preview does not reopen the panel after it finishes',async()=>{
  const gate=deferred();const env=await harness({fetcher:async()=>({ok:true,json:()=>gate.promise})});await env.ui.open();const reading=env.elements.get('#local-cache').onclick();
  env.elements.get('#dialog').close();const count=env.dialogs.length;gate.resolve({count:1,bytes:1});await reading;assert.equal(env.dialogs.length,count);assert.equal(env.elements.get('#dialog').open,false);
+});
+
+// 同步卡住时导出不进入保存或同步互斥，取消/失败不能提示保存成功。
+test('diagnostics export remains usable while sync runs and reports only confirmed save',async()=>{
+ let mode='saved',calls=0;
+ const env=await harness({diagnosticExport:async()=>{calls++;if(mode==='failed')throw Error('secret SQL error');return mode;}});
+ env.view.running=true;await env.ui.open();const before=env.calls.length;
+ const button=env.elements.get('#cloud-diagnostics');assert.equal(button.disabled,false);
+ await button.onclick();assert.equal(calls,1);assert.match(env.messages.at(-1),/已保存/);
+ assert(!env.calls.slice(before).includes('save'));assert(!env.calls.slice(before).includes('stop'));
+ mode='cancelled';await button.onclick();assert.equal(env.messages.at(-1),'已取消导出');
+ mode='failed';await button.onclick();assert.match(env.messages.at(-1),/未保存/);assert(!env.messages.at(-1).includes('secret'));assert.equal(button.disabled,false);
 });

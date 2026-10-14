@@ -4,6 +4,49 @@ use std::{collections::BTreeSet, io::Read};
 
 const LIMIT: u64 = 512 * 1024 * 1024;
 
+// 大型已关闭的 Windows 旧库由 SQLite 按页只读读取，避免把历史空闲页全载入内存。
+// 独占写共享限制持续到连接关闭；immutable 禁止 SQLite 触碰旧库和 SHM。
+struct LegacySnapshot {
+    connection: Connection,
+    _pins: Vec<fs::File>,
+}
+impl std::ops::Deref for LegacySnapshot {
+    type Target = Connection;
+    fn deref(&self) -> &Connection { &self.connection }
+}
+impl std::ops::DerefMut for LegacySnapshot {
+    fn deref_mut(&mut self) -> &mut Connection { &mut self.connection }
+}
+
+#[cfg(windows)]
+fn large_closed_snapshot(path: &Path) -> Result<LegacySnapshot> {
+    use std::os::windows::fs::OpenOptionsExt;
+    let pin = |p: &Path| -> Result<fs::File> {
+        ordinary(p)?;
+        fs::OpenOptions::new().read(true).share_mode(1).open(p)
+            .map_err(|_| "旧版数据库仍被占用，请正常退出旧版程序后重试迁移".into())
+    };
+    let main = pin(path)?;
+    if !main.metadata().map_err(|e| e.to_string())?.is_file() { return Err("旧版数据库不是普通文件".into()); }
+    let mut pins = vec![main];
+    for name in ["workspace.sqlite-wal", "workspace.sqlite-journal"] {
+        let sidecar = path.with_file_name(name);
+        if sidecar.try_exists().map_err(|_| "无法确认旧版数据库日志状态，请检查目录读取权限")? {
+            let file = pin(&sidecar)?;
+            if file.metadata().map_err(|e| e.to_string())?.len() != 0 {
+                return Err("大型旧版数据库尚有未合并日志，请正常打开并退出旧版后重试迁移".into());
+            }
+            pins.push(file);
+        }
+    }
+    let mut uri = tauri::Url::from_file_path(path).map_err(|_| "旧版数据库路径无法转换")?;
+    uri.set_query(Some("mode=ro&immutable=1"));
+    let connection = Connection::open_with_flags(uri.as_str(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX)
+        .map_err(|_| "无法按只读方式打开旧版大型数据库")?;
+    connection.execute_batch("PRAGMA query_only=ON; PRAGMA cache_size=-8192; PRAGMA mmap_size=0;").map_err(|e|e.to_string())?;
+    Ok(LegacySnapshot { connection, _pins: pins })
+}
+
 pub struct PreparedLegacyMigration {
     pub token: String,
     state: Value,
@@ -88,7 +131,11 @@ fn digest(raw: &[u8]) -> String {
 // Pin bytes using ordinary reads instead; replay only checksum-verified committed frames
 // into memory and let SQLite validate the resulting database. No credential-bearing raw
 // database or SHM is copied to disk. Format follows bundled sqlite3.c walDecodeFrame.
-fn sqlite_snapshot(path: &Path) -> Result<Connection> {
+fn sqlite_snapshot(path: &Path) -> Result<LegacySnapshot> {
+    #[cfg(windows)]
+    if fs::metadata(path).map_err(|e| e.to_string())?.len() > LIMIT {
+        return large_closed_snapshot(path);
+    }
     let wal_path = path.with_file_name("workspace.sqlite-wal");
     let journal = path.with_file_name("workspace.sqlite-journal");
     if journal.exists() && fs::metadata(&journal).map_err(|e| e.to_string())?.len() > 0 {
@@ -197,7 +244,7 @@ fn sqlite_snapshot(path: &Path) -> Result<Connection> {
         true,
     )
     .map_err(|_| "无法读取旧版数据库内存快照")?;
-    Ok(c)
+    Ok(LegacySnapshot { connection: c, _pins: Vec::new() })
 }
 fn meta(c: &Connection, key: &str) -> Result<Value> {
     let raw: Option<String> = c
@@ -751,6 +798,60 @@ pub(super) fn apply(
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[cfg(windows)]
+    #[test]
+    fn first_use_migration_large_closed_database_is_paged_and_write_pinned() {
+        let (store, source) = fixture();
+        let renamed=source.with_file_name("旧 data #%");
+        fs::rename(&source,&renamed).unwrap();
+        let source=renamed;
+        drop(sqlite_source(&source, false));
+        let path=source.join("workspace.sqlite");
+        fs::OpenOptions::new().write(true).open(&path).unwrap().set_len(LIMIT+4096).unwrap();
+        let before=fs::metadata(&path).unwrap();
+        {
+            let snapshot=sqlite_snapshot(&path).unwrap();
+            assert_eq!(meta(&snapshot,"cursor").unwrap(),325);
+            assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+            assert!(snapshot.execute("DELETE FROM meta",[]).is_err());
+        }
+        let p=prepare(&store,&source,&owner(),||Ok(())).unwrap();
+        assert_eq!(p.state["revision"],8);
+        assert_eq!(p.source_kind,"workspace.sqlite");
+        assert_eq!(p.cursor,325);
+        assert!(!p.records.is_empty());
+        assert_eq!(before.len(),fs::metadata(&path).unwrap().len());
+        assert_eq!(before.modified().unwrap(),fs::metadata(&path).unwrap().modified().unwrap());
+        assert!(!source.join("workspace.sqlite-wal").exists());
+        assert!(!source.join("workspace.sqlite-shm").exists());
+        fs::write(source.join("workspace.sqlite-wal"),b"pending").unwrap();
+        assert!(sqlite_snapshot(&path).err().unwrap().contains("未合并日志"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "Explicit read-only legacy source probe; requires DIYTOOLS_LEGACY_SOURCE"]
+    fn first_use_migration_large_real_source_readonly_probe() {
+        let source=PathBuf::from(std::env::var("DIYTOOLS_LEGACY_SOURCE").expect("explicit source required"));
+        let path=source.join("workspace.sqlite");
+        let before=fs::metadata(&path).unwrap();
+        let c=sqlite_snapshot(&path).unwrap();
+        assert_eq!(c.query_row::<String,_,_>("PRAGMA quick_check",[],|r|r.get(0)).unwrap(),"ok");
+        let saved=meta(&c,"workspaceState").unwrap();
+        assert!(saved["configs"].is_array());
+        let count:i64=c.query_row("SELECT COUNT(*) FROM records",[],|r|r.get(0)).unwrap();
+        let pending:i64=c.query_row("SELECT COUNT(*) FROM outbox",[],|r|r.get(0)).unwrap();
+        let member=json!({"uid":meta(&c,"uid").unwrap(),"workspaceId":meta(&c,"workspaceId").unwrap()});
+        println!("readonly large source: bytes={} configs={} records={} outbox={} revision={}",before.len(),saved["configs"].as_array().unwrap().len(),count,pending,saved["revision"]);
+        drop(c);
+        assert_eq!(before.len(),fs::metadata(&path).unwrap().len());
+        assert_eq!(before.modified().unwrap(),fs::metadata(&path).unwrap().modified().unwrap());
+        let (store, _)=fixture();
+        let prepared=prepare(&store,&source,&member,||Ok(())).unwrap();
+        assert_eq!(prepared.state["configs"].as_array().unwrap().len(),saved["configs"].as_array().unwrap().len());
+        println!("actual prepare: {}",prepared.summary());
+    }
 
     fn factory() -> Value {
         json!({"revision":0,"configs":[],"templates":[],"sourceCatalog":[],"costSource":[],"caseGallery":[],"shopSettings":{}})

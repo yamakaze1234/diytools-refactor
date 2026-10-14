@@ -16,12 +16,17 @@ test('fresh bound workspace downloads existing cloud state without pushing',asyn
   return {revision:snapshot.state.revision,cloudVersion:snapshot.cloudVersion};
  },call:async request=>{
   calls.push(request.action);
-  assert.equal(request.action,'sync.pull','首次空库不能发送云端写请求');
+  assert.ok(['sync.snapshot','sync.pull'].includes(request.action),'首次空库不能发送云端写请求');
+  if(request.action==='sync.snapshot'){
+   const records=[...rows].sort((a,b)=>a.type.localeCompare(b.type)||a.id.localeCompare(b.id));
+   const last=records.at(-1);
+   return {ok:true,checkpointSeq:rows.length,nextCursor:[last.type,last.id],hasMore:false,records};
+  }
   const changes=rows.filter(r=>r.seq>request.payload.cursor);
   return {ok:true,headSeq:rows.length,nextCursor:rows.length,hasMore:false,changes};
  }});
  await engine.run({member,upload:true});
- assert.equal(calls[0],'sync.pull');
+ assert.equal(calls[0],'sync.snapshot');
  assert.ok(calls.length>0);
  assert.deepEqual(snapshot.document.outbox,[]);
  assert.equal(snapshot.state.configs[0].id,'existing');

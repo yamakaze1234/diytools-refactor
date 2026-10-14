@@ -1,3 +1,4 @@
+import { diagnostics, exportDiagnostics, trackDiagnostic, cloudDiagnosticStage } from '../diagnostics.ts';
 /** 旧页面本机桥接：将受支持的 fetch 路由映射到 Tauri IPC，素材 URL 仅在渲染时转换。 */
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
@@ -13,6 +14,8 @@ export interface WorkbenchBridgeOptions {
   assetOrigin?: string;
 }
 export type WorkbenchWindow = Window & {
+  workbenchExportDiagnostics?: () => Promise<string>;
+  workbenchRecordDiagnostic?: (stage: string, error?: unknown) => void;
   resolveWorkbenchAsset?: (url: string) => string;
   pywebview?: { api?: { export_image_folder?: (payload: WorkbenchFolderPayload) => Promise<unknown> } };
 };
@@ -170,8 +173,8 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
       try {
         if (cloud) {
           // Large snapshots are parsed by Rust/worker, never by the UI thread.
-          result = await invoke<WorkbenchResponse>('cloud_native_json_request', { action: cloudAction, payloadJson: body || '{}' });
-        } else result = await invoke<WorkbenchResponse>(sql ? 'sql_sync_request' : 'workbench_request', { method: request.method, path: path + url.search, body });
+          result = await trackDiagnostic(cloudDiagnosticStage(cloudAction, body || ''), () => invoke<WorkbenchResponse>('cloud_native_json_request', { action: cloudAction, payloadJson: body || '{}' }));
+        } else result = await trackDiagnostic(sql ? 'sql-request' : 'local-request', () => invoke<WorkbenchResponse>(sql ? 'sql_sync_request' : 'workbench_request', { method: request.method, path: path + url.search, body }));
       }
       catch (error) { return errorResponse(cloud ? '云同步接口调用失败，本机修改已保留' : sql ? '公司数据库接口调用失败，请检查连接后重试' : '本机接口调用失败：' + String(error)); }
       if (!result || !Number.isInteger(result.status) || result.status < 200 || result.status > 599 || typeof result.body !== 'string') {
@@ -185,6 +188,9 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
   // Native batch export preserves the old file contract; a failed native command rejects visibly.
   // Browser preview has no pywebview bridge, so the existing browser ZIP download remains active.
   if (invoke) {
+    // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
+    targetWindow.workbenchExportDiagnostics = async () => exportDiagnostics(invoke, await invoke<string>('plugin:app|version').catch(() => 'unknown'));
+    targetWindow.workbenchRecordDiagnostic = (stage, error) => { diagnostics.begin(stage)(error); };
     targetWindow.pywebview = { api: { export_image_folder: payload => invoke('workbench_export_folder', { payload }) } };
   }
 
