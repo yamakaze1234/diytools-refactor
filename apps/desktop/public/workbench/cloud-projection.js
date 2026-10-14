@@ -63,7 +63,11 @@ export function applyWorkspace(template,records){
  const {configs:oldConfigs,templates:oldTemplates,sourceCatalog:oldSources,caseGallery:oldGallery,shopSettings:oldSettings,costSource:oldCosts,...metadata}=template;
  const next=copy(metadata),groups=new Map();for(const r of records){if(!groups.has(r.type))groups.set(r.type,[]);groups.get(r.type).push(r);}
  const values=type=>(groups.get(type)||[]).map(r=>stripLocalErp(r.draft??r.data));
- next.configs=values('configuration').map(d=>{d.price=d.priceCents/100;delete d.priceCents;return d;});
+ const localConfigs=new Map((oldConfigs||[]).map(c=>[c.id,c]));
+ next.configs=values('configuration').map(d=>{d.price=d.priceCents/100;delete d.priceCents;
+  // 更新时间属于本机成本缓存；云投影不携带，物化时也不能将其当作远端删除。
+  const local=localConfigs.get(d.id);for(const key of ['taxUpdatedAt','erpImportedAt'])if(local&&Object.hasOwn(local,key))d[key]=copy(local[key]);return d;
+ });
  const previous=new Map((template.configs||[]).map((c,i)=>[c.id,i]));next.configs.sort((a,b)=>(a.workspaceOrder??previous.get(a.id)??Number.MAX_SAFE_INTEGER)-(b.workspaceOrder??previous.get(b.id)??Number.MAX_SAFE_INTEGER));next.configs=restoreConfigOrder(next.configs);
  next.templates=values('template');next.sourceCatalog=values('source');next.caseGallery=values('gallery');next.shopSettings={};
  for(const r of groups.get('settings')||[]){const d=copy(r.draft??r.data);next.shopSettings[r.id]={...d,coupon:d.couponCents/100};delete next.shopSettings[r.id].couponCents;}

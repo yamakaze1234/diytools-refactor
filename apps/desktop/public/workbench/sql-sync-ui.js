@@ -50,7 +50,11 @@ export function bindSqlSync(api){
    if(busy||!live())return;
    if(!valid()){message.textContent='预览已过期或配置已变化，请重新读取预览。';button.disabled=true;return;}
    busy=true;button.disabled=true;cancel.disabled=true;refresh.disabled=true;lockClose(true);message.textContent='正在确认应用到本机…';
-   try{await api.flush();if(!live())return;if(!valid())throw Error('预览已过期或配置已变化，请重新读取预览。');const result=await request('apply',{id:plan.id});retained=null;if(!live())return;dialog.close();if(await api.receive(result)===false)return;api.toast(`本机 ERP 成本与库存已更新：${plan.changes.length} 处变化，ERP 成本取自 SQL 库存成本；人工核算价保留，结果仅保存在本机。`);
+   try{await api.flush();if(!live())return;if(!valid())throw Error('预览已过期或配置已变化，请重新读取预览。');const result=await request('apply',{id:plan.id});retained=null;if(!live())return;
+    // 按需回载要求弹窗关闭；在同一应用期间锁住页面输入，避免新编辑与回载相撞。
+    const wasInert=document.body.inert;document.body.inert=true;
+    try{dialog.close();if(await api.receive(result)===false)return;}finally{document.body.inert=wasInert;}
+    api.toast(`本机 ERP 成本与库存已更新：${plan.changes.length} 处变化，ERP 成本取自 SQL 库存成本；人工核算价保留，结果仅保存在本机。`);
    }catch(error){if(live()){message.textContent=error.message;button.disabled=!valid();}else api.toast(error.message);}finally{busy=false;lockClose(false);if(live()){cancel.disabled=false;refresh.disabled=false;}}
   };
  }

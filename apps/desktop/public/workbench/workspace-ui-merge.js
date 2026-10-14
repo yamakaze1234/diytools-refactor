@@ -47,6 +47,20 @@ function* editingStateWork(base,local,remote,{ownLocalRows=false}={}){
   }
   conflict=true;return clone(l);
  };
+ // 配置级时间由多个配件更新汇总而来。不同商品同时改价不应仅因更新时间不同而冲突；
+ // 成本行与配件的实际价格仍使用上面的逐字段三方比较。
+ const mergeConfig=(b,l,r)=>{
+  if(!b||!l||!r)return merge(b,l,r);
+  const fields=['taxUpdatedAt','erpImportedAt'],rows=[b,l,r].map(row=>({...row}));
+  for(const row of rows)for(const field of fields)delete row[field];
+  const result=merge(...rows);
+  for(const field of fields){
+   const present=[b,l,r].filter(row=>Object.hasOwn(row,field));if(!present.length)continue;
+   const dated=present.map(row=>({value:row[field],time:typeof row[field]==='string'?Date.parse(row[field]):NaN})).filter(item=>Number.isFinite(item.time));
+   result[field]=clone(dated.length?dated.reduce((latest,item)=>item.time>latest.time?item:latest).value:Object.hasOwn(l,field)?l[field]:Object.hasOwn(r,field)?r[field]:b[field]);
+  }
+  return result;
+ };
  for(const [name,key] of Object.entries(collections)){
   const maps=[];for(const state of [base,local,remote]){const map=new Map();for(const row of state[name]||[]){map.set(row[key],row);yield;}maps.push(map);}
   const [b,l,r]=maps;result[name]=[];
@@ -55,7 +69,7 @@ function* editingStateWork(base,local,remote,{ownLocalRows=false}={}){
    // Only the live editor opts in: its rows are independent of every immutable
    // accepted/sent/history value. A remote-unchanged row can retain the live
    // object, including edits made during the request, without copying it.
-   const row=ownLocalRows&&draft&&draft!==before&&draft!==receipt&&same(before,receipt)?draft:merge(before,draft,receipt);
+   const row=ownLocalRows&&draft&&draft!==before&&draft!==receipt&&same(before,receipt)?draft:(name==='configs'?mergeConfig:merge)(before,draft,receipt);
    if(row)result[name].push(row);yield;
   }
  }
