@@ -42,6 +42,9 @@ mod upload_assets;
 #[cfg(test)]
 #[path = "workbench_store/log_access_tests.rs"]
 mod log_access_tests;
+#[cfg(test)]
+#[path = "workbench_store/edit_sync_tests.rs"]
+mod edit_sync_tests;
 
 // Used by the native cloud command; the ordinary local /api routes do not expose it.
 // 云检查点仅供专用原生命令使用，普通本机 API 不暴露同步持久队列。
@@ -353,6 +356,27 @@ fn merge(
     }
     Err("同一字段已被修改，当前草稿已保留，请比较后选择保存版本".into())
 }
+// 旧编辑器用 null 表示跟随共享成本，云物化会省略同一字段。
+// 只在配置直系配件行对齐这两个等价表示；数组仍整体比较，真实改价/替换仍冲突。
+fn merge_configuration(base: Option<&Value>, desired: Option<&Value>, current: Option<&Value>) -> Result<Option<Value>> {
+    if let Ok(value) = merge(base, desired, current) { return Ok(value); }
+    let normalize = |value: Option<&Value>| value.map(|value| {
+        let mut value = value.clone();
+        for field in ["parts", "actualParts"] {
+            if let Some(rows) = value.get_mut(field).and_then(Value::as_array_mut) {
+                for row in rows {
+                    if let Some(row) = row.as_object_mut() {
+                        if row.get("taxOverride") == Some(&Value::Null) { row.remove("taxOverride"); }
+                    }
+                }
+            }
+        }
+        value
+    });
+    let (b,d,c) = (normalize(base), normalize(desired), normalize(current));
+    let merged = merge(b.as_ref(), d.as_ref(), c.as_ref())?;
+    if merged == c { Ok(current.cloned()) } else { Ok(merged) }
+}
 // 配置集合按 ID 三方合并，处理新增、删除和内容冲突时保留并发保存的其他配置。
 fn merge_configs(base: &Value, desired: &Value, current: &Value) -> Result<Value> {
     let b = base.as_array().ok_or("基线配置格式无效")?;
@@ -369,7 +393,7 @@ fn merge_configs(base: &Value, desired: &Value, current: &Value) -> Result<Value
     let mut out = Vec::new();
     for row in d {
         let id = row["id"].as_str().ok_or("配置 ID 无效")?;
-        if let Some(v) = merge(bm.get(id).copied(), Some(row), cm.get(id).copied())? {
+        if let Some(v) = merge_configuration(bm.get(id).copied(), Some(row), cm.get(id).copied())? {
             out.push(v);
         }
     }
@@ -377,7 +401,7 @@ fn merge_configs(base: &Value, desired: &Value, current: &Value) -> Result<Value
     for row in c {
         let id = row["id"].as_str().ok_or("配置 ID 无效")?;
         if !dm.contains_key(id)
-            && let Some(v) = merge(bm.get(id).copied(), None, Some(row))?
+            && let Some(v) = merge_configuration(bm.get(id).copied(), None, Some(row))?
         {
             out.push(v);
         }
@@ -803,7 +827,7 @@ fn save_batch(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse> {
         {
             return Ok(failure(409, "批量操作不可删除或移动配置"));
         }
-        match merge(Some(base), Some(desired), Some(current)) {
+        match merge_configuration(Some(base), Some(desired), Some(current)) {
             Ok(Some(merged)) => {
                 if profile_expr!("target_equality_compare", &merged != current) {
                     config_changes.push(json!({"id":id,"before":current,"after":merged}));

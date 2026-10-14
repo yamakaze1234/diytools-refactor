@@ -52,6 +52,12 @@ function* editingStateWork(base,local,remote,{ownLocalRows=false}={}){
  const mergeConfig=(b,l,r)=>{
   if(!b||!l||!r)return merge(b,l,r);
   const fields=['taxUpdatedAt','erpImportedAt'],rows=[b,l,r].map(row=>({...row}));
+  // sourcePart 写 null，云端回写省略，均表示没有单独成本。
+  // 仅对齐直系配件行，真实覆盖对象和其他业务字段仍严格比较。
+  for(const row of rows)for(const field of ['parts','actualParts'])if(Array.isArray(row[field]))row[field]=row[field].map(part=>{
+   if(part?.taxOverride!==null)return part;
+   const normalized={...part};delete normalized.taxOverride;return normalized;
+  });
   for(const row of rows)for(const field of fields)delete row[field];
   const result=merge(...rows);
   for(const field of fields){
