@@ -60,15 +60,35 @@ fn legacy(url: &str) -> Option<(&str, &str)> {
     Some((short, ext))
 }
 
+// Win32 扩展路径不再处理 ../ 或相对路径，先按 Windows 规则展开，再补长路径前缀。
+// std::fs 已做类似转换；直接调用 MoveFileW 时须自行处理，保留 UNC 和现有扩展路径。
+#[cfg(windows)]
+fn windows_move_path(path: &Path) -> std::io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::{Component, Prefix};
+    let invalid = || std::io::Error::new(std::io::ErrorKind::InvalidInput, "原图路径不是有效的 Windows 文件路径");
+    if path.as_os_str().encode_wide().any(|unit| unit == 0) { return Err(invalid()); }
+    let absolute = std::path::absolute(path)?;
+    let units: Vec<u16> = absolute.as_os_str().encode_wide().collect();
+    let Component::Prefix(prefix) = absolute.components().next().ok_or_else(invalid)? else { return Err(invalid()); };
+    let mut result = match prefix.kind() {
+        Prefix::Disk(_) => r"\\?\".encode_utf16().chain(units).collect::<Vec<_>>(),
+        Prefix::UNC(_, _) => r"\\?\UNC\".encode_utf16().chain(units.into_iter().skip(2)).collect(),
+        Prefix::VerbatimDisk(_) | Prefix::VerbatimUNC(_, _) => units,
+        _ => return Err(invalid()),
+    };
+    result.push(0);
+    Ok(result)
+}
+
 // Windows 的 MoveFileW 原子安装且拒绝覆盖目标，也兼容不支持硬链接的可移动磁盘。
 pub(super) fn install(source: &Path, target: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
         #[link(name = "kernel32")]
         unsafe extern "system" { fn MoveFileW(existing: *const u16, new: *const u16) -> i32; }
-        let source: Vec<u16> = source.as_os_str().encode_wide().chain(Some(0)).collect();
-        let target: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+        let source = windows_move_path(source)?;
+        let target = windows_move_path(target)?;
         // 两个路径均为受控目录内生成的名称，缓冲区以 NUL 结尾并在调用期间存活。
         if unsafe { MoveFileW(source.as_ptr(), target.as_ptr()) } == 0 { return Err(std::io::Error::last_os_error()); }
         Ok(())
@@ -149,6 +169,43 @@ pub(super) fn normalize(store: &WorkbenchStore) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_move_path_preserves_unc_and_resolves_relative_before_prefixing() {
+        let decoded = |path: &Path| {
+            let units = windows_move_path(path).unwrap();
+            assert_eq!(units.last(), Some(&0));
+            String::from_utf16(&units[..units.len()-1]).unwrap()
+        };
+        assert_eq!(decoded(Path::new(r"\\server\share\folder\..\image.png")), r"\\?\UNC\server\share\image.png");
+        assert_eq!(decoded(Path::new(r"\\?\UNC\server\share\image.png")), r"\\?\UNC\server\share\image.png");
+        assert_eq!(decoded(Path::new(r"\\?\C:\folder\image.png")), r"\\?\C:\folder\image.png");
+        let expected = std::path::absolute("image.png").unwrap();
+        assert_eq!(decoded(Path::new(r"folder\..\image.png")), format!(r"\\?\{}", expected.display()));
+        assert_eq!(windows_move_path(Path::new("image\0.png")).unwrap_err().kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn upload_install_long_paths_is_atomic_and_never_replaces_existing_target() {
+        use std::os::windows::ffi::OsStrExt;
+        // Keep ../ in the input, matching builds from a deeply nested release checkout.
+        let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../sandbox/upload-long-path-regression").join(unique());
+        while root.as_os_str().encode_wide().count() < 340 { root = root.join("long-directory-segment-for-original-image-migration"); }
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.partial");
+        let target = root.join("published.png");
+        ordinary(&source).unwrap();ordinary(&target).unwrap();
+        fs::write(&source, b"complete-original-image").unwrap();
+        install(&source, &target).unwrap();
+        assert!(!source.exists());assert_eq!(fs::read(&target).unwrap(), b"complete-original-image");
+        fs::write(&source, b"must-not-overwrite").unwrap();
+        assert!(install(&source, &target).is_err());
+        assert_eq!(fs::read(&target).unwrap(), b"complete-original-image");
+        assert_eq!(fs::read(&source).unwrap(), b"must-not-overwrite");
+    }
 
     fn fixture() -> (WorkbenchStore, String, Vec<u8>) {
         let root = std::env::temp_dir().join(format!("diy-upload-path-{}", unique()));
