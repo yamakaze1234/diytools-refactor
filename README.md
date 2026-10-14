@@ -1,14 +1,14 @@
 # DIY 配置工作台 · 重构版
 
-面向 DIY 整机业务的 Windows 本地优先工作台，用于维护商品配置、核算成本与利润、读取 ERP 库存和制作配置图。当前源码版本为 **0.2.5**，采用 Rust、Tauri 2 与 React/TypeScript；现有工作台页面由 React 宿主承载，本机 SQLite 保存业务数据。
+面向 DIY 整机业务的 Windows 本地优先工作台，用于维护商品配置、核算成本与利润、读取 ERP 库存和制作配置图。当前源码版本为 **0.2.6**，采用 Rust、Tauri 2 与 React/TypeScript；现有工作台页面由 React 宿主承载，本机 SQLite 保存业务数据。
 
 源码仓库：[Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor) · [GitHub](https://github.com/yamakaze1234/diytools-refactor)。版本以根目录 `package.json`、桌面 `package.json`、Tauri 配置与 Cargo 包版本为准。
 
 ## 本次更新
 
-0.2.5 将展示配件、实际 BOM、加购、样式、核算及模板主要编辑区改为模型驱动 React 组件，保留原业务保存行为，并改善中文输入、焦点及弹窗清理。补齐与旧客户端一致的店设置校验。SQLite 配置独立存储、后台导图和更新失败恢复延续上一版本。
+0.2.6 新增首次登录空目录的两种初始化方式：从云端下载全部资料，或选择旧版 data 目录自动迁移。迁移保留已保存未同步修改及可用同步基线，旧目录只读。
 
-详见 [0.2.5 更新说明](docs/RELEASE-0.2.5.md)。新旧同步验收使用修复后的旧 Python 核心；尚未升级的旧 Python 安装仍需单独安装检查点恢复补丁。发行版验证包括隔离自动化及真实云端链路，不代表全部原生窗口点击验收。
+详见 [0.2.6 更新说明](docs/RELEASE-0.2.6.md)。新组员使用管理员提供的内部使用包；公开程序不携带团队接入配置。旧物理历史与生成缓存留在原目录。
 
 程序与便携 ZIP 见 [Gitea Releases](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases)，源码 ZIP 不含可直接运行的程序。
 

@@ -4,7 +4,7 @@
 use super::*;
 
 // 云检查点很大；把状态栏和授权需要的少量字段随正文原子投影，避免每次查询解析整库。
-fn schema(c: &Connection) -> Result<()> {
+pub(super) fn schema(c: &Connection) -> Result<()> {
     let ready: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workbench_cloud_header')",
         [], |r| r.get(0),
@@ -86,8 +86,19 @@ pub(super) fn status(store: &WorkbenchStore) -> Result<Value> {
     status_connection(&tx)
 }
 
+// 老安装或内置接入方案沿用原连接流程；只有严格出厂空库显示首次使用选择。
+pub(super) fn first_use_status(store: &WorkbenchStore) -> Result<Value> {
+    let mut c = db(&store.path)?;
+    schema(&c)?;
+    let tx = c.transaction().map_err(|e| e.to_string())?;
+    let status = status_connection(&tx)?;
+    let seeded = store.path.parent().ok_or("数据目录无效")?.join("cloud-bootstrap.json").exists();
+    let empty = status["initialized"] != true && check_factory_empty(&tx).is_ok();
+    Ok(json!({"required":empty && !seeded,"initialized":status["initialized"],"bundledSeed":seeded,"factoryEmpty":empty}))
+}
+
 // 与程序首次启动写入的默认正文严格比较；未知字段也不能被当成空工作区忽略。
-fn check_factory_empty(c: &Connection) -> Result<()> {
+pub(super) fn check_factory_empty(c: &Connection) -> Result<()> {
     let expected = json!({"revision":0,"configs":[],"templates":[],"sourceCatalog":[],"costSource":[],"caseGallery":[],"shopSettings":{}});
     let reject = "本机同步准备信息缺失，且本机已有数据；已保留全部内容，不能自动绑定空工作区。";
     // 未来存储迁移须显式适配空库契约，不能按旧表结构误判更高版本的数据库。
@@ -331,7 +342,7 @@ pub(super) fn apply_plan(
 }
 
 // 核对同步身份、游标和持久请求不可变字段，禁止篡改已发送提交的业务身份。
-fn validate_document(document: &Value, previous: &Value) -> Result<()> {
+pub(super) fn validate_document(document: &Value, previous: &Value) -> Result<()> {
     if document["format"] != 1 {
         return Err("云同步本机格式不受支持".into());
     }

@@ -61,7 +61,7 @@ fn legacy(url: &str) -> Option<(&str, &str)> {
 }
 
 // Windows 的 MoveFileW 原子安装且拒绝覆盖目标，也兼容不支持硬链接的可移动磁盘。
-fn install(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(super) fn install(source: &Path, target: &Path) -> std::io::Result<()> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;

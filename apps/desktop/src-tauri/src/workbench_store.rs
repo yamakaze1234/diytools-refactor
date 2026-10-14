@@ -23,6 +23,8 @@ mod legacy_history;
 mod profit;
 #[path = "workbench_store/cloud_state.rs"]
 mod cloud_state;
+#[path = "workbench_store/legacy_migration.rs"]
+mod legacy_migration;
 #[path = "workbench_store/activity.rs"]
 mod activity;
 #[path = "workbench_store/lazy_workspace.rs"]
@@ -56,6 +58,16 @@ pub fn cloud_checkpoint_commit(store: &WorkbenchStore, input: &Value) -> Result<
 }
 pub fn cloud_checkpoint_status(store: &WorkbenchStore) -> Result<Value> {
     cloud_state::status(store)
+}
+pub fn cloud_first_use_status(store: &WorkbenchStore) -> Result<Value> {
+    cloud_state::first_use_status(store)
+}
+pub use legacy_migration::PreparedLegacyMigration;
+pub fn cloud_prepare_legacy(store: &WorkbenchStore, source: &Path, member: &Value, check_session: impl Fn() -> Result<()>) -> Result<PreparedLegacyMigration> {
+    legacy_migration::prepare(store, source, member, check_session)
+}
+pub fn cloud_apply_legacy(store: &WorkbenchStore, prepared: &PreparedLegacyMigration, payload: &Value, member: &Value, check_session: impl Fn() -> Result<()>) -> Result<Value> {
+    legacy_migration::apply(store, prepared, payload, member, check_session)
 }
 // 新同事只允许把出厂空工作区绑定到已认证成员，已有业务数据须使用明确的接入方案。
 pub fn cloud_checkpoint_bind_empty(store: &WorkbenchStore, member: &Value, check_session: impl Fn() -> Result<()>) -> Result<Value> {

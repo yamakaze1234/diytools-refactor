@@ -21,6 +21,7 @@ use std::{
 pub struct CloudRuntime {
     transport: Arc<CloudTransport>,
     plan: Mutex<Option<CachedPlan>>,
+    legacy: Mutex<Option<(u64, workbench_store::PreparedLegacyMigration)>>,
     identity_gate: RwLock<()>,
     assets_gate: Mutex<()>,
     connect_gate: Mutex<()>,
@@ -69,6 +70,7 @@ impl CloudRuntime {
         Ok(Self {
             transport: Arc::new(transport),
             plan: Mutex::new(None),
+            legacy: Mutex::new(None),
             identity_gate: RwLock::new(()),
             assets_gate: Mutex::new(()),
             connect_gate: Mutex::new(()),
@@ -461,6 +463,7 @@ fn dispatch(
         if let Ok(mut plan) = runtime.plan.try_lock() {
             *plan = None;
         }
+        if let Ok(mut legacy) = runtime.legacy.try_lock() { *legacy = None; }
         return Ok(response(200, value));
     }
     if action == "login" {
@@ -477,6 +480,7 @@ fn dispatch(
         }
         runtime.epoch.fetch_add(1, Ordering::SeqCst);
         *runtime.plan.lock().map_err(|_| "接入计划状态异常")? = None;
+        *runtime.legacy.lock().map_err(|_| "迁移状态异常")? = None;
         return Ok(response(200, value));
     }
     let _identity = runtime.identity_gate.read().map_err(|_| "登录状态异常")?;
@@ -499,6 +503,51 @@ fn dispatch_bound(
     epoch: u64,
 ) -> Result<ApiResponse, String> {
     let value = match action {
+        "firstUseStatus" => {
+            if payload.as_object().is_none_or(|object| !object.is_empty()) {
+                return Err("首次使用检查不接受其他参数".into());
+            }
+            member(runtime)?;
+            workbench_store::cloud_first_use_status(store)?
+        }
+        "migrateLegacy" => {
+            if payload.as_object().is_none_or(|object| !object.is_empty()) {
+                return Err("迁移仅接受本机目录选择，不接受路径参数".into());
+            }
+            let _connect = runtime.connect_gate.lock().map_err(|_| "同步连接状态异常")?;
+            *runtime.legacy.lock().map_err(|_| "迁移状态异常")? = None;
+            let owner = member(runtime)?;
+            if workbench_store::cloud_first_use_status(store)?["required"] != true {
+                return Err("当前目录已包含数据或同步准备信息，不能再次迁移".into());
+            }
+            let Some(path) = rfd::FileDialog::new().set_title("选择旧版程序的 data 目录（请先退出旧版程序）").pick_folder() else {
+                return Ok(response(200, json!({"cancelled":true})));
+            };
+            let prepared = workbench_store::cloud_prepare_legacy(store, &path, &owner, || {
+                if runtime.epoch.load(Ordering::SeqCst) != epoch { return Err("迁移已取消，原数据保持不变".into()); }
+                let current = member(runtime)?;
+                if current["uid"] != owner["uid"] || current["workspaceId"] != owner["workspaceId"] { return Err("登录成员已变化，迁移未提交".into()); }
+                Ok(())
+            })?;
+            let preview = prepared.preview();
+            *runtime.legacy.lock().map_err(|_| "迁移状态异常")? = Some((epoch, prepared));
+            preview
+        }
+        "migrateLegacyApply" => {
+            let _connect = runtime.connect_gate.lock().map_err(|_| "同步连接状态异常")?;
+            let mut guard = runtime.legacy.lock().map_err(|_| "迁移状态异常")?;
+            let (prepared_epoch, prepared) = guard.as_ref().ok_or("迁移准备已过期，请重新选择旧版目录")?;
+            if *prepared_epoch != epoch { return Err("登录状态已变化，请重新选择旧版目录".into()); }
+            let owner = member(runtime)?;
+            let result = workbench_store::cloud_apply_legacy(store, prepared, &payload, &owner, || {
+                if runtime.epoch.load(Ordering::SeqCst) != epoch { return Err("迁移已取消，原数据保持不变".into()); }
+                let current = member(runtime)?;
+                if current["uid"] != owner["uid"] || current["workspaceId"] != owner["workspaceId"] { return Err("登录成员已变化，迁移未提交".into()); }
+                Ok(())
+            })?;
+            *guard = None;
+            result
+        }
         "connect" => {
             if payload.as_object().is_none_or(|object| !object.is_empty()) {
                 return Err("连接同步不接受路径或其他参数".into());
