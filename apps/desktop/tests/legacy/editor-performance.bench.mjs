@@ -1,0 +1,35 @@
+import fs from 'node:fs';
+import {performance} from 'node:perf_hooks';
+import {createHash} from 'node:crypto';
+import {fileURLToPath} from 'node:url';
+import {ensureActualParts,syncActualParts} from '../../public/workbench/actual-parts.js';
+import {syncDisplayParts,cloneEditorState,captureEditorState,captureHistorySnapshot,captureConfigHistorySnapshot,historySnapshotBytes} from '../../public/workbench/editor-performance.js';
+import {ordinarySaveChanges} from '../../public/workbench/batch-save.js';
+import {sameEditingState} from '../../public/workbench/workspace-ui-merge.js';
+
+const input=process.argv[2]||fileURLToPath(new URL('../../../../sandbox/migration-review/20261011/source-state.json',import.meta.url));
+function freeze(value){if(value&&typeof value==='object'&&!Object.isFrozen(value)){Object.freeze(value);for(const item of Object.values(value))freeze(item);}return value;}
+const inputBytes=fs.readFileSync(input),frozenSource=freeze(JSON.parse(inputBytes)),s=cloneEditorState(frozenSource);
+for(const c of s.configs)ensureActualParts(c);
+const baseline=new Map(s.configs.map(c=>[c.id,structuredClone(c.parts)])),ui={active:s.configs[0].id,activeShopId:'intel',selected:new Set([s.configs[0].id])};
+const results={source:input,sourceSha256:createHash('sha256').update(inputBytes).digest('hex'),sourceFrozen:true,node:process.version,configs:s.configs.length,logs:s.logs.length};
+const measure=(name,fn)=>{const rows=[];for(let i=0;i<5;i++){const start=performance.now();fn();rows.push(Number((performance.now()-start).toFixed(2)));}results[name]={samplesMs:rows,medianMs:[...rows].sort((a,b)=>a-b)[2]};};
+measure('beforeDisplaySync',()=>{for(const c of s.configs){syncActualParts(c,baseline.get(c.id));baseline.set(c.id,structuredClone(c.parts));}});
+measure('afterDisplaySync',()=>syncDisplayParts(s.configs,baseline,[ui.active]));
+measure('beforeSaveSnapshot',()=>structuredClone(s));measure('afterSaveSnapshot',()=>cloneEditorState(s));
+const accepted=cloneEditorState(s);s.configs[0].name+='x';
+measure('afterSharedSaveSnapshot',()=>captureEditorState(s,accepted));
+measure('beforeOrdinarySavePreparation',()=>{const snapshot=cloneEditorState(s);ordinarySaveChanges(accepted,snapshot);sameEditingState(snapshot,s);});
+measure('afterOrdinarySavePreparation',()=>ordinarySaveChanges(accepted,captureEditorState(s,accepted)));
+const fields=['caseGallery','configs','templates','sourceCatalog','costSource','shopSettings'];
+const oldSnapshot=()=>({...Object.fromEntries(fields.map(key=>[key,structuredClone(s[key])])),...ui,selected:[...ui.selected]});
+measure('beforeFirstCheckpoint',()=>{const snapshot=oldSnapshot();JSON.stringify(snapshot);JSON.stringify(snapshot).length*2;});
+measure('afterFirstCheckpoint',()=>historySnapshotBytes(captureHistorySnapshot(s,ui)));
+measure('afterFirstConfigCheckpoint',()=>historySnapshotBytes(captureConfigHistorySnapshot(s,ui,[ui.active])));
+let old=oldSnapshot(),next=captureHistorySnapshot(s,ui);historySnapshotBytes(next);
+measure('beforeCheckpoint',()=>{s.configs[0].name+='x';const snapshot=oldSnapshot();if(JSON.stringify(old)!==JSON.stringify(snapshot))JSON.stringify(snapshot).length*2;old=snapshot;});
+measure('afterCheckpoint',()=>{s.configs[0].name+='x';next=captureHistorySnapshot(s,ui,next);historySnapshotBytes(next);});
+let local=captureConfigHistorySnapshot(s,ui,[ui.active]);historySnapshotBytes(local);
+measure('afterConfigCheckpoint',()=>{s.configs[0].name+='x';local=captureConfigHistorySnapshot(s,ui,[ui.active],local);historySnapshotBytes(local);});
+measure('afterRepeatedFocus',()=>captureConfigHistorySnapshot(s,ui,[ui.active],local));
+console.log(JSON.stringify(results,null,2));

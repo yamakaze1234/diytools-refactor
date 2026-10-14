@@ -1,0 +1,28 @@
+/** 配置定价规则：结合店铺设置计算展示金额，统一处理链接分期和删除保留期。 */
+// Prices are copied as plain numeric columns in the same configuration order.
+/** 从配置与店铺参数计算销售展示需要的定价值。 */
+export function pricing(config,settings={}){
+ const arrival=Number(config.price),coupon=Number(settings.coupon??0),term=Number(config.installment??0);
+ if(!Number.isFinite(arrival)||arrival<0||!Number.isFinite(coupon)||coupon<0)throw Error(`${config.name||'配置'} 的到手价或优惠券无效`);
+ if(![0,12,24].includes(term))throw Error('请选择不分期、12 期或 24 期');
+ const rate=term===12?.06:term===24?.1:0;
+ return{arrival,coupon,listPrice:(Math.round(arrival*100)+Math.round(coupon*100))/100,term,rate,fee:Math.round(arrival*100*rate)/100};
+}
+export function pricingColumn(configs,settings){if(!configs.length)throw Error('请先勾选配置');return configs.map(c=>Math.round(pricing(c,settings).listPrice).toString()).join('\r\n');}
+export const deletedWithinRetention=(configs,at=Date.now())=>configs.filter(c=>c.deletedAt&&Date.parse(c.deletedAt)>at-3*86400000);
+
+// A null term means legacy configurations disagree; require an explicit choice.
+/** 读取链接内配置的一致分期设置，供链接编辑和模板导入使用。 */
+export function productInstallment(configs=[]){
+ const terms=new Set(configs.filter(c=>!c.deletedAt).map(c=>Number(c.installment??0)));
+ if(!terms.size)return 0;
+ const [term]=terms;
+ return terms.size===1&&[0,12,24].includes(term)?term:null;
+}
+/** 将确认的分期方案统一应用到指定链接配置。 */
+export function applyProductInstallment(configs,product,term){
+ if(![0,12,24].includes(term))throw Error('请选择不分期、12 期或 24 期');
+ const ids=[];
+ for(const c of configs)if(!c.deletedAt&&c.shopId===product.shopId&&c.productId===product.id){c.installment=term;ids.push(c.id);}
+ return ids;
+}

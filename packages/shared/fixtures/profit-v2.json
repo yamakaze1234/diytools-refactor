@@ -1,0 +1,385 @@
+{
+  "sourceSha256": "8263900e3e87331235f3a139cfcf220cc988e7ae6dcb2e7ae90f0729378833e1",
+  "formulaVersion": "profit/v2",
+  "syntheticOnly": true,
+  "cases": [
+    {
+      "case": "valid",
+      "config": {
+        "id": "synthetic-a",
+        "price": 1000,
+        "installment": 12,
+        "parts": [
+          {
+            "name": "display only",
+            "qty": 1,
+            "tax": 999
+          }
+        ],
+        "actualParts": [
+          {
+            "slot": "CPU",
+            "goodsId": "123",
+            "name": "synthetic CPU",
+            "qty": 2,
+            "tax": 100
+          }
+        ]
+      },
+      "erpCostsCents": {
+        "123": 7500
+      },
+      "snapshot": {
+        "shopId": "",
+        "productId": "",
+        "product": "",
+        "configId": "synthetic-a",
+        "name": "",
+        "revision": null,
+        "priceCents": 100000,
+        "installment": 12,
+        "feeCents": 6000,
+        "parts": [
+          {
+            "lineId": "0:CPU",
+            "slot": "CPU",
+            "name": "synthetic CPU",
+            "goodsId": "123",
+            "qty": 2,
+            "taxCents": 10000,
+            "taxUpdatedAt": null
+          }
+        ]
+      },
+      "expected": {
+        "erp": {
+          "valid": true,
+          "reason": "",
+          "profitCents": 77000,
+          "totalCostCents": 15000
+        },
+        "accounting": {
+          "valid": true,
+          "reason": "",
+          "profitCents": 60000,
+          "totalCostCents": 20000
+        }
+      }
+    },
+    {
+      "case": "erpUnknown",
+      "config": {
+        "id": "synthetic-a",
+        "price": 1000,
+        "installment": 12,
+        "parts": [
+          {
+            "name": "display only",
+            "qty": 1,
+            "tax": 999
+          }
+        ],
+        "actualParts": [
+          {
+            "slot": "CPU",
+            "goodsId": "123",
+            "name": "synthetic CPU",
+            "qty": 2,
+            "tax": 100
+          }
+        ]
+      },
+      "erpCostsCents": {},
+      "snapshot": {
+        "shopId": "",
+        "productId": "",
+        "product": "",
+        "configId": "synthetic-a",
+        "name": "",
+        "revision": null,
+        "priceCents": 100000,
+        "installment": 12,
+        "feeCents": 6000,
+        "parts": [
+          {
+            "lineId": "0:CPU",
+            "slot": "CPU",
+            "name": "synthetic CPU",
+            "goodsId": "123",
+            "qty": 2,
+            "taxCents": 10000,
+            "taxUpdatedAt": null
+          }
+        ]
+      },
+      "expected": {
+        "erp": {
+          "valid": false,
+          "reason": "CPU ERP 成本缺失",
+          "profitCents": null,
+          "totalCostCents": null
+        },
+        "accounting": {
+          "valid": true,
+          "reason": "",
+          "profitCents": 60000,
+          "totalCostCents": 20000
+        }
+      }
+    },
+    {
+      "case": "emptyActual",
+      "config": {
+        "id": "synthetic-a",
+        "price": 1000,
+        "installment": 12,
+        "parts": [
+          {
+            "name": "display only",
+            "qty": 1,
+            "tax": 999
+          }
+        ],
+        "actualParts": []
+      },
+      "erpCostsCents": {
+        "123": 7500
+      },
+      "snapshot": {
+        "shopId": "",
+        "productId": "",
+        "product": "",
+        "configId": "synthetic-a",
+        "name": "",
+        "revision": null,
+        "priceCents": 100000,
+        "installment": 12,
+        "feeCents": 6000,
+        "parts": []
+      },
+      "expected": {
+        "erp": {
+          "valid": false,
+          "reason": "没有实际成本配件",
+          "profitCents": null,
+          "totalCostCents": null
+        },
+        "accounting": {
+          "valid": false,
+          "reason": "没有实际成本配件",
+          "profitCents": null,
+          "totalCostCents": null
+        }
+      }
+    },
+    {
+      "case": "rounding",
+      "config": {
+        "id": "synthetic-a",
+        "price": "1000.005",
+        "installment": 24,
+        "parts": [
+          {
+            "name": "display only",
+            "qty": 1,
+            "tax": 999
+          }
+        ],
+        "actualParts": [
+          {
+            "slot": "CPU",
+            "goodsId": "123",
+            "name": "synthetic CPU",
+            "qty": 2,
+            "tax": 100
+          }
+        ]
+      },
+      "erpCostsCents": {
+        "123": 7500
+      },
+      "snapshot": {
+        "shopId": "",
+        "productId": "",
+        "product": "",
+        "configId": "synthetic-a",
+        "name": "",
+        "revision": null,
+        "priceCents": 100001,
+        "installment": 24,
+        "feeCents": 10000,
+        "parts": [
+          {
+            "lineId": "0:CPU",
+            "slot": "CPU",
+            "name": "synthetic CPU",
+            "goodsId": "123",
+            "qty": 2,
+            "taxCents": 10000,
+            "taxUpdatedAt": null
+          }
+        ]
+      },
+      "expected": {
+        "erp": {
+          "valid": true,
+          "reason": "",
+          "profitCents": 73001,
+          "totalCostCents": 15000
+        },
+        "accounting": {
+          "valid": true,
+          "reason": "",
+          "profitCents": 56001,
+          "totalCostCents": 20000
+        }
+      }
+    },
+    {
+      "case": "invalidQty",
+      "config": {
+        "id": "synthetic-a",
+        "price": 1000,
+        "installment": 12,
+        "parts": [
+          {
+            "name": "display only",
+            "qty": 1,
+            "tax": 999
+          }
+        ],
+        "actualParts": [
+          {
+            "slot": "CPU",
+            "goodsId": "123",
+            "name": "synthetic CPU",
+            "qty": 0,
+            "tax": 100
+          }
+        ]
+      },
+      "erpCostsCents": {
+        "123": 7500
+      },
+      "snapshot": {
+        "shopId": "",
+        "productId": "",
+        "product": "",
+        "configId": "synthetic-a",
+        "name": "",
+        "revision": null,
+        "priceCents": 100000,
+        "installment": 12,
+        "feeCents": 6000,
+        "parts": [
+          {
+            "lineId": "0:CPU",
+            "slot": "CPU",
+            "name": "synthetic CPU",
+            "goodsId": "123",
+            "qty": null,
+            "taxCents": 10000,
+            "taxUpdatedAt": null
+          }
+        ]
+      },
+      "expected": {
+        "erp": {
+          "valid": false,
+          "reason": "CPU数量无效",
+          "profitCents": null,
+          "totalCostCents": null
+        },
+        "accounting": {
+          "valid": false,
+          "reason": "CPU数量无效",
+          "profitCents": null,
+          "totalCostCents": null
+        }
+      }
+    }
+  ],
+  "thresholds": [
+    {
+      "profitCents": -30001,
+      "anchor": 0,
+      "expected": {
+        "loss": true,
+        "change": true,
+        "recovered": false,
+        "previousDeltaCents": null,
+        "anchorDeltaCents": -30001,
+        "reasons": [
+          "loss",
+          "change"
+        ]
+      }
+    },
+    {
+      "profitCents": -30000,
+      "anchor": 0,
+      "expected": {
+        "loss": false,
+        "change": true,
+        "recovered": false,
+        "previousDeltaCents": null,
+        "anchorDeltaCents": -30000,
+        "reasons": [
+          "change"
+        ]
+      }
+    },
+    {
+      "profitCents": -10001,
+      "anchor": 0,
+      "expected": {
+        "loss": false,
+        "change": true,
+        "recovered": false,
+        "previousDeltaCents": null,
+        "anchorDeltaCents": -10001,
+        "reasons": [
+          "change"
+        ]
+      }
+    },
+    {
+      "profitCents": -10000,
+      "anchor": 0,
+      "expected": {
+        "loss": false,
+        "change": false,
+        "recovered": false,
+        "previousDeltaCents": null,
+        "anchorDeltaCents": -10000,
+        "reasons": []
+      }
+    },
+    {
+      "profitCents": 10000,
+      "anchor": 0,
+      "expected": {
+        "loss": false,
+        "change": false,
+        "recovered": false,
+        "previousDeltaCents": null,
+        "anchorDeltaCents": 10000,
+        "reasons": []
+      }
+    },
+    {
+      "profitCents": 10001,
+      "anchor": 0,
+      "expected": {
+        "loss": false,
+        "change": true,
+        "recovered": false,
+        "previousDeltaCents": null,
+        "anchorDeltaCents": 10001,
+        "reasons": [
+          "change"
+        ]
+      }
+    }
+  ]
+}

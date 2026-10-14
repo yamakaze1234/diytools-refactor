@@ -1,0 +1,13 @@
+{
+  "name": "diytools-refactor",
+  "version": "0.2.0",
+  "private": true,
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "dev": "pnpm --filter @diytools/desktop tauri dev",
+    "dev:web": "pnpm --filter @diytools/desktop dev",
+    "build:web": "pnpm --filter @diytools/desktop build",
+    "build:desktop": "pnpm --filter @diytools/desktop tauri build",
+    "check:python": "uv run --directory services/erp-worker --locked python main.py"
+  }
+}

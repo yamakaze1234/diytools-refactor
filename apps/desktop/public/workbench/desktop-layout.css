@@ -1,0 +1,43 @@
+/* Desktop host layout only; business forms and poster geometry stay unchanged. */
+:root { --desktop-toolbar-height: 48px; }
+.topbar { height: var(--desktop-toolbar-height); min-height: var(--desktop-toolbar-height); padding: 6px 18px; gap: 12px; flex-wrap: nowrap; }
+.topbar .brand { font-size: 14px; letter-spacing: 0; }
+.topbar .brand span { font-size: 14px; margin-left: 5px; }
+.topbar .prototype, .topbar #erp-last,
+.topbar #workspace-sync-status { display: none; }
+.topbar .top-right { gap: 8px; }
+.topbar .erp-sync-controls, .topbar .workspace-sync-controls { border: 0; padding: 0; min-width: 0; }
+.topbar button { min-height: 30px; padding: 5px 10px; }
+.topbar #save-status { max-width: 210px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-right: 2px; }
+.topbar #operator-open { border-color: transparent; color: var(--muted); }
+.workspace-step { display: none; }
+.main .page-heading { margin-bottom: 12px; }
+.main .page-heading h1 { font-size: 20px; margin: 5px 0; }
+.main .breadcrumb { font-size: 11px; }
+.preview-side:not(.preview-expanded) .preview-head .step-number { display: none; }
+.preview-side:not(.preview-expanded) .preview-head h2 { font-size: 14px; }
+.preview-side:not(.preview-expanded) .preview-quick-actions { margin: 6px 0; }
+.sidebar .sidebar-utilities { margin: 2px 0 8px; }
+@media (min-width: 1181px) {
+  html, body { height: 100%; overflow: hidden; }
+  .workspace { height: calc(100dvh - var(--desktop-toolbar-height)); min-height: 0; grid-template-columns: 248px minmax(420px, 1fr) clamp(360px, 28vw, 640px); overflow: hidden; }
+  .workspace > .sidebar { position: relative; top: 0; height: 100%; min-height: 0; grid-row: auto; }
+  .workspace > .main { height: 100%; min-height: 0; overflow: auto; padding: 18px 22px; overscroll-behavior: contain; scrollbar-gutter: stable; }
+  .workspace > .preview-side:not(.preview-expanded) { position: relative; top: 0; grid-column: auto; height: 100%; min-height: 0; overflow: hidden; padding: 16px; }
+  .preview-side:not(.preview-expanded) #preview-scroll { min-height: 0; flex: 1; overflow: auto; }
+  .preview-side:not(.preview-expanded) .preview-bottom { flex-shrink: 0; }
+  .workspace-resizer { height: 100%; }
+}
+@media (max-width: 1180px) {
+  .topbar { position: sticky; top: 0; }
+  .workspace { min-height: calc(100dvh - var(--desktop-toolbar-height)); }
+  .sidebar { top: var(--desktop-toolbar-height); height: calc(100dvh - var(--desktop-toolbar-height)); }
+  .topbar .brand { display: none; }
+  .topbar .top-right { width: 100%; justify-content: flex-end; }
+}
+@media (max-width: 720px) {
+  .sidebar { height: auto; }
+  .topbar { padding-inline: 10px; }
+  .topbar #operator-open { display: none; }
+  .topbar #save-status { max-width: 110px; }
+}

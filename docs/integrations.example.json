@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "cloud": {
+    "envId": "example-env",
+    "endpoint": "https://cloud.example.test"
+  },
+  "erp": {
+    "domain": "https://erp.example.test/"
+  }
+}
