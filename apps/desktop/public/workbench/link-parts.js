@@ -130,12 +130,14 @@ export function createLinkPartsExportSession(api){
    const controller=new AbortController();exportController=controller;
    try{
     const result=await api.exportImages(clone(savedScope),kind,message=>{if(!closed&&!controller.signal.aborted)status(message);},{signal:controller.signal});
-    if(controller.signal.aborted)throw controller.signal.reason||cancelled();
+    // 原生保存完成后迟到的取消不能推翻任务中心的实际交付回执。
+    if(controller.signal.aborted&&!['completed','partial'].includes(result?.phase))throw controller.signal.reason||cancelled();
     return result;
    }finally{if(exportController===controller)exportController=null;}
   },
   cancel(){exportController?.abort(cancelled());},
-  close(){closed=true;savedScope=null;exportController?.abort(cancelled());}
+  // 关闭面板仅解除文字订阅；已启动任务由任务中心管理，不能隐式取消。
+  close(){closed=true;savedScope=null;}
  };
 }
 

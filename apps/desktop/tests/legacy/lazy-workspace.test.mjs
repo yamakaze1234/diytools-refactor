@@ -1,3 +1,4 @@
+import {createReactWorkbenchAdapter} from '../../public/workbench/react-adapter.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -104,7 +105,8 @@ test('collapsed link groups create no hidden config DOM; searching renders only 
  const implementation=text.slice(text.indexOf('function renderList('),text.indexOf('function renderProduct('));
  const rows=Array.from({length:3000},(_,i)=>({...config('c'+i),product:'链接',name:'配置'+i,version:'',parts:[{slot:'CPU',name:'CPU'}]}));
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',classList:{toggle(){}},querySelectorAll:()=>[]});return nodes.get(id);};
- const context=vm.createContext({document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){}});
+ // 测试使用真实兼容桥接收列表标记，React 节点稳定性另由浏览器专项覆盖。
+ const context=vm.createContext({reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){}});
  vm.runInContext(implementation,context);context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert.match(node('#config-list').innerHTML,/<header>链接<\/header>/);
  node('#search').value='配置2999';context.renderList();assert.equal((node('#config-list').innerHTML.match(/class="config-item/g)||[]).length,1);assert.match(node('#config-list').innerHTML,/data-id="c2999"/);
  assert(context.collapsedProducts.has('link'));

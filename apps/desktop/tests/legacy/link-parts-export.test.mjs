@@ -52,11 +52,11 @@ test('取消导出停止后续状态，允许重新导出且不重复更换',asy
  await session.export('long',message=>status.push(message));assert.deepEqual(status,['完成']);assert.equal(saves,1);assert.equal(signal.aborted,false);
 });
 
-test('关闭旧会话时阻止迟到导出状态污染新会话',async()=>{
+test('关闭旧面板后导出继续但不污染新会话',async()=>{
  const configs=[config('1')],pending=deferred(),messages=[];let oldSignal;
  const old=createLinkPartsExportSession({getConfigs:()=>configs,apply:async p=>applyReplacement(p,configs),exportImages:async(_scope,_kind,status,{signal})=>{oldSignal=signal;await pending.promise;status('旧会话完成');}});
- await old.save(batch(configs));const exporting=old.export('both',m=>messages.push(m));old.close();assert.equal(oldSignal.aborted,true);assert.equal(old.scope(),null);
- const current=createLinkPartsExportSession({getConfigs:()=>configs,apply:async()=>{},exportImages:async()=>{}});pending.resolve();await assert.rejects(exporting,{name:'AbortError'});assert.deepEqual(messages,[]);assert.equal(current.scope(),null);
+ await old.save(batch(configs));const exporting=old.export('both',m=>messages.push(m));old.close();assert.equal(oldSignal.aborted,false);assert.equal(old.scope(),null);
+ const current=createLinkPartsExportSession({getConfigs:()=>configs,apply:async()=>{},exportImages:async()=>{}});pending.resolve();await exporting;assert.deepEqual(messages,[]);assert.equal(current.scope(),null);
 });
 
 test('关闭时尚在保存，保存继续完成但不会捕获新弹窗的数据或启动导图',async()=>{

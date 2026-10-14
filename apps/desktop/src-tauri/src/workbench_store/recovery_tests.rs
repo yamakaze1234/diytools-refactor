@@ -76,7 +76,7 @@ fn batch(before: &Value) -> Value {
 #[test]
 fn batch_sql_failures_roll_back_every_stage_and_identical_operation_retries_once() {
     let stages = [
-        ("state", "BEFORE UPDATE ON workbench_state", ""),
+        ("state", "BEFORE UPDATE ON workbench_metadata", ""),
         ("history", "BEFORE INSERT ON workbench_history", ""),
         // The first activity insert has already succeeded when the second fails.
         (

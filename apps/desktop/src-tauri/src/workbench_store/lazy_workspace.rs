@@ -1,9 +1,6 @@
-// 按需加载存储：列表使用摘要，详情使用绑定版本的配置投影；完整 JSON 始终是权威业务数据。
-//! Revision-bound, rebuildable configuration projection. The compatibility JSON
-//! remains authoritative, including unknown fields; a local edit parses only its
-//! target configurations. SQLite performs the atomic JSON patch on disk.
+// 按需加载存储：配置实体是权威数据；列表投影可清理，单套编辑只写目标实体与根版本。
+//! Configuration entities remain authoritative; summaries are rebuildable caches.
 use super::*;
-use rusqlite::types::Value as SqlValue;
 
 const SUMMARY_FIELDS: &[&str] = &[
     "id", "shopId", "shop", "productId", "product", "productUrl", "spu",
@@ -32,7 +29,7 @@ fn summary(row: &Value) -> Value {
 }
 // 读取根元数据时排除 configs/logs，列表启动不构造整库配置和日志对象。
 fn metadata(c: &Connection) -> Result<Value> {
-    let raw: String = c.query_row("SELECT json_remove(document,'$.configs','$.logs') FROM workbench_state WHERE id=1", [], |r|r.get(0)).map_err(|e|e.to_string())?;
+    let raw: String = c.query_row("SELECT json_remove(document,'$.configs','$.logs') FROM workbench_metadata WHERE id=1", [], |r|r.get(0)).map_err(|e|e.to_string())?;
     serde_json::from_str(&raw).map_err(|e|e.to_string())
 }
 // 用数据库触发器让小型版本头与正文同事务更新，单套加载无需解析整份主 JSON。
@@ -41,15 +38,15 @@ pub(super) fn initialize_projection(tx: &Transaction) -> Result<()> {
     // header in the same SQLite transaction as the authoritative document.
     // Storing JSON text preserves missing vs null and exact numeric values.
     tx.execute_batch("CREATE TABLE IF NOT EXISTS workbench_state_header(id INTEGER PRIMARY KEY CHECK(id=1),revision TEXT,updated_at TEXT);
-        CREATE TRIGGER IF NOT EXISTS workbench_state_header_insert AFTER INSERT ON workbench_state BEGIN
+        CREATE TRIGGER IF NOT EXISTS workbench_state_header_insert AFTER INSERT ON workbench_metadata BEGIN
           INSERT OR REPLACE INTO workbench_state_header VALUES(NEW.id,NEW.document -> '$.revision',NEW.document -> '$.updatedAt'); END;
-        CREATE TRIGGER IF NOT EXISTS workbench_state_header_update AFTER UPDATE OF document ON workbench_state BEGIN
+        CREATE TRIGGER IF NOT EXISTS workbench_state_header_update AFTER UPDATE OF document ON workbench_metadata BEGIN
           INSERT OR REPLACE INTO workbench_state_header VALUES(NEW.id,NEW.document -> '$.revision',NEW.document -> '$.updatedAt'); END;
-        CREATE TRIGGER IF NOT EXISTS workbench_state_header_delete AFTER DELETE ON workbench_state BEGIN
+        CREATE TRIGGER IF NOT EXISTS workbench_state_header_delete AFTER DELETE ON workbench_metadata BEGIN
           DELETE FROM workbench_state_header WHERE id=OLD.id; END;
         CREATE TABLE IF NOT EXISTS workbench_config_projection(id TEXT PRIMARY KEY,position INTEGER NOT NULL UNIQUE,document TEXT NOT NULL,summary TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workbench_config_projection_meta(id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
-        INSERT OR IGNORE INTO workbench_state_header SELECT id,document -> '$.revision',document -> '$.updatedAt' FROM workbench_state WHERE id=1 AND NOT EXISTS(SELECT 1 FROM workbench_state_header WHERE id=1);").map_err(|e|e.to_string())?;
+        INSERT OR IGNORE INTO workbench_state_header SELECT id,document -> '$.revision',document -> '$.updatedAt' FROM workbench_metadata WHERE id=1 AND NOT EXISTS(SELECT 1 FROM workbench_state_header WHERE id=1);").map_err(|e|e.to_string())?;
     Ok(())
 }
 // JSON 文本形式保留字段缺失、显式 null 和数字原文，兼容逆向历史的精确恢复。
@@ -72,7 +69,7 @@ fn ensure_projection(tx: &Transaction, revision: i64) -> Result<()> {
     tx.execute("DELETE FROM workbench_config_projection", []).map_err(|e|e.to_string())?;
     // json_each returns one serialized object at a time. Never create an owned
     // serde tree for the whole workspace merely to show a list.
-    let mut source = tx.prepare("SELECT CAST(j.key AS INTEGER),j.value FROM workbench_state s,json_each(s.document,'$.configs') j WHERE s.id=1 ORDER BY CAST(j.key AS INTEGER)").map_err(|e|e.to_string())?;
+    let mut source = tx.prepare("SELECT position,document FROM workbench_configs ORDER BY position").map_err(|e|e.to_string())?;
     let mut insert = tx.prepare("INSERT INTO workbench_config_projection VALUES(?1,?2,?3,?4)").map_err(|e|e.to_string())?;
     let rows = source.query_map([], |r|Ok((r.get::<_, i64>(0)?,r.get::<_, String>(1)?))).map_err(|e|e.to_string())?;
     for item in rows {
@@ -110,21 +107,10 @@ pub(super) fn load(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse>
     let tx = c.transaction_with_behavior(TransactionBehavior::Deferred).map_err(|e|e.to_string())?;
     let meta = header(&tx)?;
     if requested!=revision(&meta) {return Ok(failure(409,"配置列表已更新，请重新加载列表后重试"));}
-    let projected: Option<i64> = tx.query_row("SELECT revision FROM workbench_config_projection_meta WHERE id=1", [], |r|r.get(0)).optional().map_err(|e|e.to_string())?;
-    // Ordinary detail reads never reserve the writer lock. If a full save has
-    // invalidated the projection, acquire a fresh write transaction and check
-    // the revision again before rebuilding it, avoiding a read-upgrade race.
-    // 投影失效时先结束读取事务，再开写事务并复核版本，避免读锁升级竞争。
-    let tx = if projected == Some(requested) { tx } else {
-        tx.rollback().map_err(|e|e.to_string())?;
-        let tx = c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e|e.to_string())?;
-        if requested!=revision(&header(&tx)?) {return Ok(failure(409,"配置列表已更新，请重新加载列表后重试"));}
-        ensure_projection(&tx,requested)?;
-        tx
-    };
+    // 详情直接读取权威实体；清理列表缓存不会让单套打开退化为全库重建。
     let mut configs=Vec::new();
     for id in ids {
-        let raw: Option<String> = tx.query_row("SELECT document FROM workbench_config_projection WHERE id=?1", [id.as_str().unwrap()], |r|r.get(0)).optional().map_err(|e|e.to_string())?;
+        let raw: Option<String> = tx.query_row("SELECT document FROM workbench_configs WHERE id=?1", [id.as_str().unwrap()], |r|r.get(0)).optional().map_err(|e|e.to_string())?;
         let Some(raw)=raw else {return Ok(failure(404,"配置不存在，请刷新列表"));};
         configs.push(serde_json::from_str::<Value>(&raw).map_err(|e|e.to_string())?);
     }
@@ -151,13 +137,13 @@ pub(super) fn save_patch(store: &WorkbenchStore, input: &Value) -> Result<ApiRes
         return Ok(response(200,receipt));
     }
     if base_revision>revision(&before){return Ok(failure(409,"保存基线版本无效"));}
-    ensure_projection(&tx,revision(&before))?;
+    let cached: Option<i64> = tx.query_row("SELECT revision FROM workbench_config_projection_meta WHERE id=1", [], |r|r.get(0)).optional().map_err(|e|e.to_string())?;
     let rebased=base_revision!=revision(&before);
     let mut seen=HashSet::new();let mut saved=Vec::new();let mut changes=Vec::new();let mut patches=Vec::new();
     for change in rows {
         let id=change["id"].as_str().filter(|v|!v.is_empty()).ok_or("配置 ID 无效")?;
         if !seen.insert(id){return Ok(failure(400,"配置 ID 重复"));}
-        let record:Option<(i64,String)>=tx.query_row("SELECT position,document FROM workbench_config_projection WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
+        let record:Option<(i64,String)>=tx.query_row("SELECT position,document FROM workbench_configs WHERE id=?1",[id],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e|e.to_string())?;
         let Some((position,raw))=record else{return Ok(failure(409,"目标配置已删除或不存在"));};
         let current:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
         if current.get("deletedAt").is_some_and(|v|!v.is_null()&&v!=""){return Ok(failure(409,"目标配置已删除或不存在"));}
@@ -176,20 +162,20 @@ pub(super) fn save_patch(store: &WorkbenchStore, input: &Value) -> Result<ApiRes
     }
     let unchanged=changes.is_empty();let mut after=before.clone();let mut activity=Vec::new();
     if !unchanged {
-        let order={let mut q=tx.prepare("SELECT id FROM workbench_config_projection ORDER BY position").map_err(|e|e.to_string())?;
+        let order={let mut q=tx.prepare("SELECT id FROM workbench_configs ORDER BY position").map_err(|e|e.to_string())?;
             q.query_map([],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?.map(|r|r.map(Value::String).map_err(|e|e.to_string())).collect::<Result<Vec<_>>>()?};
         let delta=batch_delta(before.get("revision").cloned(),before.get("updatedAt").cloned(),&mut after,changes,order,now());
-        // Group at most 32 replacements per SQL call to stay below JSON1's
-        // conservative argument limit. The transaction remains all-or-nothing.
-        // 分组限制 JSON1 参数数量，但所有组仍在同一事务，不能出现半批保存。
-        for chunk in patches.chunks(32) {
-            let mut sql=String::from("UPDATE workbench_state SET document=json_set(document");let mut values=Vec::<SqlValue>::new();
-            for (position,_,raw,_) in chunk {sql.push_str(",?,json(?)");values.push(format!("$.configs[{position}]").into());values.push(raw.clone().into());}
-            sql.push_str(",'$.revision',?,'$.updatedAt',?) WHERE id=1");values.push(revision(&after).into());values.push(after["updatedAt"].as_str().unwrap().to_owned().into());
-            tx.execute(&sql,rusqlite::params_from_iter(values)).map_err(|e|e.to_string())?;
+        // 只更新变化的配置行；根元数据不再携带 configs，写放大与配置总数无关。
+        for (_,id,raw,summary) in &patches {
+            tx.execute("UPDATE workbench_configs SET document=?1 WHERE id=?2",params![raw,id]).map_err(|e|e.to_string())?;
+            if cached == Some(revision(&before)) {
+                tx.execute("UPDATE workbench_config_projection SET document=?1,summary=?2 WHERE id=?3",params![raw,summary,id]).map_err(|e|e.to_string())?;
+            }
         }
-        for (_,id,raw,summary) in &patches {tx.execute("UPDATE workbench_config_projection SET document=?1,summary=?2 WHERE id=?3",params![raw,summary,id]).map_err(|e|e.to_string())?;}
-        tx.execute("UPDATE workbench_config_projection_meta SET revision=?1 WHERE id=1",[revision(&after)]).map_err(|e|e.to_string())?;
+        tx.execute("UPDATE workbench_metadata SET document=json_set(document,'$.revision',?1,'$.updatedAt',?2) WHERE id=1",params![revision(&after),after["updatedAt"].as_str()]).map_err(|e|e.to_string())?;
+        if cached == Some(revision(&before)) {
+            tx.execute("UPDATE workbench_config_projection_meta SET revision=?1 WHERE id=1",[revision(&after)]).map_err(|e|e.to_string())?;
+        }
         tx.execute("INSERT INTO workbench_history(at,revision,document) VALUES(?1,?2,?3)",params![after["updatedAt"].as_str(),revision(&after),delta.to_string()]).map_err(|e|e.to_string())?;
         for change in delta["configs"].as_array().unwrap() {
             let record=&change["after"];
@@ -248,7 +234,7 @@ mod tests {
     #[test]
     fn foreign_full_save_invalidates_projection_and_partial_payload_is_rejected(){
         let s=fixture();decode(index(&s).unwrap());let mut before=state(&db(&s.path).unwrap()).unwrap();before["configs"][0]["name"]=json!("remote");before["revision"]=json!(8);
-        db(&s.path).unwrap().execute("UPDATE workbench_state SET document=?1 WHERE id=1",[before.to_string()]).unwrap();
+        entities::replace_fixture(&db(&s.path).unwrap(), &before);
         assert_eq!(decode(index(&s).unwrap())["summaries"][0]["name"],"remote");
         let mut partial=before["configs"][0].clone();partial["__workbenchSummary"]=json!(true);
         assert_eq!(save_patch(&s,&patch(&s,partial,"price",json!(50),"bad",8)).unwrap().status,400);
@@ -264,7 +250,7 @@ mod tests {
         for explicit_null in [false,true] {
             let s=fixture();let c=db(&s.path).unwrap();let mut before=state(&c).unwrap();
             for key in ["revision","updatedAt"] {if explicit_null {before[key]=Value::Null;}else{before.as_object_mut().unwrap().remove(key);}}
-            c.execute("UPDATE workbench_state SET document=?1 WHERE id=1",[before.to_string()]).unwrap();
+            entities::replace_fixture(&c, &before);
             let initial:i64=c.query_row("SELECT MAX(sequence) FROM workbench_history",[],|r|r.get(0)).unwrap();
             decode(save_patch(&s,&patch(&s,before["configs"][0].clone(),"price",json!(20),"presence",0)).unwrap());
             assert_eq!(reconstruct(&c,initial).unwrap(),before);
@@ -282,7 +268,9 @@ mod tests {
     fn detail_read_uses_committed_snapshot_without_waiting_for_writer(){
         let s=fixture();decode(index(&s).unwrap());let mut writer=db(&s.path).unwrap();
         let tx=writer.transaction_with_behavior(TransactionBehavior::Immediate).unwrap();
-        tx.execute("UPDATE workbench_state SET document=json_set(document,'$.revision',8,'$.configs[0].name','uncommitted') WHERE id=1",[]).unwrap();
+        // 未提交的实体和版本头须保持在同一事务中。
+        tx.execute("UPDATE workbench_metadata SET document=json_set(document,'$.revision',8) WHERE id=1",[]).unwrap();
+        tx.execute("UPDATE workbench_configs SET document=json_set(document,'$.name','uncommitted') WHERE id='a'",[]).unwrap();
         let started=std::time::Instant::now();
         let loaded=decode(load(&s,&json!({"ids":["a"],"revision":7})).unwrap());
         assert_eq!(loaded["configs"][0]["name"],"配置2");
@@ -302,13 +290,13 @@ mod tests {
         assert_eq!(header(&c).unwrap(),json!({"revision":7,"updatedAt":"old"}));
         assert_eq!(state(&c).unwrap(),before);
         let tx=c.transaction().unwrap();
-        tx.execute("UPDATE workbench_state SET document=?1",[r#"{"revision":1234567890123456789,"updatedAt":null}"#]).unwrap();
+        tx.execute("UPDATE workbench_metadata SET document=?1",[r#"{"revision":1234567890123456789,"updatedAt":null}"#]).unwrap();
         assert_eq!(header(&tx).unwrap(),serde_json::from_str::<Value>(r#"{"revision":1234567890123456789,"updatedAt":null}"#).unwrap());
         tx.rollback().unwrap();
         assert_eq!(header(&c).unwrap(),json!({"revision":7,"updatedAt":"old"}));
-        c.execute("DELETE FROM workbench_state",[]).unwrap();
+        c.execute("DELETE FROM workbench_metadata",[]).unwrap();
         assert!(header(&c).is_err());
-        c.execute("INSERT INTO workbench_state VALUES(1,'{}')",[]).unwrap();
+        c.execute("INSERT INTO workbench_metadata VALUES(1,'{}')",[]).unwrap();
         assert_eq!(header(&c).unwrap(),json!({}));
     }
 }

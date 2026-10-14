@@ -708,8 +708,8 @@ mod tests {
             let c = Connection::open(&store.path).unwrap();
             let raw: String = c.query_row("SELECT document FROM workbench_state", [], |r| r.get(0)).unwrap();
             let mut doc: Value = serde_json::from_str(&raw).unwrap();
-            doc[key] = json!([{"preserve":true}]);
-            c.execute("UPDATE workbench_state SET document=?1", [doc.to_string()]).unwrap();
+            doc[key] = json!([{"id":"preserved-config","preserve":true}]);
+            workbench_store::replace_fixture(&c, &doc);
             assert!(connect_seed(&store, &owner, || Ok(())).is_err(), "{key}");
             assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
         }
@@ -741,7 +741,7 @@ mod tests {
         let calls = Cell::new(0);
         assert!(connect_seed(&store, &owner, || {
             calls.set(calls.get() + 1);
-            if calls.get() == 2 { c.execute("UPDATE workbench_state SET document=json_set(document,'$.unknownBusiness','concurrent')", []).unwrap(); }
+            if calls.get() == 2 { c.execute("UPDATE workbench_metadata SET document=json_set(document,'$.unknownBusiness','concurrent')", []).unwrap(); }
             Ok(())
         }).is_err());
         assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);

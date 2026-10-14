@@ -91,7 +91,7 @@ fn check_factory_empty(c: &Connection) -> Result<()> {
     let expected = json!({"revision":0,"configs":[],"templates":[],"sourceCatalog":[],"costSource":[],"caseGallery":[],"shopSettings":{}});
     let reject = "本机同步准备信息缺失，且本机已有数据；已保留全部内容，不能自动绑定空工作区。";
     // 未来存储迁移须显式适配空库契约，不能按旧表结构误判更高版本的数据库。
-    if c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())? != 0 { return Err("本机数据库版本不支持自动空库接入，请更新程序后重试。".into()); }
+    if !matches!(c.pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0)).map_err(|e| e.to_string())?, 0 | 3) { return Err("本机数据库版本不支持自动空库接入，请更新程序后重试。".into()); }
     if state(c)? != expected { return Err(reject.into()); }
     let archive: String = c.query_row("SELECT document FROM workbench_log_archive WHERE id=1", [], |r| r.get(0)).map_err(|e| e.to_string())?;
     if serde_json::from_str::<Value>(&archive).map_err(|e| e.to_string())? != json!([]) { return Err(reject.into()); }
@@ -109,7 +109,8 @@ fn check_factory_empty(c: &Connection) -> Result<()> {
         q.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?.collect::<std::result::Result<_,_>>().map_err(|e| e.to_string())?
     };
     for table in tables {
-        if ["workbench_state","workbench_log_archive","workbench_history","workbench_state_header","workbench_config_projection_meta","workbench_cache_maintenance"].contains(&table.as_str()) { continue; }
+        // v3 根元数据已在上面的聚合正文比较中核对，配置实体仍须逐表检查为空。
+        if ["workbench_metadata","workbench_state","workbench_log_archive","workbench_history","workbench_state_header","workbench_config_projection_meta","workbench_cache_maintenance"].contains(&table.as_str()) { continue; }
         let sql = format!("SELECT EXISTS(SELECT 1 FROM \"{}\")", table.replace('"', "\"\""));
         if c.query_row(&sql, [], |r| r.get::<_, bool>(0)).map_err(|e| e.to_string())? { return Err(reject.into()); }
     }
@@ -990,12 +991,9 @@ mod tests {
         let activity: i64 = c
             .query_row("SELECT count(*) FROM workbench_activity", [], |r| r.get(0))
             .unwrap();
-        // Deliberately contains invalid business JSON to prove that metadata-only
-        // commits do not parse/validate/normalize or rewrite the workbench state.
-        let raw_header_only =
-            "{\"revision\":7,\"updatedAt\":\"original-time\",\"configs\":\"untouched-fixture\"}";
-        c.execute("UPDATE workbench_state SET document=?1", [raw_header_only])
-            .unwrap();
+        // 云元数据提交不能重写实体或根正文；保留不同空白与未知字段验证字节不变。
+        let raw_header_only = "{\"revision\":7, \"updatedAt\":\"original-time\", \"unknown\":true}";
+        c.execute("UPDATE workbench_metadata SET document=?1", [raw_header_only]).unwrap();
         let input = json!({"baseRevision":7,"cloudVersion":1,"documentPatch":{"set":{"lastSyncedAt":"new-time"},"records":[]}});
         let result: Value = serde_json::from_str(&commit(&store, &input).unwrap().body).unwrap();
         assert_eq!(result["revision"], 7);
@@ -1003,7 +1001,7 @@ mod tests {
         assert_eq!(result["cloudVersion"], 2);
         assert_eq!(
             c.query_row::<String, _, _>(
-                "SELECT document FROM workbench_state WHERE id=1",
+                "SELECT document FROM workbench_metadata WHERE id=1",
                 [],
                 |r| r.get(0)
             )
@@ -1028,8 +1026,7 @@ mod tests {
             saved["materializedProjection"],
             document()["materializedProjection"]
         );
-        c.execute("UPDATE workbench_state SET document=?1", [raw_before])
-            .unwrap();
+        entities::replace_fixture(&c, &serde_json::from_str::<Value>(&raw_before).unwrap());
         let input = patch_input(&store, json!({"set":{"cursor":6}}));
         assert_eq!(commit(&store, &input).unwrap().status, 200);
         assert_eq!(commit(&store, &input).unwrap().status, 409);

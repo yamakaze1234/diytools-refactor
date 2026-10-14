@@ -5,10 +5,13 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 import { installWorkbenchBridge } from './legacy/local-bridge';
 import { createWorkbenchCloseController } from './legacy/close-controller';
 import './LegacyWorkbench.css';
+import { createWorkbenchReactRenderer } from './legacy/react-workbench';
+const reactRenderers = new Set<ReturnType<typeof createWorkbenchReactRenderer>>();
 
 declare global {
  interface Window {
   installWorkbenchBridge?: typeof installWorkbenchBridge;
+  createWorkbenchReactRenderer?: typeof createWorkbenchReactRenderer;
   workbenchBeforeQuit?: () => Promise<void>;
   workbenchClosePending?: boolean;
   workbenchUpdatePending?: boolean;
@@ -16,10 +19,17 @@ declare global {
 }
 // Set up before the iframe is rendered, so its bootstrap cannot race the adapter.
 window.installWorkbenchBridge = installWorkbenchBridge;
+// 必须早于 iframe 模块执行，避免首次渲染退回旧节点后再接管。
+window.createWorkbenchReactRenderer = () => {
+ const renderer=createWorkbenchReactRenderer();reactRenderers.add(renderer);
+ const dispose=renderer.dispose;renderer.dispose=()=>{dispose();reactRenderers.delete(renderer);};
+ return renderer;
+};
 
 /** 管理 iframe 生命周期，卸载时释放消息及关闭监听。 */
 export default function LegacyWorkbench({onDirty}: {onDirty: (dirty: boolean) => void}) {
  const frame = useRef<HTMLIFrameElement>(null);
+ useEffect(()=>()=>{for(const renderer of reactRenderers)renderer.dispose();},[]);
  const [error, setError] = useState('');
  const [closeError, setCloseError] = useState('');
  const [closing, setClosing] = useState(false);

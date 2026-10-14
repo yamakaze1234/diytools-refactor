@@ -27,6 +27,10 @@ mod cloud_state;
 mod activity;
 #[path = "workbench_store/lazy_workspace.rs"]
 mod lazy_workspace;
+#[path = "workbench_store/entities.rs"]
+mod entities;
+#[cfg(test)]
+pub(crate) use entities::replace_fixture;
 #[path = "workbench_store/cache.rs"]
 mod cache;
 #[path = "workbench_store/image_cache.rs"]
@@ -255,11 +259,14 @@ pub fn initialize(path: &Path, source: &Path, assets: &Path) -> Result<Workbench
     fs::create_dir_all(path.parent().ok_or("数据库目录无效")?).map_err(|e| e.to_string())?;
     fs::create_dir_all(assets).map_err(|e| e.to_string())?;
     let mut c = db(path)?;
+    entities::check_version(&c)?;
     c.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| e.to_string())?;
     let tx = c
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
+    // 锁定旧库写入后再创建一致性备份，保证备份和本次迁移使用同一已提交版本。
+    entities::backup_before_migration(&tx, path)?;
     tx.execute_batch("CREATE TABLE IF NOT EXISTS workbench_state(id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workbench_log_archive(id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workbench_activity(sequence INTEGER PRIMARY KEY AUTOINCREMENT,document TEXT NOT NULL);
@@ -297,6 +304,7 @@ pub fn initialize(path: &Path, source: &Path, assets: &Path) -> Result<Workbench
         .map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO workbench_history(at,revision,document) VALUES(?1,?2,?3)",params![now(),revision(&imported),json!({"type":"import","sourceHash":format!("{:x}",Sha256::digest(raw.as_bytes())),"configCount":imported["configs"].as_array().unwrap().len(),"logCount":archive.as_array().unwrap().len()}).to_string()]).map_err(|e|e.to_string())?;
     }
+    entities::initialize(&tx)?;
     lazy_workspace::initialize_projection(&tx)?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(WorkbenchStore {
@@ -444,11 +452,7 @@ fn persist_prepared(
     }
     profile_finish!(history_timer, "history_build");
     profile_start!(state_write_timer);
-    tx.execute(
-        "UPDATE workbench_state SET document=?1 WHERE id=1",
-        [profile_expr!("state_json_serialize", after.to_string())],
-    )
-    .map_err(|e| e.to_string())?;
+    entities::replace(&tx, after)?;
     profile_finish!(state_write_timer, "state_serialize_and_sql_update");
     profile_start!(history_write_timer);
     tx.execute(
@@ -866,7 +870,7 @@ fn save_image(store: &WorkbenchStore, endpoint: &str, input: &Value) -> Result<A
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
     if endpoint == "/api/image" {
-        let valid: bool = tx.query_row("SELECT json_extract(document,'$.revision')=?1 AND EXISTS(SELECT 1 FROM json_each(document,'$.configs') WHERE json_extract(value,'$.id')=?2) FROM workbench_state WHERE id=1",
+        let valid: bool = tx.query_row("SELECT json_extract(document,'$.revision')=?1 AND EXISTS(SELECT 1 FROM workbench_configs WHERE id=?2) FROM workbench_metadata WHERE id=1",
             params![input["revision"].as_i64(), input["id"].as_str()], |r| r.get::<_, Option<bool>>(0))
             .map_err(|e| e.to_string())?.unwrap_or(false);
         if !valid {
@@ -1188,7 +1192,7 @@ pub fn request(
         )),
         ("GET", "/api/derived/status") => {
             let c = db(&store.path)?;
-            let raw: Option<String> = c.query_row("SELECT document -> '$.revision' FROM workbench_state WHERE id=1", [], |row| row.get(0)).map_err(|e|e.to_string())?;
+            let raw: Option<String> = c.query_row("SELECT revision FROM workbench_state_header WHERE id=1", [], |row| row.get(0)).map_err(|e|e.to_string())?;
             let current: Value = serde_json::from_str(raw.as_deref().unwrap_or("null")).map_err(|e|e.to_string())?;
             Ok(response(
                 200,
@@ -1405,15 +1409,27 @@ fn export_files(payload: &Value, directory: &Path) -> Result<Value> {
         return Err("导出文件夹名称无效".into());
     }
     let folder = create_export_folder(directory, suggested)?;
+    write_export_files(&folder, &files, write_new)
+}
+
+// 文件夹导出可能部分成功；返回确切落盘清单，让任务中心只重试未完成文件。
+fn write_export_files(folder: &Path, files: &[(String, Vec<u8>)], mut write: impl FnMut(&Path, &[u8]) -> Result<()>) -> Result<Value> {
     let mut created = HashSet::new();
-    for (name, raw) in &files {
-        if let Some((parent, _)) = name.split_once('/')
-            && created.insert(parent.to_lowercase())
-        {
-            // 父目录来自本次独占创建的空目录，拒绝接管已经存在的链接或目录。
-            fs::create_dir(folder.join(parent)).map_err(|e| e.to_string())?;
+    let mut saved = Vec::new();
+    for (index, (name, raw)) in files.iter().enumerate() {
+        let result = (|| {
+            if let Some((parent, _)) = name.split_once('/')
+                && created.insert(parent.to_lowercase())
+            {
+                // 父目录来自本次独占创建的空目录，拒绝接管已经存在的链接或目录。
+                fs::create_dir(folder.join(parent)).map_err(|e| e.to_string())?;
+            }
+            write(&folder.join(name), raw)
+        })();
+        if let Err(error) = result {
+            return Ok(json!({"ok":false,"cancelled":false,"directory":folder,"files":saved,"failedFiles":files[index..].iter().map(|(name,_)|name).collect::<Vec<_>>(),"error":error}));
         }
-        write_new(&folder.join(name), raw)?;
+        saved.push(name);
     }
     Ok(
         json!({"ok":true,"cancelled":false,"directory":folder,"count":files.iter().filter(|(name,_)|matches!(Path::new(name).extension().and_then(|s|s.to_str()).map(str::to_lowercase).as_deref(),Some("png"|"jpg"|"jpeg"|"webp"|"gif"|"bmp"|"svg"|"tiff"))).count(),"files":files.iter().map(|(name,_)|name).collect::<Vec<_>>()}),
@@ -1438,6 +1454,17 @@ pub async fn workbench_export_folder(payload: Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn partial_export_reports_only_confirmed_files() {
+        // 合成写入故障验证实际交付边界，不需要操作用户目录或打开文件对话框。
+        let files=vec![("first.png".into(),vec![1]),("second.png".into(),vec![2]),("third.png".into(),vec![3])];
+        let mut attempts=0;
+        let result=write_export_files(Path::new("isolated-export"),&files,|_,_|{attempts+=1;if attempts==2{Err("模拟磁盘故障".into())}else{Ok(())}}).unwrap();
+        assert_eq!(result["ok"],false);
+        assert_eq!(result["files"],json!(["first.png"]));
+        assert_eq!(result["failedFiles"],json!(["second.png","third.png"]));
+        assert_eq!(attempts,2);
+    }
     #[test]
     fn publication_catalog_stays_local_and_missing_catalog_is_empty() {
         // 合成目录保留在隔离测试区供统一回收，不接触任何安装数据。

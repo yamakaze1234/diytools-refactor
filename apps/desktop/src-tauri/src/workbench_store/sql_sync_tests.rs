@@ -146,13 +146,7 @@ fn stale_configuration_expired_preview_and_previous_read_are_rejected_atomically
     let preview = sql_preview(&store, rows(), &settings(), "operator").unwrap();
     let mut changed = state(&db(&store.path).unwrap()).unwrap();
     changed["configs"][0]["name"] = "用户随后改名".into();
-    db(&store.path)
-        .unwrap()
-        .execute(
-            "UPDATE workbench_state SET document=?1",
-            [changed.to_string()],
-        )
-        .unwrap();
+    entities::replace_fixture(&db(&store.path).unwrap(), &changed);
     assert!(
         sql_apply(&store, preview["id"].as_str().unwrap())
             .unwrap_err()

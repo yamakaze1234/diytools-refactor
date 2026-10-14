@@ -17,6 +17,7 @@ use std::{
 use tauri::{Emitter, Manager};
 pub(crate) mod access;
 mod gitea;
+mod recovery;
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const MANIFEST_NAME: &str = "diytools-refactor-windows-x86_64.json";
@@ -613,6 +614,59 @@ pub async fn updater_check(app: tauri::AppHandle) -> Result<CheckReport, String>
     .map_err(|e| e.to_string())?
 }
 
+// 本机更新结果不依赖网络，离线时也能说明上次回滚原因和备份位置。
+#[tauri::command]
+pub fn updater_recovery_status() -> Result<Option<serde_json::Value>, String> {
+    let (_, root) = executable_root()?;
+    latest_recovery_status(&root)
+}
+fn latest_recovery_status(root: &Path) -> Result<Option<serde_json::Value>, String> {
+    let updates = root.join(".updates");
+    if !updates.exists() {
+        return Ok(None);
+    }
+    plain_path(&updates)?;
+    let mut latest: Option<(std::time::SystemTime, serde_json::Value)> = None;
+    for entry in fs::read_dir(&updates).map_err(|e| e.to_string())? {
+        let entry = entry.map_err(|e| e.to_string())?;
+        if entry
+            .file_name()
+            .to_str()
+            .and_then(|name| uuid::Uuid::parse_str(name).ok())
+            .is_none()
+        {
+            continue;
+        }
+        let path = entry.path().join("status.json");
+        if !path.exists() || plain_path(&path).is_err() {
+            continue;
+        }
+        let Ok(file) = fs::File::open(&path) else {
+            continue;
+        };
+        let Ok(bytes) = read_bounded(file, 16384) else {
+            continue;
+        };
+        let Ok(mut status) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+            continue;
+        };
+        if !matches!(
+            status["phase"].as_str(),
+            Some("installed" | "failed" | "started-unconfirmed")
+        ) {
+            continue;
+        }
+        let Ok(modified) = fs::metadata(&path).and_then(|metadata| metadata.modified()) else {
+            continue;
+        };
+        if latest.as_ref().is_none_or(|(time, _)| modified > *time) {
+            status["directory"] = entry.path().to_string_lossy().to_string().into();
+            latest = Some((modified, status));
+        }
+    }
+    Ok(latest.map(|(_, value)| value))
+}
+
 // 流式下载同时累计大小和摘要，只有与签名清单完全一致才算下载成功。
 fn stream_artifact(
     mut reader: impl Read,
@@ -808,6 +862,8 @@ pub async fn updater_install(app: tauri::AppHandle) -> Result<InstallReport, Str
         file.sync_all().map_err(|e| e.to_string())?;
         drop(file);
         let child = hidden_command(&helper)
+            // 上一次更新的回执环境不能传播到新的助手或回滚程序。
+            .env_remove("DIYTOOLS_UPDATE_RECEIPT")
             .arg("--apply-update")
             .arg(&plan_path)
             .current_dir(&root)
@@ -917,6 +973,8 @@ fn validate_plan(
     if directory.join("backup.exe").exists()
         || directory.join("failed-new.exe").exists()
         || directory.join("ready.json").exists()
+        || directory.join("startup-ready.json").exists()
+        || directory.join("database-backup").exists()
     {
         return Err("更新目录已使用，拒绝重放".into());
     }
@@ -924,11 +982,23 @@ fn validate_plan(
 }
 
 // 保留旧程序再安装新程序；替换或启动失败时恢复旧程序，不覆盖已有备份。
+#[cfg(test)]
 fn replace_and_start(
     target: &Path,
     artifact: &Path,
     directory: &Path,
+    start: impl FnMut(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    replace_with_recovery(target, artifact, directory, start, || Ok(()))
+}
+
+// 数据库恢复先于旧程序重启，恢复失败时保留新旧程序及完整备份供处理。
+fn replace_with_recovery(
+    target: &Path,
+    artifact: &Path,
+    directory: &Path,
     mut start: impl FnMut(&Path) -> Result<(), String>,
+    mut restore: impl FnMut() -> Result<(), String>,
 ) -> Result<(), String> {
     let backup = directory.join("backup.exe");
     if backup.exists() || directory.join("failed-new.exe").exists() {
@@ -942,9 +1012,17 @@ fn replace_and_start(
                 backup.display()
             )
         })?;
-        return Err(format!("替换失败，已恢复旧程序：{error}"));
+        return match start(target) {
+            Ok(()) => Err(format!("替换失败，已恢复并重新启动旧程序：{error}")),
+            Err(restart) => Err(format!(
+                "替换失败，旧程序已恢复但重启失败：{error}；{restart}"
+            )),
+        };
     }
     if let Err(error) = start(target) {
+        restore().map_err(|restore_error| {
+            format!("新程序启动失败：{error}；数据库恢复失败：{restore_error}；禁止重启旧程序")
+        })?;
         fs::rename(target, directory.join("failed-new.exe")).map_err(|rollback| {
             format!(
                 "启动失败：{error}；保留失败新程序失败：{rollback}；旧程序在 {}",
@@ -957,8 +1035,12 @@ fn replace_and_start(
                 backup.display()
             )
         })?;
-        let _ = start(target);
-        return Err(format!("新程序启动失败，已恢复旧程序：{error}"));
+        return match start(target) {
+            Ok(()) => Err(format!("新程序启动失败，已恢复并重新启动旧程序：{error}")),
+            Err(restart) => Err(format!(
+                "新程序启动失败，旧程序已恢复但重启失败：{error}；{restart}"
+            )),
+        };
     }
     Ok(())
 }
@@ -1044,26 +1126,126 @@ fn apply_update(plan_path: &Path) -> Result<(), String> {
     {
         return Err("等待退出期间文件发生变化，拒绝替换".into());
     }
-    replace_and_start(&target, &artifact, directory, |path| {
-        let mut child = hidden_command(path)
-            .current_dir(path.parent().ok_or("程序目录无效")?)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-        std::thread::sleep(Duration::from_millis(1200));
-        if let Some(code) = child.try_wait().map_err(|e| e.to_string())? {
-            return Err(format!("新进程提前退出：{code}"));
-        }
-        Ok(())
-    })?;
-    write_status(
+    // 旧进程已完全退出，先备份包含 WAL 提交的数据库，再替换可执行文件。
+    let snapshot =
+        match recovery::Snapshot::capture(target.parent().ok_or("便携目录无效")?, directory) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                // 备份失败尚未修改程序或业务库，恢复用户的旧程序入口。
+                let restart = hidden_command(&target)
+                    .env_remove("DIYTOOLS_UPDATE_RECEIPT")
+                    .current_dir(target.parent().ok_or("便携目录无效")?)
+                    .spawn();
+                return Err(match restart {
+                    Ok(_) => format!("更新前数据库备份失败，更新已取消并重新启动旧程序：{error}"),
+                    Err(restart) => {
+                        format!("更新前数据库备份失败，旧程序未改变但重启失败：{error}；{restart}")
+                    }
+                });
+            }
+        };
+    let mut first_start = true;
+    let mut confirmed = false;
+    replace_with_recovery(
+        &target,
+        &artifact,
         directory,
-        "installed",
-        "已替换程序并启动；旧程序保留为 backup.exe，data 与便携标记未修改",
-    )
+        |path| {
+            // 替换本身失败时同样回到旧程序，无需等待新版本回执。
+            let initial = first_start && hash_file(path)? != plan.current_sha256;
+            first_start = false;
+            let mut command = hidden_command(path);
+            command.env_remove("DIYTOOLS_UPDATE_RECEIPT");
+            command.current_dir(path.parent().ok_or("程序目录无效")?);
+            if initial {
+                command.env("DIYTOOLS_UPDATE_RECEIPT", directory);
+            }
+            let mut child = command.spawn().map_err(|e| e.to_string())?;
+            if !initial {
+                return Ok(());
+            }
+            let began = Instant::now();
+            loop {
+                // 必须先确认进程仍存活；只有已经退出的失败程序才能安全回滚数据库。
+                match child.try_wait() {
+                    Ok(Some(code)) => return Err(format!("新进程初始化失败并退出：{code}")),
+                    Err(_) => return Ok(()), // 无法确认退出时保持新版本和备份，绝不冒险回滚活动库。
+                    Ok(None) => {}
+                }
+                if startup_receipt_matches(directory, child.id(), &manifest.version) {
+                    confirmed = true;
+                    return Ok(());
+                }
+                if began.elapsed() > Duration::from_secs(120) {
+                    return Ok(());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        },
+        || snapshot.restore(),
+    )?;
+    if confirmed {
+        write_status(
+            directory,
+            "installed",
+            "新版本已完成数据库及本机运行时初始化；更新前程序与一致性数据库备份已保留",
+        )
+    } else {
+        write_status(
+            directory,
+            "started-unconfirmed",
+            "新进程仍运行或状态不能确认，尚未收到初始化完成回执；保留更新前程序和数据库备份，未回滚活动数据库",
+        )
+    }
 }
 #[cfg(not(windows))]
 fn apply_update(_plan_path: &Path) -> Result<(), String> {
     Err("此平台不支持便携直接更新".into())
+}
+
+// 新版 setup 完成后写入进程/版本回执，普通启动没有环境参数时不写任何更新文件。
+pub(crate) fn acknowledge_startup() -> Result<(), String> {
+    let Some(directory) = std::env::var_os("DIYTOOLS_UPDATE_RECEIPT") else {
+        return Ok(());
+    };
+    let directory = PathBuf::from(directory);
+    plain_path(&directory)?;
+    let executable = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    let root = executable.parent().ok_or("更新启动程序目录无效")?;
+    if directory.parent() != Some(root.join(".updates").as_path())
+        || directory
+            .file_name()
+            .and_then(|n| n.to_str())
+            .and_then(|n| uuid::Uuid::parse_str(n).ok())
+            .is_none()
+    {
+        return Err("更新启动回执目录无效".into());
+    }
+    portable_marker(root)?;
+    let path = directory.join("startup-ready.json");
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(
+        &serde_json::to_vec(&serde_json::json!({"pid":std::process::id(),"version":CURRENT}))
+            .map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    file.sync_all().map_err(|e| e.to_string())
+}
+
+// 忽略尚未完整写入或不属于本次进程的回执，继续等待实际初始化结果。
+fn startup_receipt_matches(directory: &Path, pid: u32, version: &str) -> bool {
+    fs::File::open(directory.join("startup-ready.json"))
+        .ok()
+        .and_then(|file| read_bounded(file, 4096).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|value| value["pid"] == pid && value["version"] == version)
 }
 
 // 仅在明确的更新助手参数下执行替换流程，普通启动不进入安装逻辑。

@@ -27,7 +27,7 @@ fn signed(
         key.verifying_key(),
     )
 }
-fn fixture() -> PathBuf {
+pub(super) fn fixture() -> PathBuf {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../sandbox/github-release-20261014/updater-tests")
         .join(uuid::Uuid::new_v4().to_string());
@@ -467,4 +467,54 @@ fn signed_sources_accept_gitea_and_legacy_but_reject_duplicates() {
         b"new",
     );
     assert!(verify_envelope(&envelope, &key, "0.1.0").is_err());
+}
+// 数据库不能恢复时不得把旧程序放回入口，更不能启动旧程序写入新格式。
+#[test]
+fn database_restore_failure_blocks_program_rollback_and_restart() {
+    let (root, directory, _, _) = plan_fixture();
+    let target = root.join("desktop.exe");
+    let mut starts = 0;
+    let result = replace_with_recovery(
+        &target,
+        &directory.join("artifact.exe"),
+        &directory,
+        |_| {
+            starts += 1;
+            Err("初始化失败".into())
+        },
+        || Err("快照损坏".into()),
+    );
+    assert!(result.unwrap_err().contains("禁止重启旧程序"));
+    assert_eq!(starts, 1);
+    assert_eq!(fs::read(&target).unwrap(), b"new-binary");
+    assert_eq!(
+        fs::read(directory.join("backup.exe")).unwrap(),
+        b"old-binary"
+    );
+}
+
+// 只有本次进程和候选版本的完整回执才确认初始化，残留/半写文件不能放行。
+#[test]
+fn startup_confirmation_requires_matching_process_and_version() {
+    let directory = fixture();
+    let path = directory.join("startup-ready.json");
+    assert!(!startup_receipt_matches(&directory, 7, "0.3.0"));
+    fs::write(&path, br#"{"pid":7"#).unwrap();
+    assert!(!startup_receipt_matches(&directory, 7, "0.3.0"));
+    fs::write(&path, br#"{"pid":7,"version":"0.3.0"}"#).unwrap();
+    assert!(startup_receipt_matches(&directory, 7, "0.3.0"));
+    assert!(!startup_receipt_matches(&directory, 8, "0.3.0"));
+    assert!(!startup_receipt_matches(&directory, 7, "0.2.3"));
+}
+// 本机结果显示只采纳规范更新目录和终态；未完成下载不能遮住失败恢复说明。
+#[test]
+fn recovery_status_is_available_without_network_and_ignores_unfinished_updates() {
+    let root = fixture();
+    let directory = create_directory(&root).unwrap();
+    write_status(&directory, "failed", "已恢复更新前数据库").unwrap();
+    let unfinished = create_directory(&root).unwrap();
+    write_status(&unfinished, "ready", "等待退出").unwrap();
+    let result = latest_recovery_status(&root).unwrap().unwrap();
+    assert_eq!(result["message"], "已恢复更新前数据库");
+    assert_eq!(result["directory"], directory.to_string_lossy().as_ref());
 }

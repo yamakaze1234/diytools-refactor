@@ -92,6 +92,8 @@ pub fn run() {
             app.manage(workbench);
             app.manage(std::sync::Arc::new(cloud_native::CloudRuntime::new(&folder).map_err(std::io::Error::other)?));
             app.manage(asset_protocol::AssetRoot(folder.join("workbench-assets")));
+            // 初始化和数据库迁移成功才确认更新，助手不能将进程存活误判为就绪。
+            updater::acknowledge_startup().map_err(std::io::Error::other)?;
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -105,6 +107,7 @@ pub fn run() {
             updater::updater_check,
             updater::updater_download,
             updater::updater_install,
+            updater::updater_recovery_status,
             updater::access::updater_access_status,
             updater::access::updater_access_save,
             updater::access::updater_access_clear,

@@ -201,7 +201,7 @@ mod tests {
         assert_eq!(state(&c).unwrap(), after);
         assert_eq!(c.query_row("SELECT count(*) FROM workbench_history", [], |r| r.get::<_,i64>(0)).unwrap(), 2);
         // 模拟历史恢复旧引用后再次规范化，旧原图仍在，转换可重复完成。
-        c.execute("UPDATE workbench_state SET document=?1", [before.to_string()]).unwrap();
+        entities::replace_fixture(&c, &before);
         assert_eq!(normalize(&store).unwrap()["references"], 3);
     }
 
@@ -233,7 +233,7 @@ mod tests {
         let c = db(&store.path).unwrap();
         let mut before = state(&c).unwrap();
         before["missing"] = json!("/uploads/12-999-0123456789abcdef.png");
-        c.execute("UPDATE workbench_state SET document=?1", [before.to_string()]).unwrap();
+        entities::replace_fixture(&c, &before);
         assert!(normalize(&store).is_err());
         assert_eq!(state(&c).unwrap(), before);
     }

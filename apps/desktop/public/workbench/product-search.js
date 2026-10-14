@@ -1,8 +1,12 @@
 /** 商品搜索复用控件：提供名称/ERP ID 搜索、候选展示和选择回调，并支持延迟加载。 */
 import {componentStockHtml} from './component-stock-view.js';
+// 重挂载必须取消旧扫描和监听，避免重复候选与迟到结果。
+const searchMounts=new WeakMap();
+export function destroyProductSearch(root){searchMounts.get(root)?.destroy();}
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 /** 绑定搜索框和候选列表；商品与成本由读取回调提供，选中结果交给 onChange。 */
 export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',selected='',label='选择商品',placeholder='输入商品名称或 ERP ID',inputId,inputElement,describe=r=>r.goodsId?'ERP ID '+r.goodsId:'',onChange=()=>{},showEmpty=false,emptySelection='尚未选择商品',deferred=false,stableRows=false}){
+ destroyProductSearch(root);
  let value=String(selected||''),searching=!inputElement,revision=0,timer,frame,pendingKey='',cachedRows,documents=new WeakMap();
  const initialText=inputElement?.value||'';
  root.classList.add('product-search');const markup=`<label class="field">${esc(label)}<input ${inputId?`id="${esc(inputId)}"`:''} data-product-query type="search" placeholder="${esc(placeholder)}" autocomplete="off"></label><div class="product-picked" data-product-picked></div><div class="product-results" data-product-results aria-label="${esc(label)}搜索结果"></div><small data-product-count class="hint" role="status"></small>`;
@@ -43,9 +47,16 @@ export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',select
  }
  results.onclick=e=>{const button=e.target.closest('[data-product-id]');if(!button||!results.contains(button)||results.hasAttribute('aria-busy'))return;const row=getRows().find(r=>String(r[idKey])===button.dataset.productId&&!r.deletedAt);if(!row)return;value=String(row[idKey]);if(inputElement){input.value=row.name;searching=false;}paint();onChange(row);};
  input.oninput=e=>{searching=true;value='';if(e.isComposing){cancel();results.innerHTML='';count.textContent='';return;}paint();onChange(null);};
- input.addEventListener('compositionend',()=>{searching=true;value='';paint();onChange(null);});
- if(inputElement){input.onfocus=()=>input.select();root.addEventListener('focusout',e=>{if(!root.contains(e.relatedTarget)){input.value=initialText;searching=false;paint();}});}
+ const compositionEnd=()=>{searching=true;value='';paint();onChange(null);};
+ input.addEventListener('compositionend',compositionEnd);
+ const focusOut=e=>{if(!root.contains(e.relatedTarget)){input.value=initialText;searching=false;paint();}};
+ if(inputElement){input.onfocus=()=>input.select();root.addEventListener('focusout',focusOut);}
  input.onkeydown=e=>{if(e.isComposing)return;if(e.key==='Escape'&&inputElement){e.preventDefault();input.value=initialText;searching=false;paint();}else if(e.key==='ArrowDown'){e.preventDefault();if(results.hasAttribute('aria-busy'))pendingKey=e.key;else results.querySelector('button')?.focus();}else if(e.key==='Enter'){e.preventDefault();if(results.hasAttribute('aria-busy'))pendingKey=e.key;else{const buttons=results.querySelectorAll('button');if(buttons.length===1)buttons[0].click();}}};
  results.onkeydown=e=>{if(!['ArrowDown','ArrowUp'].includes(e.key))return;const buttons=[...results.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);e.preventDefault();buttons[Math.max(0,Math.min(buttons.length-1,i+(e.key==='ArrowDown'?1:-1)))]?.focus();};
- paint();return {value:()=>value,row:selectedRow,query:()=>input.value,refresh:()=>{documents=new WeakMap();paint();}};
+ const api={value:()=>value,row:selectedRow,query:()=>input.value,refresh:()=>{documents=new WeakMap();paint();},destroy:()=>{
+  cancel();input.removeEventListener('compositionend',compositionEnd);root.removeEventListener('focusout',focusOut);
+  input.oninput=null;input.onfocus=null;input.onkeydown=null;results.onclick=null;results.onkeydown=null;
+  picked.remove();results.remove();count.remove();searchMounts.delete(root);
+ }};
+ searchMounts.set(root,api);paint();return api;
 }

@@ -409,7 +409,7 @@ mod tests {
             match *table {
                 "workbench_state" => {
                     tx.execute(
-                        "UPDATE workbench_state SET document=json_set(document,'$.image',?1)",
+                        "UPDATE workbench_metadata SET document=json_set(document,'$.image',?1)",
                         [&url],
                     )
                     .unwrap();

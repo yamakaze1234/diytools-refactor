@@ -15,6 +15,7 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
 }) {
   const [state, setState] = useState(initial);
   const [eventError, setEventError] = useState('');
+  const [recovery, setRecovery] = useState<{ message: string; directory: string } | null>(null);
   const [currentVersion, setCurrentVersion] = useState('');
   const [access, setAccess] = useState<UpdaterAccessState>({ status: null, busy: false, error: '' });
   const [token, setToken] = useState('');
@@ -65,6 +66,15 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
     return () => { disposed = true; remove?.(); removeClose?.(); controller.dispose(); accessController.dispose(); if (controllerRef.current === controller) controllerRef.current = null; if (accessRef.current === accessController) accessRef.current = null; };
   }, []);
   useEffect(() => { setToken(''); if (open) void controllerRef.current?.check(); }, [open]);
+  // 离线也能读取上次更新恢复结果，不依赖版本服务器的响应。
+  useEffect(() => {
+    if (!open || !isTauri()) return;
+    let disposed = false;
+    void invoke<{ message: string; directory: string } | null>('updater_recovery_status')
+      .then(result => { if (!disposed) setRecovery(result); })
+      .catch(error => { if (!disposed) setEventError('读取上次更新结果失败：' + String(error)); });
+    return () => { disposed = true; };
+  }, [open]);
   // Gitea 匿名更新不读取 GitHub 凭据；仅展开备用授权设置时查询本机授权状态。
   useEffect(() => { if (open && accessOpen) void accessRef.current?.refresh(); }, [open, accessOpen]);
   useEffect(() => { if (/访问受限|授权|权限|private|unauthorized|forbidden|401|403/i.test(state.error)) setAccessOpen(true); }, [state.error]);
@@ -109,6 +119,7 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
       <p className="storage-note">优先从 Gitea 获取更新，无需填写令牌；暂时无法访问时尝试 GitHub 备用源。</p>
       <p className="update-message" role="status">{state.phase === 'checking' ? '正在查询兼容的桌面程序版本…' : state.phase === 'downloading' ? state.restartAfterDownload ? '正在下载并校验，完成后保存修改并重启。关闭此窗口可继续编辑，并暂停自动重启。' : '正在下载并校验，可关闭此窗口继续编辑；完成后等待手动重启更新。' : installing ? '正在保存修改并准备重启，请稍候…' : state.phase === 'downloaded' ? '更新包已下载并校验，点击下方按钮保存修改并重启。' : state.release?.message ?? '准备检查更新。'}</p>
       {state.phase === 'downloading' && <div className="update-progress"><progress max="100" {...(percent === null ? {} : { value: percent })} aria-label="更新包下载进度" /><span>{progress ? bytes(progress.received) + (progress.total ? ' / ' + bytes(progress.total) : '') : '等待下载进度'}{percent === null ? '' : ` · ${percent}%`}</span></div>}
+      {recovery && <p className="storage-note">上次更新：{recovery.message}<br />恢复资料：{recovery.directory}</p>}
       {state.release?.notes && <div className="update-notes"><h3>更新说明</h3><p>{state.release.notes}</p></div>}
       {(state.error || eventError) && <p className="notice error" role="alert">{state.error || eventError}</p>}
       <details className="update-access" open={accessOpen} onToggle={event => setAccessOpen(event.currentTarget.open)}>

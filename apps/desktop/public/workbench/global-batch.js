@@ -5,9 +5,7 @@ import {mountProductSearch} from './product-search.js';
 import {clone,productGroups} from './core.js';
 import {replaceSourcePart} from './source.js';
 import {actualParts,syncActualParts} from './actual-parts.js';
-import {renderPoster} from './poster.js';
-import {makeZip} from './zip.js';
-import {saveImageFolder} from './folder-export.js';
+import {startImageExportTask} from './image-export-tasks.js';
 
 const key=p=>String(p.goodsId||'').trim()&&String(p.goodsId)!=='0'?`id:${p.goodsId}`:`name:${p.name}`;
 /** 汇总配件在配置中的使用情况，供批量操作选择范围。 */
@@ -91,11 +89,11 @@ export function openUpgradeDescriptionBatch(api){
  $('#upgrade-batch-preview').onclick=()=>{try{plan=(isName?displayNamePlan:upgradeDescriptionPlan)(getConfigs(),partKey,[...document.querySelectorAll('[data-upgrade-link]:checked')].map(input=>input.value),$('#upgrade-batch-text').value,descriptionQuery());$('#upgrade-batch-diff').textContent=plan.changes.map(change=>{const lines=change.before.parts.filter(part=>key(part)===partKey&&matchesUpgrade(part,descriptionQuery())).map(part=>isName?`${part.slot}：${part.displayName||part.name} → ${plan.displayName||part.name}`:`${part.slot}：${part.upgrade||'（空）'} → ${plan.description||'（空）'}`);return `${change.product} / ${change.name}\n${lines.join('\n')}`;}).join('\n\n');$('#upgrade-batch-apply').disabled=!plan.changes.length;const count=$('#upgrade-batch-export').checked?exportEntries(api.getConfigs(),changedLinks(plan)).length:0;status(`将修改 ${plan.changes.length} 套配置${count?`，导出 ${changedLinks(plan).length} 个链接，共 ${count} 张图片`:''}`); }catch(e){invalidate();$('#upgrade-batch-status').textContent=e.message;}};
  $('#upgrade-batch-apply').onclick=async()=>{
   if(!plan||busy)return;const approved=plan,auto=$('#upgrade-batch-export').checked;let saved=false;
-  try{if(auto)exportEntries(api.getConfigs(),changedLinks(approved));validateReplacement(approved,getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);await apply(approved);saved=true;exportIds=changedLinks(approved);plan=null;$('#upgrade-batch-retry').classList.remove('hidden');if(auto)await exportImages();else status(`已保存 ${approved.changes.length} 套配置，可导出刚修改的链接图片。`);}
+  try{if(auto)exportEntries(api.getConfigs(),changedLinks(approved));validateReplacement(approved,getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);await apply(approved);saved=true;exportIds=changedLinks(approved);plan=null;$('#upgrade-batch-retry').classList.remove('hidden');if(auto){lock(false);await exportImages();}else status(`已保存 ${approved.changes.length} 套配置，可导出刚修改的链接图片。`);}
   catch(e){status((saved?'修改已保存，导出未完成：':'修改未完成：')+e.message);}
   finally{lock(false);if(root.isConnected)invalidate();}
  };
- $('#upgrade-batch-retry').onclick=async()=>{if(busy||!exportIds)return;try{lock(true);await exportImages();}catch(e){status('修改已保存，导出未完成：'+e.message);}finally{lock(false);if(root.isConnected)invalidate();}};
+ $('#upgrade-batch-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(e){status('修改已保存，导出未完成：'+e.message);}finally{lock(false);if(root.isConnected)invalidate();}};
 
 }
 export function replacementDiff(plan){
@@ -168,31 +166,24 @@ export function openGlobalBatch(api){
    if(JSON.stringify(replacementPicker.row())!==JSON.stringify(approved.replacement))throw Error('新配件资料已变化，请重新预览');
    if(auto)exportEntries(getConfigs(),approved.productIds);validateReplacement(approved,getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);
    await apply(approved);saved=true;exportIds=approved.productIds;plan=null;$('#global-retry').classList.remove('hidden');
-   if(auto)await exportImages();else status(`已统一修改并保存 ${approved.changes.length} 套配置。可以继续修改，或导出刚修改的链接图片。`);
+   if(auto){lock(false);await exportImages();}else status(`已统一修改并保存 ${approved.changes.length} 套配置。可以继续修改，或导出刚修改的链接图片。`);
   }catch(error){status((saved?'修改已保存，导出未完成：':'修改未完成：')+error.message);toast(error.message);}
   finally{lock(false);if(root.isConnected){plan=null;$('#global-apply').disabled=true;}}
  };
- $('#global-retry').onclick=async()=>{if(busy||!exportIds)return;try{lock(true);await exportImages();}catch(error){status('修改已保存，导出未完成：'+error.message);}finally{lock(false);if(root.isConnected)invalidate();}};
+ $('#global-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(error){status('修改已保存，导出未完成：'+error.message);}finally{lock(false);if(root.isConnected)invalidate();}};
  listParts();
 }
 
-/** 逐项生成指定配置的图片并汇总结果，失败信息返回批量导出界面。 */
-export async function exportBatchImages(api,exportIds,status,options={}){
-  const active=()=>{if(options.signal?.aborted)throw options.signal.reason||new DOMException('图片导出已取消','AbortError');};
-  active();if(!options.snapshots)await api.save?.();active();const entries=exportEntries(options.snapshots||api.getConfigs(),exportIds,options.imageKind||'both',{deduplicateNames:options.deduplicateNames===true}),files=[],failures=[];
-  if(!entries.length)throw Error('本次没有可导出的链接配置');
-  // 单链接单图种直接使用目标文件夹，多链接或两种图保留各自子目录。
-  const directories=[...new Set(entries.map(entry=>entry.name.split('/')[0]))];
-  const name=directories.length===1?directories[0]:`批量导出图片_${Date.now()}`;
-  if(directories.length===1)for(const entry of entries)entry.name=entry.name.slice(name.length+1);
-  for(const [i,entry] of entries.entries()){
-   status(`配置已保存，正在导出 ${i+1}/${entries.length}：${entry.name}`);active();
-   try{const result=await (api.renderImage||renderPoster)(entry.config,1400);active();if(result.overflow)throw Error('图片内容超出，请调整模块或字号');const blob=await new Promise(resolve=>result.canvas.toBlob(resolve,'image/png'));active();if(!blob)throw Error('图片生成失败');const bytes=new Uint8Array(await blob.arrayBuffer());active();files.push({name:entry.name,bytes});}catch(error){active();failures.push({name:entry.name,error:error.message});}
-  }
-  if(!files.length)throw Error('全部图片生成失败：'+failures.map(f=>f.error).join('；'));
-  const count=files.length;files.push({name:'导出清单.json',bytes:new TextEncoder().encode(JSON.stringify({createdAt:new Date().toISOString(),success:files.map(f=>f.name),failures},null,2))});
-  status('修改已保存，正在选择图片导出位置…');active();const folder=await (api.saveFolder||saveImageFolder)(files,name,{signal:options.signal});active();
-  if(folder?.cancelled){status('修改已保存，已取消图片导出。可点击下方按钮重新导出。');return;}
-  if(!folder)api.download(makeZip(files),name+'.zip');
-  status(`已保存修改并导出 ${count} 张图片，失败 ${failures.length} 张。${folder?'文件夹：'+folder.directory:'已下载 ZIP。'}${failures.length?'失败详情见导出清单。':''}`);
- };
+/** 提交独立快照任务，业务弹窗只订阅文字进度；关闭后任务中心继续保留。 */
+export async function exportBatchImages(api,exportIds,status=()=>{},options={}){
+ const active=()=>{if(options.signal?.aborted)throw options.signal.reason||new DOMException('图片导出已取消','AbortError');};
+ // 保存可能与继续编辑并行，先固定本次点击的完整输入。
+ active();const snapshots=clone(options.snapshots||api.getConfigs());if(!options.snapshots)await api.save?.();active();
+ const entries=exportEntries(snapshots,exportIds,options.imageKind||'both',{deduplicateNames:options.deduplicateNames===true});
+ if(!entries.length)throw Error('本次没有可导出的链接配置');
+ const directories=[...new Set(entries.map(entry=>entry.name.split('/')[0]))];
+ const name=directories.length===1?directories[0]:`批量导出图片_${Date.now()}`;
+ if(directories.length===1)for(const entry of entries)entry.name=entry.name.slice(name.length+1);
+ const task=startImageExportTask({entries,name,title:'批量修改后导图',renderImage:api.renderImage,saveFolder:api.saveFolder,download:api.download,status,signal:options.signal});
+ options.onTask?.(task);return task.done;
+}
