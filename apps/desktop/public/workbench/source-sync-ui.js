@@ -1,15 +1,15 @@
 /** 输出源差异按配件与描述分组，保留字段选择与手动内容保护。 */
-import {sourceImageEntries} from './source-sync-data.js';
+import {sourceExportEntries} from './source-sync-data.js';
+import {captureBatchRevert,batchRevertPlan} from './batch-revert.js';
+import {startImageExportTask} from './image-export-tasks.js';
 import {sourceFollowPlan} from './source-follow.js';
-import {renderPoster} from './poster.js';
-import {makeZip} from './zip.js';
 import {slots} from './core.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={name:'显示名称',tax:'含税核算单价',upgrade:'逐项升级说明'};
 export function mountSourceSync(root,api){
  root.classList.add('source-sync-panel');
- root.innerHTML=`<h4>输出源更新与手动内容确认</h4><div class="source-fields">${Object.entries(labels).map(([key,name])=>`<label><input type="checkbox" data-source-field="${key}" checked>${name}</label>`).join('')}</div><p class="hint">保存输出源后，未手改的显示名称和逐项加购说明自动更新；手改内容与无法判断的旧内容保留在此待确认。按配件分类查看，相同字段、当前内容和新内容合为一组，可整组或逐项勾选，也可按链接筛选。含税核算单价仍需手动确认。人工“加购与选配”不变。</p><p class="hint">确认更新后，所选名称和说明恢复自动跟随；再次手改会重新保护。保留手动内容会忽略本次源版本，下次源内容变化再提醒。</p><div class="source-export-choice"><span>更新后生成图片并导出？</span><label><input type="radio" name="source-export" value="no" checked> 否，仅更新配置数据</label><label><input type="radio" name="source-export" value="yes"> 是，生成并导出所选配置</label></div><div class="source-sync-actions"><button id="source-check">刷新待确认差异</button><button id="source-apply" class="primary" disabled>确认更新所选项</button><button id="source-ignore" disabled>保留手动内容，忽略本次源版本</button><button id="source-export-retry" hidden>重新保存并导出</button></div><div id="source-diff"></div><p data-source-sync-message class="hint" role="status"></p>`;
- const $=s=>root.querySelector(s);let preview=null,plan=null,busy=false,exportConfigs=null,locked=[],activeLink=null,activeSlot=null,allLinks=false,descriptionGroups=[],selected=new Set(),generation=0;
+ root.innerHTML=`<h4>输出源更新与手动内容确认</h4><div class="source-fields">${Object.entries(labels).map(([key,name])=>`<label><input type="checkbox" data-source-field="${key}" checked>${name}</label>`).join('')}</div><p class="hint">保存输出源后，未手改的显示名称和逐项加购说明自动更新；手改内容与无法判断的旧内容保留在此待确认。按配件分类查看，相同字段、当前内容和新内容合为一组，可整组或逐项勾选，也可按链接筛选。含税核算单价仍需手动确认。人工“加购与选配”不变。</p><p class="hint">确认更新后，所选名称和说明恢复自动跟随；再次手改会重新保护。保留手动内容会忽略本次源版本，下次源内容变化再提醒。</p><div class="source-export-choice"><span>更新后生成图片并导出？</span><label><input type="radio" name="source-export" value="no" checked> 否，仅更新配置数据</label><label><input type="radio" name="source-export" value="yes"> 是，生成并导出图片</label></div><div class="source-export-choice"><label>导出范围<select id="source-export-scope"><option value="all">所选链接全部配置图</option><option value="changed" selected>仅本次有变动的配置图</option></select></label><span>含配置清单图和 SKU 图；图片生成后选择保存路径。</span></div><p class="hint">本窗口内可还原最近一次修改一次；已经导出的图片保留。</p><div class="source-sync-actions"><button id="source-check">刷新待确认差异</button><button id="source-apply" class="primary" disabled>确认更新所选项</button><button id="source-ignore" disabled>保留手动内容，忽略本次源版本</button><button id="source-export-retry" hidden>重新保存并导出</button><button id="source-undo" hidden>还原本次修改（一次）</button></div><div id="source-diff"></div><p data-source-sync-message class="hint" role="status"></p>`;
+ const $=s=>root.querySelector(s);let preview=null,plan=null,busy=false,exportBatch=null,undoRecords=null,locked=[],activeLink=null,activeSlot=null,allLinks=false,descriptionGroups=[],selected=new Set(),generation=0;
  const message=text=>{$('[data-source-sync-message]').textContent=text;api.message(text);};
  function invalidate(){generation++;preview=null;plan=null;activeLink=null;activeSlot=null;allLinks=false;descriptionGroups=[];selected.clear();$('#source-apply').disabled=true;$('#source-ignore').disabled=true;$('#source-diff').innerHTML='';}
  const dialog=root.closest('dialog')||root,cancelGuard=e=>{if(root.isConnected&&busy)e.preventDefault();};dialog.addEventListener('cancel',cancelGuard);
@@ -29,7 +29,7 @@ export function mountSourceSync(root,api){
   const all=$('[data-source-select-all]'),items=currentItems();if(all){const n=items.filter(i=>selected.has(i.detail.key)).length;all.checked=items.length>0&&n===items.length;all.indeterminate=n>0&&n<items.length;}
   root.querySelectorAll('[data-source-select-group]').forEach(el=>{const group=descriptionGroups[Number(el.dataset.sourceSelectGroup)],n=group.items.filter(i=>selected.has(i.detail.key)).length;el.checked=n===group.items.length;el.indeterminate=n>0&&n<group.items.length;});
   const hidden=count-items.filter(i=>selected.has(i.detail.key)).length;
-  message(`已选择 ${count} 项，涉及 ${plan.changes.length} 套配置。${hidden?`其中 ${hidden} 项在其他链接或配件分类中。`:''}${hasTax?'含核算单价，不能忽略源版本。':'未勾选的内容继续保留。'}${count&&autoExport()?`确认更新后生成并导出 ${plan.changes.length*2} 张图片。`:''}`);
+  message(`已选择 ${count} 项，涉及 ${plan.changes.length} 套配置。${hidden?`其中 ${hidden} 项在其他链接或配件分类中。`:''}${hasTax?'含核算单价，不能忽略源版本。':'未勾选的内容继续保留。'}${count&&autoExport()?`确认更新后生成并导出 ${sourceExportEntries(api.getConfigs(),plan.changes,preview.shopId,$('#source-export-scope').value).length} 张图片。`:''}`);
  }
  function renderDetails(){
   const items=currentItems(),groups=new Map();
@@ -75,19 +75,36 @@ export function mountSourceSync(root,api){
  root.querySelectorAll('[data-source-field]').forEach(el=>el.onchange=()=>refresh());
  root.querySelectorAll('input[name=source-export]').forEach(el=>el.onchange=()=>selection());
  $('#source-check').onclick=()=>refresh();
- async function exportAll(){await api.flush();const entries=sourceImageEntries(exportConfigs),files=[],failures=[];for(const [i,entry] of entries.entries()){message(`已更新配置，正在生成图片 ${i+1}/${entries.length}：${entry.config.name}`);try{const result=await renderPoster(entry.config,1400);if(result.overflow)throw Error('图片内容超出，请调整模块或字号');const blob=await new Promise(resolve=>result.canvas.toBlob(resolve,'image/png'));if(!blob)throw Error('图片生成失败');await api.validateImage(entry.config);files.push({name:entry.name,bytes:new Uint8Array(await blob.arrayBuffer())});}catch(e){failures.push({name:entry.name,error:e.message});}}if(!files.length)throw Error('图片全部生成失败：'+failures.map(f=>f.error).join('；'));const report={createdAt:new Date().toISOString(),expected:entries.length,success:files.map(f=>f.name),failures};files.push({name:'导出结果.json',bytes:new TextEncoder().encode(JSON.stringify(report,null,2))});api.download(makeZip(files),`本店输出源更新图片_${Date.now()}.zip`);message(`已更新 ${exportConfigs.length} 套配置，导出 ${report.success.length}/${entries.length} 张图片${failures.length?`，失败 ${failures.length} 张，详情见导出结果.json，可重试。`:'，配置图与 SKU 图已全部更新。'}`);}
+ $('#source-export-scope').onchange=()=>selection();
+ async function exportAll(){
+  await api.flush();
+  const entries=sourceExportEntries(api.getConfigs(),exportBatch.changes,exportBatch.shopId,$('#source-export-scope').value);
+  const task=startImageExportTask({entries,name:`本店输出源更新图片_${Date.now()}`,title:'输出源更新后导图',renderImage:api.renderImage,saveFolder:api.saveFolder,download:api.download,status:text=>message('修改已保存。'+text)});
+  return task.done;
+ }
  async function applySelected(action){
   if(busy||!preview||!plan?.changes.length)return;
-  const approved=buildPlan(action),auto=action!=='ignore'&&autoExport();if(!approved.changes.length)return;exportConfigs=null;let applied=false;
+  const approved=buildPlan(action),auto=action!=='ignore'&&autoExport();if(!approved.changes.length)return;let applied=false;
   try{if(api.isEdited())throw Error('输出源有新修改，请先保存并重新预览');lock(true);await api.apply(approved);applied=true;
-   if(action!=='ignore')exportConfigs=api.getConfigs().filter(c=>approved.changes.some(d=>d.id===c.id)).map(c=>structuredClone(c));
-   if(auto)await exportAll();else message(action==='ignore'?`已保留 ${approved.changes.length} 套配置的所选手动内容，本次源版本不再提醒。`:`已更新 ${approved.changes.length} 套配置，所选名称和说明恢复自动跟随，未生成或导出图片。`);
-   $('#source-export-retry').hidden=!auto;
-  }catch(e){message('操作未完成：'+e.message);if(exportConfigs)$('#source-export-retry').hidden=false;}finally{const result=root.querySelector("[data-source-sync-message]").textContent;lock(false);invalidate();if(applied)await refresh();message(result);}
+   undoRecords=captureBatchRevert(approved,api.getConfigs());$('#source-undo').hidden=false;$('#source-undo').textContent='还原本次修改（一次）';
+   exportBatch=action==='ignore'?null:{shopId:approved.shopId,changes:approved.changes.map(c=>({id:c.id,before:{shopId:c.before.shopId,productId:c.before.productId,product:c.before.product,spu:c.before.spu}}))};
+   $('#source-export-retry').hidden=!exportBatch;
+   if(auto)await exportAll();else message(action==='ignore'?`已保留 ${approved.changes.length} 套配置的所选手动内容，本次源版本不再提醒。可还原本次修改一次。`:`已更新 ${approved.changes.length} 套配置，所选名称和说明恢复自动跟随，未生成或导出图片。可还原本次修改一次。`);
+  }catch(e){message((applied?'修改已保存，导出未完成：':'操作未完成：')+e.message);}finally{const result=$('[data-source-sync-message]').textContent;lock(false);$('#source-undo').disabled=!undoRecords;invalidate();if(applied)await refresh();message(result);}
  }
+ $('#source-undo').onclick=async()=>{
+  if(busy||!undoRecords)return;
+  try{
+   if(api.isEdited())throw Error('请先保存或重置当前输出源修改，再还原');
+   lock(true);await api.flush();const reversal=batchRevertPlan(undoRecords,api.getConfigs());
+   if(reversal.changes.length)await api.apply({...reversal,shopId:undoRecords[0].saved.shopId,sources:[],action:'restore'});
+   undoRecords=null;exportBatch=null;$('#source-undo').textContent='本次修改已还原';$('#source-export-retry').hidden=true;
+   message('已还原本次修改并保存。已导出的图片保留，需要时请重新生成。');
+  }catch(e){message('还原未完成：'+e.message);}finally{const result=$('[data-source-sync-message]').textContent;lock(false);$('#source-undo').disabled=!undoRecords;invalidate();await refresh();message(result);}
+ };
  $('#source-apply').onclick=e=>{e.stopPropagation();return applySelected('update');};
  $('#source-ignore').onclick=e=>{e.stopPropagation();if(!$('#source-ignore').disabled)return applySelected('ignore');};
- $('#source-export-retry').onclick=async()=>{if(busy||!exportConfigs)return;try{lock(true);await exportAll();}catch(e){message(e.message);}finally{lock(false);invalidate();}};
+ $('#source-export-retry').onclick=async()=>{if(busy||!exportBatch)return;try{lock(true);await exportAll();}catch(e){message(e.message);}finally{lock(false);invalidate();}};
  queueMicrotask(()=>{if(!api.isEdited())refresh();});
  return {invalidate,refresh,dispose:()=>dialog.removeEventListener('cancel',cancelGuard)};
 }

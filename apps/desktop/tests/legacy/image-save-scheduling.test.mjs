@@ -29,9 +29,9 @@ test('overflow export reports failure without downloading or saving a cached PNG
 });
 
 
-test('source update export validates current configuration and writes only the requested archive',async()=>{
+test('source update export flushes and submits a folder task without writing image cache',async()=>{
  const source=await fs.readFile(new URL('../../public/workbench/source-sync-ui.js',import.meta.url),'utf8');
  const code=source.slice(source.indexOf(' async function exportAll(){'),source.indexOf(' async function applySelected('));
- const calls=[],config={id:'one',name:'test'},context={exportConfigs:[config],api:{flush:async()=>calls.push('flush'),validateImage:async c=>{assert.equal(c.id,'one');calls.push('validate');},download:()=>calls.push('download'),saveImage:()=>{throw Error('No image cache copy');}},sourceImageEntries:configs=>configs.map(config=>({config,name:'test.png'})),message(){},renderPoster:async()=>({canvas:{toBlob:done=>done({arrayBuffer:async()=>new ArrayBuffer(3)})}}),makeZip:files=>{assert.equal(files.length,2);return {};},TextEncoder,Uint8Array};
- vm.runInNewContext(code,context);await context.exportAll();assert.deepEqual(calls,['flush','validate','download']);
+ const calls=[],config={id:'one',name:'test'},changes=[{id:'one'}],context={exportBatch:{changes,shopId:'intel'},$:()=>({value:'changed'}),api:{flush:async()=>calls.push('flush'),getConfigs:()=>[config],saveImage:()=>{throw Error('No image cache copy');}},sourceExportEntries:(configs,chosen,shopId,scope)=>{assert.deepEqual(configs,[config]);assert.equal(chosen,changes);assert.equal(shopId,'intel');assert.equal(scope,'changed');return [{config,name:'test.png'}];},message(){},startImageExportTask:options=>{calls.push('task');assert.equal(options.entries[0].config,config);assert.match(options.name,/本店输出源更新图片/);return {done:Promise.resolve('saved')};}};
+ vm.runInNewContext(code,context);assert.equal(await context.exportAll(),'saved');assert.deepEqual(calls,['flush','task']);
 });
