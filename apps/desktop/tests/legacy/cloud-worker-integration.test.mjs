@@ -4,7 +4,7 @@ import {Worker} from 'node:worker_threads';
 import {createCloudWorker} from '../../public/workbench/cloud-worker-client.js';
 import {projectWorkspace} from '../../public/workbench/cloud-projection.js';
 
-test('real background worker downloads, rebases a concurrent local save and retries CAS without refetching cloud',async()=>{
+test('real worker downloads with CAS protection then previews and atomically resolves a conflict through the native bridge',async()=>{
  let nativeWorker;class Adapter{
   constructor(url){nativeWorker=new Worker(new URL('./fixtures/cloud-worker-host.mjs',import.meta.url),{workerData:{moduleUrl:url.href}});nativeWorker.on('message',data=>this.onmessage?.({data}));nativeWorker.on('error',error=>this.onerror?.(error));}
   postMessage(value){nativeWorker.postMessage(value);}terminate(){return nativeWorker.terminate();}
@@ -30,5 +30,11 @@ test('real background worker downloads, rebases a concurrent local save and retr
  }});
  try{
   const result=await client.run({member,upload:false});assert.equal(result.cursor,2);assert.equal(current.state.configs[0].name,'remote');assert.equal(current.state.configs[0].footer,'local while downloading');assert.equal(actions.filter(a=>a==='call').length,1);assert.equal(current.document.outbox.length,0);
+  const row=current.document.records.find(r=>r.type==='configuration');row.draft.name='local choice';row.base.name='remote choice';row.version=3;row.conflict={fields:['name'],remote:{type:row.type,id:row.id,version:3,data:structuredClone(row.base)}};
+  current.state.configs[0].name='local choice';current.state.revision++;current.cloudVersion++;current.document.materializedProjection=projectWorkspace(current.state);
+  const preview=await client.conflicts();assert.equal(preview.rows.length,1);assert.equal(typeof preview.rows[0].token,'string');
+  const before=actions.filter(a=>a==='commit').length;
+  const resolved=await client.resolveMany(preview.rows.map(({type,id,token})=>({type,id,token,choice:'remote'})));
+  assert.equal(resolved.conflicts,0);assert.equal(current.state.configs[0].name,'remote choice');assert.equal(actions.filter(a=>a==='commit').length,before+1);assert.equal(actions.filter(a=>a==='call').length,1);
  }finally{await nativeWorker.terminate();}
 });

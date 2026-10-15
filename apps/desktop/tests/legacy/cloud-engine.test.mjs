@@ -20,6 +20,71 @@ function harness({snapshot=fixture(),onCall,onCommit,uploadAssets,downloadAssets
 const rowData=h=>copy(h.current.document.records.find(r=>r.type==='configuration').draft);
 const change=(data,version=2,seq=2)=>({type:'configuration',id:'c1',version,seq,data});
 
+function conflictFixture(count=3){
+ const s=assetFixture(count);
+ for(const row of s.document.records.filter(r=>r.type==='configuration')){
+  row.draft.name='本机 '+row.id;row.base={...copy(row.base),name:'云端 '+row.id};row.version=2;
+  row.conflict={code:'CONFLICT',fields:['name'],remote:{type:row.type,id:row.id,version:2,data:copy(row.base)}};
+  s.state.configs.find(c=>c.id===row.id).name=row.draft.name;
+ }
+ s.document.materializedProjection=projectWorkspace(s.state);return s;
+}
+const choices=(rows,choice='remote')=>rows.map(({type,id,token})=>({type,id,token,choice}));
+test('bulk cloud choice commits selected records once, keeps unselected conflict and performs no cloud writes',async()=>{
+ const h=harness({snapshot:conflictFixture()}),preview=await h.engine.conflicts();assert.equal(h.commits,0);
+ const result=await h.engine.resolveMany(choices(preview.rows.slice(0,2)));
+ assert.equal(result.resolved,2);assert.equal(result.conflicts,1);assert.equal(h.commits,1);assert.equal(h.calls.length,0);
+ assert.deepEqual(h.current.state.configs.map(c=>c.name),['云端 c0','云端 c1','本机 c2']);
+ assert.equal(h.current.document.records[0].conflict,null);assert.deepEqual(h.current.document.records[0].base,h.current.document.records[0].draft);
+});
+test('bulk local choice keeps drafts, advances bases and leaves changes pending upload',async()=>{
+ const h=harness({snapshot:conflictFixture()}),{rows}=await h.engine.conflicts();
+ const result=await h.engine.resolveMany(choices(rows,'local'));
+ assert.equal(result.conflicts,0);assert.equal(result.pending,3);assert.equal(h.commits,1);
+ assert.ok(h.current.state.configs.every(c=>c.name.startsWith('本机')));assert.equal(h.calls.length,0);
+});
+test('editing one selected draft after comparison rejects entire batch without losing the edit',async()=>{
+ const h=harness({snapshot:conflictFixture()}),{rows}=await h.engine.conflicts();h.edit(s=>s.configs[1].name='刚刚编辑');
+ await assert.rejects(h.engine.resolveMany(choices(rows)),/重新比较/);assert.equal(h.commits,0);
+ assert.deepEqual(h.current.state.configs.map(c=>c.name),['本机 c0','刚刚编辑','本机 c2']);
+ assert.ok(h.current.document.records.filter(r=>r.type==='configuration').every(r=>r.conflict));
+});
+test('bulk compare CAS retry protects changed remote and does not partly resolve other selected rows',async()=>{
+ let once=true;const h=harness({snapshot:conflictFixture(),onCommit(req,api){if(once){once=false;api.change(s=>{const row=s.document.records[1];row.conflict.remote.data.name='新的云端';row.conflict.remote.version=3;row.version=3;row.base=copy(row.conflict.remote.data);s.cloudVersion++;});}}});
+ const {rows}=await h.engine.conflicts();await assert.rejects(h.engine.resolveMany(choices(rows)),/重新比较/);
+ assert.ok(h.current.document.records.filter(r=>r.type==='configuration').every(r=>r.conflict));assert.ok(h.current.state.configs.every(c=>c.name.startsWith('本机')));
+});
+test('bulk comparison rejects expired, duplicate and cross-record tokens',async()=>{
+ const h=harness({snapshot:conflictFixture()}),first=await h.engine.conflicts(),second=await h.engine.conflicts();
+ await assert.rejects(h.engine.resolveMany(choices(first.rows)),/过期/);
+ const selected=choices(second.rows);await assert.rejects(h.engine.resolveMany([selected[0],selected[0]]),/重复/);
+ await assert.rejects(h.engine.resolveMany([{...selected[0],id:selected[1].id}]),/过期/);assert.equal(h.commits,0);
+});
+test('comparison limits current page to 100 and next page remains available after batch',async()=>{
+ const h=harness({snapshot:conflictFixture(101)}),first=await h.engine.conflicts();assert.equal(first.rows.length,100);assert.equal(first.total,101);
+ await h.engine.resolveMany(choices(first.rows));const next=await h.engine.conflicts();assert.equal(next.rows.length,1);assert.equal(next.total,1);
+});
+test('uncertain outbox blocks every selected resolution and remains unchanged',async()=>{
+ const snapshot=conflictFixture(),row=snapshot.document.records[1];
+ snapshot.document.outbox=[{protocolVersion:2,action:'sync.push',requestId:'request-test',payload:{mutationId:'pending-mutation-001',deviceId:'d1',entityType:row.type,entityId:row.id,baseVersion:row.version,after:copy(row.draft)}}];
+ const h=harness({snapshot}),{rows}=await h.engine.conflicts();await assert.rejects(h.engine.resolveMany(choices(rows)),/待确认/);
+ assert.equal(h.commits,0);assert.deepEqual(h.current.document,snapshot.document);
+});
+test('comparison refresh includes a saved offline edit without writing the preview',async()=>{
+ const h=harness({snapshot:conflictFixture()});h.edit(s=>s.configs[0].name='刚编辑的名称');
+ const {rows}=await h.engine.conflicts();assert.equal(rows[0].draft.name,'刚编辑的名称');assert.equal(h.commits,0);
+ await h.engine.resolveMany(choices(rows));assert.equal(h.current.state.configs[0].name,'云端 c0');
+});
+test('cloud selection can restore an offline deleted config from a read-only preview',async()=>{
+ const h=harness({snapshot:conflictFixture()});h.edit(s=>s.configs.splice(0,1));
+ const {rows}=await h.engine.conflicts();assert.ok(rows[0].draft.deletedAt);assert.equal(h.commits,0);
+ await new Promise(r=>setTimeout(r,5));await h.engine.resolveMany(choices(rows));assert.equal(h.current.state.configs.length,3);assert.ok(!h.current.state.configs.find(c=>c.id==='c0').deletedAt);
+});
+test('batch returns the durable receipt even when subsequent reads would fail',async()=>{
+ const h=harness({snapshot:conflictFixture()}),engine=createCloudEngine({load:async()=>{if(h.commits)throw Error('读取失败');return h.load();},commit:h.commit,call:h.call});
+ const {rows}=await engine.conflicts(),result=await engine.resolveMany(choices(rows));assert.equal(result.resolved,3);assert.equal(result.conflicts,0);assert.equal(h.commits,1);
+});
+
 // 原 canonical 是协议 oracle；快速比较不能使用 JSON.stringify 吞掉 undefined 字段或数组项。
 test('recursive comparison preserves canonical missing undefined null array and numeric semantics',()=>{
  const values=[undefined,null,NaN,Infinity,-Infinity,0,-0,1,'undefined','null','',true,false,{},
@@ -202,3 +267,64 @@ test('cached frozen loader data is never mutated by align, receive or acknowledg
  await engine.run({member});assert.equal(loads,1);assert.equal(initial.document.records[0].base.name,'旧名');assert.equal(initial.document.records[0].draft.name,'旧名');assert.equal(initial.document.outbox.length,0);assert.equal(current.state.configs[0].name,'缓存本机改名');assert.equal(current.document.outbox.length,0);
 });
 test('conflict change during resolve CAS requires new comparison',async()=>{const s=fixture(),row=s.document.records[0],remote={type:row.type,id:row.id,version:2,data:{...copy(row.base),name:'远端2'}};row.base=copy(remote.data);row.version=2;row.draft.name='本机';row.conflict={code:'CONFLICT',fields:['name'],remote};s.state.configs[0].name='本机';s.document.materializedProjection=projectWorkspace(s.state);let once=true;const h=harness({snapshot:s,onCommit(req,api){if(once){once=false;api.change(s=>{const row=s.document.records[0];row.conflict={...row.conflict,remote:{...copy(row.conflict.remote),version:3,data:{...copy(row.conflict.remote.data),name:'远端3'}}};row.base=copy(row.conflict.remote.data);row.version=3;s.cloudVersion++;});}}});await assert.rejects(h.engine.resolve('configuration','c1','remote'),/重新比较/);assert.equal(h.current.state.configs[0].name,'本机');assert.equal(h.current.document.records[0].conflict.remote.data.name,'远端3');});
+
+
+// 线上数据库批量 RPC 在约 8 秒失败时，用原持久请求逐步缩小批次。
+test('database batch failure halves transmissions without replacing durable requests',async()=>{
+ const counts=[],original=new Map();let first=true;
+ const h=harness({snapshot:assetFixture(12),onCall(req,api){
+  if(req.action!=='sync.pushBatch')return;
+  const rows=req.payload.requests;counts.push(rows.length);
+  if(first){first=false;for(const row of api.current.document.outbox)original.set(row.payload.mutationId,copy(row));api.edit(s=>s.configs[0].footer='失败期间的新编辑');}
+  for(const row of rows){const old=original.get(row.payload.mutationId);if(old)assert.deepEqual(row,old);}
+  if(rows.length>3)return {ok:false,code:'DATABASE_UNAVAILABLE',message:'云端数据库请求失败'};
+ }});
+ h.edit(s=>s.configs.forEach(c=>c.name='待上传'));
+ await h.engine.run({member});
+ assert.deepEqual(counts,[12,6,3,3,3,3,1]);
+ assert.equal(h.current.document.outbox.length,0);
+ assert.equal(h.current.state.configs[0].footer,'失败期间的新编辑');
+ assert.equal((await h.engine.status()).pending,0);
+});
+
+test('unavailable single record stops with the complete immutable queue retained',async()=>{
+ const h=harness({snapshot:assetFixture(5),onCall(req){if(req.action==='sync.pushBatch')return {ok:false,code:'DATABASE_UNAVAILABLE'};}});
+ h.edit(s=>s.configs.forEach(c=>c.name='本机保留'));
+ await assert.rejects(h.engine.run({member}),error=>error.code==='DATABASE_UNAVAILABLE');
+ const batches=h.calls.filter(r=>r.action==='sync.pushBatch').map(r=>r.payload.requests);
+ assert.deepEqual(batches.map(r=>r.length),[5,2,1]);
+ assert.deepEqual(h.current.document.outbox,batches[0]);
+ assert.ok(h.current.state.configs.every(c=>c.name==='本机保留'));
+});
+
+test('permission or malformed responses never trigger batch replay',async()=>{
+ for(const response of [{ok:false,code:'FORBIDDEN'},{ok:false,code:'UNAUTHENTICATED'},null,{ok:true,results:[]}]){
+  const h=harness({snapshot:assetFixture(5),onCall(req){if(req.action==='sync.pushBatch')return response;}});
+  h.edit(s=>s.configs.forEach(c=>c.name='保留'));
+  await assert.rejects(h.engine.run({member}));
+  assert.equal(h.calls.filter(r=>r.action==='sync.pushBatch').length,1);
+  assert.equal(h.current.document.outbox.length,5);
+ }
+});
+
+test('pause after unavailable response stops before transmitting a smaller batch',async()=>{
+ const h=harness({snapshot:assetFixture(5),onCall(req){if(req.action==='sync.pushBatch'){h.engine.stop();return {ok:false,code:'DATABASE_UNAVAILABLE'};}}});
+ h.edit(s=>s.configs.forEach(c=>c.name='保留'));
+ await assert.rejects(h.engine.run({member}),error=>error.code==='SYNC_STOPPED');
+ assert.equal(h.calls.filter(r=>r.action==='sync.pushBatch').length,1);
+ assert.equal(h.current.document.outbox.length,5);
+});
+
+test('database error after server commit replays receipts without duplicate changes',async()=>{
+ let lost=true;
+ const h=harness({snapshot:assetFixture(8),async onCall(req,api){
+  if(req.action==='sync.pushBatch'&&lost){lost=false;await api.call(req);return {ok:false,code:'DATABASE_UNAVAILABLE'};}
+ }});
+ h.edit(s=>s.configs.forEach(c=>c.name='服务器已提交'));
+ await h.engine.run({member});
+ assert.equal(h.current.document.outbox.length,0);
+ assert.ok(h.current.document.records.filter(r=>r.type==='configuration').every(r=>r.version===2));
+ assert.equal(h.current.document.cursor,9);
+ const batches=h.calls.filter(r=>r.action==='sync.pushBatch').map(r=>r.payload.requests);
+ assert.deepEqual(batches.slice(2).flat(),batches[0]);
+});

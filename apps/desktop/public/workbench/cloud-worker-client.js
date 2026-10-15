@@ -29,5 +29,5 @@ export function createCloudWorker({onProgress=()=>{},WorkerClass=globalThis.Work
  const command=(method,args)=>failed?Promise.reject(failed):new Promise((resolve,reject)=>{const id=++sequence;pending.set(id,{resolve,reject});worker.postMessage({kind:'command',id,method,args});});
  const start=(method,args)=>{stopping=false;return command(method,args);};
  const stop=()=>{stopping=true;worker.postMessage({kind:'stop'});return Promise.allSettled([...assetJobs].map(operationId=>raw('assetsCancel',JSON.stringify({operationId}))));};
- return{run:input=>start('run',[input]),status:()=>command('status',[]),conflicts:()=>command('conflicts',[]),verifyAssets:()=>start('verifyAssets',[]),resolve:(...args)=>command('resolve',args),stop,dispose:()=>{stop();worker.terminate();worker.onerror();}};
+ return{run:input=>start('run',[input]),status:()=>command('status',[]),conflicts:()=>command('conflicts',[]),verifyAssets:()=>start('verifyAssets',[]),resolve:(...args)=>command('resolve',args),resolveMany:items=>command('resolveMany',[items]),stop,dispose:()=>{stop();worker.terminate();worker.onerror();}};
 }

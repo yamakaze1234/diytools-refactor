@@ -20,9 +20,8 @@ self.onmessage=async({data})=>{
   if(data.method==='run')value=await engine.run(data.args[0]);
   else if(data.method==='status')value=await engine.status();
   else if(data.method==='resolve')value=await engine.resolve(...data.args);
-  else if(data.method==='conflicts'){
-   const snapshot=await cache.load(),rows=snapshot.document.records.filter(row=>row.conflict);value={rows:rows.slice(0,100),total:rows.length};
-  }
+  else if(data.method==='resolveMany')value=await engine.resolveMany(...data.args);
+  else if(data.method==='conflicts')value=await engine.conflicts();
   else if(data.method==='verifyAssets'){
    const snapshot=await cache.load(),urls=new Set();
    const visit=v=>{if(typeof v==='string'&&v.startsWith('/uploads/'))urls.add(v);else if(v&&typeof v==='object')for(const child of Object.values(v))visit(child);};

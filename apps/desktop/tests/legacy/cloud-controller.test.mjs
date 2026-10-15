@@ -2,6 +2,27 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCloudController} from '../../public/workbench/cloud-controller.js';
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return{promise,resolve,reject};};
+
+test('batch resolution flushes and delivers once while paused, blocks duplicates and timer sync',async()=>{
+ const gate=deferred(),calls=[];const {controller}=fixture({flush:async()=>{calls.push('flush');await gate.promise;},receive:async()=>{calls.push('receive');return true;},makeEngine:()=>({stop(){},run(){calls.push('run');},resolveMany:async items=>{calls.push(items);return{pending:0,conflicts:0,resolved:2};}})});
+ await controller.refresh();controller.pause();const items=[{id:'a'},{id:'b'}],pending=controller.resolveMany(items);
+ assert.equal(controller.status().running,true);await assert.rejects(controller.resolveMany(items),/等待/);await controller.tick();
+ gate.resolve();await pending;assert.deepEqual(calls,['flush',items,'receive']);assert.equal(controller.status().running,false);assert.equal(controller.status().automatic,false);
+});
+test('pause during resolution flush prevents application and releases busy state',async()=>{
+ const gate=deferred();let applied=false;const {controller}=fixture({flush:()=>gate.promise,makeEngine:()=>({stop(){},resolveMany:async()=>{applied=true;}})});
+ await controller.refresh();const pending=controller.resolveMany([{id:'a'}]);await new Promise(r=>setImmediate(r));controller.pause();gate.resolve();await assert.rejects(pending,/暂停/);assert.equal(applied,false);assert.equal(controller.status().running,false);
+});
+test('failed batch save is retryable and does not report received or resolved data',async()=>{
+ let fail=true,received=0;const {controller}=fixture({receive:async()=>{received++;},makeEngine:()=>({resolveMany:async()=>{if(fail)throw Error('磁盘失败');return{resolved:1};}})});
+ await controller.refresh();await assert.rejects(controller.resolveMany([{id:'a'}]),/磁盘失败/);assert.equal(received,0);assert.equal(controller.status().running,false);
+ fail=false;await controller.resolveMany([{id:'a'}]);assert.equal(received,1);
+});
+test('receipt after successful resolution remains successful if UI reread fails and reread retries later',async()=>{
+ let receives=0,applied=0;const {controller}=fixture({receive:async()=>{if(++receives===1)throw Error('界面回读失败');return true;},makeEngine:()=>({resolveMany:async()=>{applied++;return{resolved:2,conflicts:0};}})});
+ await controller.refresh();const result=await controller.resolveMany([{id:'a'},{id:'b'}]);assert.equal(result.resolved,2);assert.equal(controller.status().error,'界面回读失败');
+ await controller.deliver();assert.equal(receives,2);assert.equal(applied,1);assert.equal(controller.status().running,false);
+});
 function fixture(overrides={}){
  const calls=[],runs=[];let authenticated=true;
  const member={uid:'u',workspaceId:'w',name:'member'};

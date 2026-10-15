@@ -3,6 +3,7 @@ import {bindVersionHistory} from './version-history-ui.js';
 import {bindLegacyHistory} from './legacy-history-ui.js';
 import {createCloudController} from './cloud-controller.js';
 import {createCloudWorker} from './cloud-worker-client.js';
+import {mountCloudConflicts} from './cloud-conflict-view.js';
 
 /** 安装登录后同步调度和手动操作入口，将远端回读交给宿主 receive。 */
 export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMember}){
@@ -11,7 +12,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  let available=true,phase='',timer,maintenanceTimer,lastSyncedAt=null,wasRunning=false,leaving=false,cleaning=false;
  const blocked=()=>Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending);
  const localOnly=view=>view.configured===false||view.session.configured===false;
- const conflictCount=view=>Number(view.checkpoint.conflicts||view.summary?.conflicts||0);
+ const conflictCount=view=>Number(view.checkpoint.conflicts??view.summary?.conflicts??0);
  const pendingText=view=>typeof view.summary?.pending==='number'?`${view.summary.pending} 项`:view.checkpoint.localChangesPending?'有本机修改等待同步':'正在检查';
  const recentText=view=>{const value=view.checkpoint.lastSyncedAt||view.summary?.lastSyncedAt||lastSyncedAt;if(!value)return'尚未同步';const date=new Date(value);return Number.isNaN(date.getTime())?'尚未同步':date.toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});};
  function showError(error){const text=error?.message||String(error);toast(text);const node=$('#cloud-message');if(node){node.className='error';node.textContent=text;}}
@@ -73,12 +74,10 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
    window.parent.postMessage({type:'workbench-signed-out'},location.origin);
   }finally{leaving=false;render(controller.status());}
  }
- const kindLabels={configuration:'配置',component:'成本',source:'输出源',template:'模板',settings:'店铺设置',gallery:'图片'};
  async function showConflicts(){
-  const {rows,total}=await controller.conflicts();
-  openDialog('处理同步冲突',`<p>同一项内容被两端修改时，选择需要保留的版本。</p><p id="cloud-message" class="error"></p>${rows.slice(0,100).map((row,i)=>`<details><summary>${esc(row.draft?.name||kindLabels[row.type]||'待确认内容')}</summary><pre>${esc(JSON.stringify({本机:row.draft,云端:row.conflict.remote.data},null,2))}</pre><div class="actions"><button data-choice="local" data-row="${i}">保留本机版本</button><button data-choice="remote" data-row="${i}">采用云端版本</button></div></details>`).join('')||'<p>没有待处理冲突。</p>'}${total>100?'<p>先显示前 100 项，处理后继续。</p>':''}<div class="actions"><button id="cloud-back">返回</button></div>`);
-  for(const node of document.querySelectorAll('[data-choice]'))node.onclick=guard(async()=>{const row=rows[Number(node.dataset.row)];node.disabled=true;await controller.resolve(row.type,row.id,node.dataset.choice);await showConflicts();});
-  $('#cloud-back').onclick=guard(open);
+  openDialog('处理同步冲突','<div id="cloud-conflict-root"></div>');
+  const root=$('#cloud-conflict-root');
+  await mountCloudConflicts(root,{controller,esc,toast,onBack:guard(open),isCurrent:()=>$('#cloud-conflict-root')===root&&Boolean($('#dialog')?.open)});
  }
  const cacheRequest=async(action='preview')=>{
   const response=await fetch('/api/cache/'+action,action!=='preview'?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{});
@@ -125,7 +124,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   // 诊断导出独立于同步/保存互斥，下载卡住时仍可点击；取消不显示成功。
   $('#cloud-diagnostics').onclick=async()=>{const button=$('#cloud-diagnostics');button.disabled=true;try{if(!window.workbenchExportDiagnostics)throw Error('诊断导出需要桌面程序');const result=await window.workbenchExportDiagnostics();toast(result==='saved'?'诊断日志已保存，不含账号与配置内容':'已取消导出');}catch{toast('诊断日志未保存，请重新选择可写目录');}finally{if($('#cloud-diagnostics')===button)button.disabled=false;}};
   if($('#cloud-logout'))$('#cloud-logout').onclick=guard(leave);
-  if($('#cloud-sync-now'))$('#cloud-sync-now').onclick=guard(async()=>{await controller.run(true);toast('本轮同步完成');});
+  if($('#cloud-sync-now'))$('#cloud-sync-now').onclick=guard(async()=>{const result=await controller.run(true);toast(result?.conflicts?`本轮同步结束，仍有 ${result.conflicts} 项冲突待处理`:'本轮同步完成');});
   if($('#cloud-conflicts'))$('#cloud-conflicts').onclick=guard(showConflicts);
   if($('#cloud-pause'))$('#cloud-pause').onclick=guard(async()=>{if(controller.status().automatic)await controller.stop();else await controller.run(true);});
   render(view);

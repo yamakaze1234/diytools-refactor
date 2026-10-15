@@ -95,10 +95,28 @@ export function createCloudController({request=nativeCloud,flush,receive,isBlock
  async function apply(token){if(flight)throw Error('请等待同步结束');await flush();const result=await request('planApply',{token});needsReceive=true;await refresh();return result;}
  async function conflicts(){return engine.conflicts();}
  async function resolve(type,id,choice){if(flight)throw Error('请等待同步结束');await flush();await engine.resolve(type,id,choice);needsReceive=true;await refresh();return deliver();}
+ function resolveMany(selections){
+  if(flight||logoutFlight)return Promise.reject(Error('请等待同步或退出结束'));
+  if(isBlocked())return Promise.reject(Error('请等待当前保存或维护操作完成'));
+  const expected=owner(),operation=generation;
+  if(!expected||!ready())return Promise.reject(Error('请登录数据所属成员'));
+  // 手动处理允许处于暂停状态；仍持有 flight，阻止定时同步、退出和重复点击交错。
+  const checkResolution=()=>{if(operation!==generation||isBlocked())throw cancelError();checkOwner(expected);};
+  const job=Promise.resolve().then(async()=>{
+   try{
+    checkResolution();await flush();checkResolution();await refresh(operation);checkResolution();
+    const result=await engine.resolveMany(selections);view.summary=result;needsReceive=true;return result;
+   }finally{
+    try{await refresh(operation);await deliver();}catch(error){if(operation===generation)view.error=error.message;}
+    finally{if(flight===job){flight=null;view.running=false;}emit();}
+   }
+  });
+  flight=job;view.running=true;view.error=null;emit();return job;
+ }
  function verifyAssets(){
   if(flight)return Promise.reject(Error('请等待当前同步结束'));if(!ready())return Promise.reject(Error('请先完成登录与接入'));
   if(typeof engine.verifyAssets!=='function')return Promise.reject(Error('原图校验暂未接通'));
   stopped=false;const operation=generation,expected=owner();return launch(operation,async()=>{await request('resume');check(operation);await refresh(operation);check(operation);return verifyOnce(operation,expected,true);});
  }
- return {refresh,start,connectAndSync,run,login,logout,automatic,pause,tick,stop,preview,apply,conflicts,resolve,verifyAssets,deliver,status:()=>view};
+ return {refresh,start,connectAndSync,run,login,logout,automatic,pause,tick,stop,preview,apply,conflicts,resolve,resolveMany,verifyAssets,deliver,status:()=>view};
 }
