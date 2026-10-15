@@ -15,7 +15,7 @@
 | 下载入口 | 说明 |
 | --- | --- |
 | **[下载 Windows 首次使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.15/DIYTools-0.2.15-Windows-x64-FirstUse.zip)** | 推荐下载，完整解压后运行 `DIYTools.exe` |
-| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.15/DIYTools-0.2.15-Windows-x64-FirstUse.zip) | 备用源，需要有仓库访问权限 |
+| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.15/DIYTools-0.2.15-Windows-x64-FirstUse.zip) | 备用下载源 |
 | [版本历史 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases) / [GitHub](https://github.com/yamakaze1234/diytools-refactor/releases) | 更新内容与历史程序 |
 
 1. 下载 ZIP，完整解压到可写目录，再运行 `DIYTools.exe`；不要直接在压缩包中运行。
