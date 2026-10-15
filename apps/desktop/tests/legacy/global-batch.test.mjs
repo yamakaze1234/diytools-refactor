@@ -26,4 +26,22 @@ const configs=()=>[0,1,2].map(i=>({id:'c'+i,productId:i===2?'b':'a',product:i===
 const row={sourceId:'new',goodsId:'20',name:'新配件',erp:30,tax:40};
 test('global usage exact ID across products, replacement only selected product and retains quantities',()=>{const cs=configs();assert.equal(findPartUsage(cs,'旧配件').length,2);assert.equal(usageGroups(cs,'id:10').length,2);const plan=replacementPlan(cs,'id:10',['a'],row,null);assert.equal(plan.changes.length,1);applyReplacement(plan,cs);assert.equal(cs[0].parts[0].qty,2);assert.equal(cs[0].parts[0].posterVisible,false);assert.equal(cs[0].price,6000);assert.equal(cs[1].parts[0].goodsId,'11');assert.equal(cs[2].parts[0].goodsId,'10');});
 test('stale replacement blocks whole batch and deleted configs excluded',()=>{const cs=configs(),plan=replacementPlan(cs,'id:10',['a','b'],row,4);cs[2].price=7000;assert.throws(()=>applyReplacement(plan,cs));assert.equal(cs[0].parts[0].goodsId,'10');cs[2].deletedAt='now';assert.equal(usageGroups(cs,'id:10').length,1);});
-test('export all configs of affected links twice with distinct paths and full SPU',()=>{const cs=configs(),entries=exportEntries(cs,['a']);assert.equal(entries.length,4);assert.equal(new Set(entries.map(e=>e.name)).size,4);assert.ok(entries[0].name.endsWith('_配置图/888888888888888888_配置1.png'));assert.equal(entries[1].config.layout,'square');assert.equal(entries[2].config.id,'c1');cs[0].spu='';assert.throws(()=>exportEntries(cs,['a']));});
+test('export all configs of affected links twice with distinct paths and ordinal names',()=>{const cs=configs(),entries=exportEntries(cs,['a']);assert.equal(entries.length,4);assert.equal(new Set(entries.map(e=>e.name)).size,4);assert.ok(entries[0].name.endsWith('_配置图/1_配置1.png'));assert.equal(entries[1].config.layout,'square');assert.equal(entries[2].config.id,'c1');cs[0].spu='';assert.throws(()=>exportEntries(cs,['a']));});
+
+
+test('重复编号与回退编号冲突不阻止导出且不修改配置',()=>{
+ for(const names of [['配置2','自定义'],['配置1','配置1','配置1']]){
+  const cs=names.map((name,i)=>({...configs()[0],id:'dup'+i,name})),before=structuredClone(cs);
+  const entries=exportEntries(cs,['a']);
+  assert.equal(entries.length,cs.length*2);assert.equal(new Set(entries.map(e=>e.name)).size,entries.length);
+  assert.deepEqual(cs,before);
+ }
+});
+test('只导出变化配置保留完整链接的原文件名与序号',()=>{
+ const cs=configs(),all=exportEntries(cs,['a']);
+ const filtered=exportEntries(cs,['a'],'both',{configIds:['c1','c2']});
+ assert.deepEqual(filtered,all.filter(e=>e.config.id==='c1'));
+ assert.equal(filtered.length,2);assert.ok(filtered[0].name.endsWith('/2_配置2.png'));
+ assert.deepEqual(exportEntries(cs,['a'],'both',{configIds:[]}),[]);
+ cs[0].spu='';assert.equal(exportEntries(cs,['a'],'long',{configIds:['c1']}).length,1);
+});

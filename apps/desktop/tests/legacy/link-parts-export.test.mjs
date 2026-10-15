@@ -80,7 +80,7 @@ test('快照导图跳过再次保存，以1400px渲染选定图种并写出导�
  const snapshots=[config('1'),config('2')],rendered=[],messages=[];let folderFiles,saves=0,downloads=0;
  await exportBatchImages({save:async()=>saves++,getConfigs:()=>{throw Error('不能读后续编辑');},renderImage:async(c,width)=>{rendered.push({c,width});return renderer(c);},saveFolder:async files=>{folderFiles=files;return {directory:'测试文件夹'};},download:()=>downloads++},['a'],message=>messages.push(message),{snapshots,imageKind:'square'});
  assert.equal(saves,0);assert.equal(downloads,0);assert.equal(rendered.length,2);assert.ok(rendered.every(r=>r.width===1400&&r.c.layout==='square'&&r.c.theme==='paper'&&r.c.skuMode==='full'));
- assert.deepEqual(folderFiles.map(f=>f.name),['888888888888888888_配置1.png','888888888888888888_配置2.png','导出清单.json']);assert.match(messages.at(-1),/导出 2 张图片/);
+ assert.deepEqual(folderFiles.map(f=>f.name),['1_配置1.png','2_配置2.png','导出清单.json']);assert.match(messages.at(-1),/导出 2 张图片/);
 });
 
 test('原批量入口仍先保存并默认导出两种图片',async()=>{
@@ -107,4 +107,4 @@ test('部分图片失败仍交付成功图片与失败清单，全部失败不�
  await assert.rejects(exportBatchImages({...api,renderImage:async()=>({overflow:true})},['a'],()=>{},{snapshots:configs}),/全部图片生成失败/);assert.equal(folders,1);
 });
 
- test('同名配置导出可安全编号且旧入口继续拒绝冲突',()=>{const rows=[config('1'),{...config('2'),name:'配置1'}];assert.throws(()=>exportEntries(rows,['a']),/重复配置编号/);const entries=exportEntries(rows,['a'],'both',{deduplicateNames:true});assert.equal(entries.length,4);assert.equal(new Set(entries.map(e=>e.name)).size,4);assert.equal(entries.filter(e=>e.name.endsWith('_2.png')).length,2);assert.deepEqual(entries.filter(e=>e.config.id==='2').map(e=>e.config.layout),['long','square']);});
+ test('同名配置导出统一使用链接内序号避免冲突',()=>{const rows=[config('1'),{...config('2'),name:'配置1'}];assert.equal(exportEntries(rows,['a']).length,4);const entries=exportEntries(rows,['a'],'both',{deduplicateNames:true});assert.equal(entries.length,4);assert.equal(new Set(entries.map(e=>e.name)).size,4);assert.equal(entries.filter(e=>e.name.endsWith('/2_配置1.png')).length,2);assert.deepEqual(entries.filter(e=>e.config.id==='2').map(e=>e.config.layout),['long','square']);});
