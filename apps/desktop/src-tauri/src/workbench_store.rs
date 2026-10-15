@@ -15,6 +15,8 @@ use std::{
 };
 
 type Result<T> = std::result::Result<T, String>;
+#[path = "workbench_store/export_session.rs"]
+mod export_session;
 #[path = "workbench_store/sql_sync.rs"]
 mod sql_sync;
 #[path = "workbench_store/legacy_history.rs"]
@@ -1493,6 +1495,12 @@ fn write_export_files(folder: &Path, files: &[(String, Vec<u8>)], mut write: imp
 #[tauri::command]
 // 等待用户选定导出父目录；取消时不写文件，确定后后台生成独立文件夹。
 pub async fn workbench_export_folder(payload: Value) -> Result<Value> {
+    if let Some(phase) = payload["phase"].as_str() {
+        if phase != "begin" {
+            return tauri::async_runtime::spawn_blocking(move || export_session::dispatch(&payload))
+                .await.map_err(|e| e.to_string())?;
+        }
+    }
     let chosen = rfd::AsyncFileDialog::new()
         .set_title("选择导出目录（将在其中新建独立文件夹）")
         .pick_folder()
@@ -1501,7 +1509,10 @@ pub async fn workbench_export_folder(payload: Value) -> Result<Value> {
         return Ok(json!({"ok":false,"cancelled":true}));
     };
     let directory = chosen.path().to_path_buf();
-    tauri::async_runtime::spawn_blocking(move || export_files(&payload, &directory))
+    tauri::async_runtime::spawn_blocking(move || {
+        if payload["phase"] == "begin" { export_session::begin(&payload, &directory) }
+        else { export_files(&payload, &directory) }
+    })
         .await
         .map_err(|e| e.to_string())?
 }

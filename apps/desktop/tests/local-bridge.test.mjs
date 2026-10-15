@@ -15,6 +15,17 @@ function frame(original = async () => new Response('static')) {
   return { location: new URL('http://localhost:1420/workbench/index.html'), fetch: original };
 }
 
+test('分批导出桥接逐次传递会话阶段，不拼接整批图片',async()=>{
+ const calls=[],target=frame();
+ await installWorkbenchBridge(target,{invoke:async(command,args)=>{calls.push({command,args});return {ok:true,token:'test',files:[]};}});
+ for(const payload of [{phase:'begin',name:'测试'},{phase:'append',token:'test',files:[{name:'1_配置1.png',base64:'cG5n'}]},{phase:'finish',token:'test'}]){
+  await target.pywebview.api.export_image_folder_session(payload);
+ }
+ assert.deepEqual(calls.map(c=>c.command),Array(3).fill('workbench_export_folder'));
+ assert.deepEqual(calls.map(c=>c.args.payload.phase),['begin','append','finish']);
+ assert.equal(calls[0].args.payload.files,undefined);assert.equal(calls[2].args.payload.files,undefined);
+});
+
 test('native markup CORS covers relative and already resolved material URLs',async()=>{
  const old=globalThis.MutationObserver;
  globalThis.MutationObserver=class{observe(){}disconnect(){}};

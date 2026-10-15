@@ -17,7 +17,7 @@ export type WorkbenchWindow = Window & {
   workbenchExportDiagnostics?: () => Promise<string>;
   workbenchRecordDiagnostic?: (stage: string, error?: unknown) => void;
   resolveWorkbenchAsset?: (url: string) => string;
-  pywebview?: { api?: { export_image_folder?: (payload: WorkbenchFolderPayload) => Promise<unknown> } };
+  pywebview?: { api?: { export_image_folder?: (payload: WorkbenchFolderPayload) => Promise<unknown>; export_image_folder_session?: (payload: Record<string, unknown>) => Promise<unknown> } };
 };
 
 /** Inventory of the old UI's local contracts; unknown /api routes still reach the backend. */
@@ -192,7 +192,10 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
     // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
     targetWindow.workbenchExportDiagnostics = async () => exportDiagnostics(invoke, await invoke<string>('plugin:app|version').catch(() => 'unknown'));
     targetWindow.workbenchRecordDiagnostic = (stage, error) => { diagnostics.begin(stage)(error); };
-    targetWindow.pywebview = { api: { export_image_folder: payload => invoke('workbench_export_folder', { payload }) } };
+    targetWindow.pywebview = { api: {
+      export_image_folder: payload => invoke('workbench_export_folder', { payload }),
+      export_image_folder_session: payload => invoke('workbench_export_folder', { payload })
+    } };
   }
 
   // Markup images need the same runtime URL transformation as detached canvas Image objects.

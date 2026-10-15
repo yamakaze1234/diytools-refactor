@@ -1,0 +1,73 @@
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)('C:/Users/d1832/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const root=path.resolve('apps/desktop/public/workbench'),out=path.resolve('sandbox/source-category-integration-20261015/ui');await fs.mkdir(out,{recursive:true});
+const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/workbench-ui.css"><link rel="stylesheet" href="/workbench-simple.css"><dialog class="source-dialog"><div id="dialog-body"><div class="source-sync-top" id="mount"></div></div></dialog>');return;}const file=path.resolve(root,'.'+pathname);if(!file.startsWith(root+path.sep))throw Error('path');res.setHeader('Content-Type',pathname.endsWith('.js')?'text/javascript':pathname.endsWith('.css')?'text/css':'application/octet-stream');res.end(await fs.readFile(file));}catch(e){res.statusCode=404;res.end(e.message);}});await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+try{
+ browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage({viewport:{width:1400,height:1050}});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}`);
+ await page.evaluate(async()=>{
+  const {mountSourceSync}=await import('/source-sync-ui.js'),{applySourceSync}=await import('/source-sync-data.js');
+  const row={sourceId:'source',shopId:'intel',goodsId:'123',name:'新名称',tax:200,addonText:'【+199元升级水冷】'};
+  const configs=['a','b'].map((id,i)=>({id,shopId:'intel',productId:'p'+(i+1),product:'链接'+(i+1),name:'配置'+(i+1),parts:[{slot:'散热',sourceId:'source',goodsId:'123',name:'原名称',tax:100,qty:1,upgrade:'手动加购说明'}],actualParts:[{slot:'散热',goodsId:'actual',qty:7}],addons:[{text:'人工加购'}]}));
+  window.fixture={configs,original:structuredClone(configs),row,applied:[]};
+  window.sync=mountSourceSync(document.querySelector('#mount'),{message(){},isEdited:()=>false,flush:async()=>{},getConfigs:()=>configs,getRows:()=>[row],shopId:()=> 'intel',apply:async plan=>{applySourceSync(plan,configs,[row]);window.fixture.applied.push(plan);}});document.querySelector('dialog').showModal();
+ });
+ const link=id=>page.locator(`[data-source-link="${id}"]`);
+ const choose=async(id,name)=>{await page.locator('[data-source-select]').evaluateAll((els,{id,name})=>{const el=els.find(el=>{const key=JSON.parse(el.value);return key[0]===id&&key.at(-1)===name});if(!el)throw Error('missing field');el.click();},{id,name});};
+ await link('p1').waitFor();assert.equal(await page.locator('[data-source-select]').count(),0);assert.equal(await page.locator('[data-source-link][aria-pressed="true"]').count(),0);
+ await link('p1').click();assert.equal(await page.locator('[data-source-select]').count(),3);assert.equal(await page.locator('[data-source-select]:checked').count(),0);assert.doesNotMatch(await page.locator('[data-source-groups]').textContent(),/配置2/);
+ await choose('a','name');await link('p2').click();assert.equal(await page.locator('[data-source-select]:checked').count(),0);await choose('b','upgrade');await link('p1').click();assert.equal(await page.locator('[data-source-select]:checked').count(),1);
+ await choose('a','tax');assert.equal(await page.locator('#source-ignore').isDisabled(),true);await choose('a','tax');assert.equal(await page.locator('#source-ignore').isEnabled(),true);
+ await page.screenshot({path:path.join(out,'manual-confirm-preview.png')});await page.locator('#source-apply').click();await link('p1').waitFor();
+ let result=await page.evaluate(()=>window.fixture);assert.equal(result.applied.length,1);assert.equal(result.applied[0].changes.reduce((n,c)=>n+c.details.length,0),2);assert.equal(result.configs[0].parts[0].name,'新名称');assert.equal(result.configs[0].parts[0].sourceFollow.name.mode,'follow');assert.equal(result.configs[0].parts[0].upgrade,'手动加购说明');assert.equal(result.configs[1].parts[0].name,'原名称');assert.equal(result.configs[1].parts[0].sourceFollow.upgrade.mode,'follow');assert.equal(result.configs[0].parts[0].tax,100);
+ await link('p1').click();await choose('a','upgrade');await page.locator('#source-ignore').click();await link('p1').waitFor();await link('p1').click();
+ assert.equal(await page.locator('[data-source-select]').count(),1);result=await page.evaluate(()=>window.fixture);assert.equal(result.configs[0].parts[0].upgrade,'手动加购说明');assert.equal(result.configs[0].parts[0].sourceFollow.upgrade.mode,'manual');assert.ok(result.configs[0].parts[0].sourceFollow.upgrade.ignoredSourceValue);
+ await choose('a','tax');await page.evaluate(()=>{window.fixture.configs[0].name='预览后修改'});await page.locator('#source-apply').click();assert.match(await page.locator('[data-source-sync-message]').textContent(),/配置已变化/);assert.equal(await page.evaluate(()=>window.fixture.applied.length),2);assert.equal(await page.evaluate(()=>window.fixture.configs[0].parts[0].tax),100);
+ await page.evaluate(()=>window.sync.refresh());await link('p1').click();await choose('a','tax');await page.evaluate(()=>{window.fixture.row.tax=201});await page.locator('#source-apply').click();assert.match(await page.locator('[data-source-sync-message]').textContent(),/输出源已变化/);
+ result=await page.evaluate(()=>window.fixture);for(let i=0;i<2;i++){assert.deepEqual(result.configs[i].actualParts,result.original[i].actualParts);assert.deepEqual(result.configs[i].addons,result.original[i].addons);}assert.deepEqual(errors,[]);
+ await page.evaluate(async()=>{
+  const {mountSourceSync}=await import('/source-sync-ui.js'),{applySourceSync}=await import('/source-sync-data.js');
+  const rows=['CPU','内存','散热','扩展配件'].map((slot,i)=>({sourceId:'part'+i,shopId:'intel',goodsId:String(i+10),name:slot+'新名称',tax:200,addonText:''}));
+  const part=i=>({slot:['CPU','内存','散热','扩展配件'][i],sourceId:rows[i].sourceId,goodsId:rows[i].goodsId,name:'原名称',tax:100,qty:1,upgrade:''});
+  const configs=[{id:'a',shopId:'intel',productId:'p1',product:'链接1',name:'配置1',parts:[part(1),part(0),part(3)]},{id:'b',shopId:'intel',productId:'p1',product:'链接1',name:'配置2',parts:[part(0)]},{id:'c',shopId:'intel',productId:'p2',product:'链接2',name:'配置3',parts:[part(2)]}];
+  window.fixture={configs,rows,applied:[]};mountSourceSync(document.querySelector('#mount'),{message(){},isEdited:()=>false,flush:async()=>{},getConfigs:()=>configs,getRows:()=>rows,shopId:()=> 'intel',apply:async plan=>{applySourceSync(plan,configs,rows);window.fixture.applied.push(plan);}});
+ });
+ const category=name=>page.locator('[data-source-category]').filter({hasText:new RegExp('^'+name+'（')});
+ await category('CPU').waitFor();assert.match(await category('CPU').textContent(),/4 项/);
+ await link('p1').click();assert.deepEqual(await page.locator('[data-source-part-group]').evaluateAll(els=>els.map(el=>el.dataset.sourcePartGroup)),['CPU','内存','扩展配件']);
+ await category('CPU').click();assert.equal(await page.locator('[data-source-link]').count(),1);assert.match(await link('p1').textContent(),/4 项/);assert.equal(await page.locator('[data-source-select]').count(),4);
+ await page.locator('[data-source-select-all]').check();await category('内存').click();assert.equal(await page.locator('[data-source-select]:checked').count(),0);assert.match(await page.locator('[data-source-sync-message]').textContent(),/其中 4 项在其他链接或配件分类中/);
+ await choose('a','name');await category('CPU').click();assert.equal(await page.locator('[data-source-select]:checked').count(),4);await page.locator('[data-source-select-all]').uncheck();
+ await category('散热').click();assert.equal(await page.locator('[data-source-link]').count(),1);assert.equal(await page.locator('[data-source-select]').count(),2);await link('p2').click();await choose('c','name');
+ await category('内存').click();await link('p1').click();assert.equal(await page.locator('[data-source-select]:checked').count(),1);assert.equal(await page.locator('[data-source-select-all]').evaluate(el=>el.indeterminate),true);
+ await page.locator('[data-source-clear]').click();assert.equal(await page.locator('#source-apply').isDisabled(),true);
+ await choose('a','name');await category('全部配件').click();
+ await page.screenshot({path:path.join(out,'part-category-preview.png')});await page.locator('#source-apply').click();
+ result=await page.evaluate(()=>window.fixture);assert.equal(result.applied.length,1);assert.equal(result.applied[0].changes[0].details.length,1);assert.equal(result.configs[0].parts[0].name,'内存新名称');assert.equal(result.configs[0].parts[1].name,'原名称');assert.equal(result.configs[0].parts[0].tax,100);assert.equal(result.configs[2].parts[0].name,'原名称');assert.deepEqual(errors,[]);
+ await page.evaluate(async()=>{
+  const {mountSourceSync}=await import('/source-sync-ui.js'),{applySourceSync}=await import('/source-sync-data.js');
+  const rows=[{sourceId:'ram-a',shopId:'intel',goodsId:'20',name:'32GB 内存',tax:200,upgrade:'【+200元升级64GB内存】'},{sourceId:'ram-b',shopId:'intel',goodsId:'21',name:'32GB 内存',tax:200,upgrade:'【+300元升级64GB内存】'}];
+  const configs=['a','b','c','d','e'].map((id,i)=>({id,shopId:'intel',productId:i===0?'p1':'p2',product:i===0?'T700':'X400CG',name:'配置'+(i+1),parts:[{slot:'内存',sourceId:rows[i===2?1:0].sourceId,goodsId:rows[i===2?1:0].goodsId,name:i===4?'【+100元升级64GB内存】':'32GB 内存',tax:200,qty:1,upgrade:i===3?'':'【+100元升级64GB内存】'}]}));
+  // The same text pair in another field must remain a separate group.
+  rows[0].name='【+200元升级64GB内存】';for(const c of configs.slice(0,4))c.parts[0].name=rows[c.id==='c'?1:0].name;
+  window.fixture={configs,rows,applied:[]};mountSourceSync(document.querySelector('#mount'),{message(){},isEdited:()=>false,flush:async()=>{},getConfigs:()=>configs,getRows:()=>rows,shopId:()=> 'intel',apply:async plan=>{applySourceSync(plan,configs,rows);window.fixture.applied.push(plan);}});
+ });
+ await category('内存').click();
+ const descriptionGroups=page.locator('[data-source-description-group]');assert.equal(await descriptionGroups.count(),4);
+ const sharedGroup=descriptionGroups.filter({hasText:'逐项升级说明'}).filter({hasText:'3 项 · 2 个链接 · 3 套配置'});assert.equal(await sharedGroup.count(),1);assert.equal(await sharedGroup.locator('[data-source-description]').count(),1);assert.equal(await sharedGroup.locator('[data-source-select]').count(),3);
+ assert.match(await descriptionGroups.filter({hasText:'当前内容：（空）'}).textContent(),/输出源新内容：【\+200元升级64GB内存】/);
+ await choose('a','upgrade');assert.equal(await sharedGroup.locator('[data-source-select-group]').evaluate(el=>el.indeterminate),true);
+ await sharedGroup.locator('[data-source-select-group]').check();assert.equal(await page.locator('[data-source-select]:checked').count(),3);assert.equal(await page.locator('#source-ignore').isEnabled(),true);
+ await link('p1').click();assert.equal(await page.locator('[data-source-select]:checked').count(),1);await page.locator('[data-source-select-group]').uncheck();
+ await page.locator('[data-source-all-links]').click();assert.equal(await sharedGroup.locator('[data-source-select-group]').evaluate(el=>el.indeterminate),true);assert.equal(await page.locator('[data-source-select]:checked').count(),2);
+ await sharedGroup.locator('[data-source-select-group]').check();
+ await page.screenshot({path:path.join(out,'part-description-preview.png')});
+ await page.setViewportSize({width:600,height:1050});await page.screenshot({path:path.join(out,'part-description-narrow.png')});await page.setViewportSize({width:1400,height:1050});
+ await page.locator('#source-apply').click();result=await page.evaluate(()=>window.fixture);
+ assert.equal(result.applied.length,1);assert.deepEqual(result.applied[0].changes.map(c=>c.id),['a','b','e']);assert.ok(result.applied[0].changes.every(c=>c.details.length===1&&c.details[0].field==='upgrade'));
+ assert.equal(result.configs[2].parts[0].upgrade,'【+100元升级64GB内存】');assert.equal(result.configs[3].parts[0].upgrade,'');assert.equal(result.configs[4].parts[0].name,'【+100元升级64GB内存】');assert.deepEqual(errors,[]);
+ const report={passed:true,defaultNoDetails:true,singleLinkDetails:true,defaultNoFields:true,crossLinkSelectionPreserved:true,selectedFieldsOnly:true,confirmedFieldsFollow:true,ignoredVersionHidden:true,taxBlocksIgnore:true,staleConfigRejected:true,staleSourceRejected:true,actualPartsAndAddonsPreserved:true,categoryCountsAndOrder:true,categoryFiltersLinks:true,crossCategorySelectionPreserved:true,selectAllOnlyVisibleCategory:true,clearIncludesHiddenSelections:true,categoryApplyOnlySelected:true,sameDescriptionGroupedAcrossLinks:true,differentBeforeAfterAndFieldSeparated:true,groupSelectionIndeterminate:true,groupSelectionRespectsLinkFilter:true,groupApplyOnlySelected:true,errors};await fs.writeFile(path.join(out,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
+}finally{await browser?.close();await new Promise(r=>server.close(r));}
