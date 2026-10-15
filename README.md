@@ -1,96 +1,43 @@
-# DIY 配置工作台 · 重构版
+# DIY 配置工作台
 
-面向 DIY 整机业务的 Windows 本地优先工作台，用于维护商品配置、核算成本与利润、读取 ERP 库存和制作配置图。当前源码版本为 **0.2.8**，采用 Rust、Tauri 2 与 React/TypeScript；现有工作台页面由 React 宿主承载，本机 SQLite 保存业务数据。
+面向 DIY 整机业务的 Windows 工作台。集中管理商品配置、配件成本与利润，批量维护配件和加购说明，制作配置清单图与 SKU 图。
 
-源码仓库：[Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor) · [GitHub](https://github.com/yamakaze1234/diytools-refactor)。版本以根目录 `package.json`、桌面 `package.json`、Tauri 配置与 Cargo 包版本为准。
+**Windows x64 · 当前版本 0.2.15 · 解压即用**
 
-## 本次更新
+## 下载与开始使用
 
-0.2.8 支持大型旧库只读迁移、首次云下载快照提速与安全续接，并新增诊断日志导出。详见 [更新说明](docs/RELEASE-0.2.8.md)。
-
-## 快速入口
-
-| 我想做什么 | 入口 |
+| 下载入口 | 说明 |
 | --- | --- |
-| 下载程序与查看版本变化 | [Gitea Releases](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases) |
-| 使用备用下载源 | [GitHub Releases](https://github.com/yamakaze1234/diytools-refactor/releases) |
-| 第一次使用或查操作流程 | [使用说明](docs/PUBLIC-USAGE.md) |
-| 了解系统组成和数据位置 | [系统架构](docs/PUBLIC-ARCHITECTURE.md) · [交互架构图](docs/diagrams/architecture.html) |
-| 配置自己的同步与 ERP 接口 | [本机可选接入](docs/PUBLIC-INTEGRATIONS.md) |
-| 构建、签名与发布版本 | [签名发布流程](docs/PUBLIC-RELEASE.md) |
+| **[下载 Windows 首次使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.15/DIYTools-0.2.15-Windows-x64-FirstUse.zip)** | 推荐下载，完整解压后运行 `DIYTools.exe` |
+| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.15/DIYTools-0.2.15-Windows-x64-FirstUse.zip) | 备用源，需要有仓库访问权限 |
+| [版本历史 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases) / [GitHub](https://github.com/yamakaze1234/diytools-refactor/releases) | 更新内容与历史程序 |
 
-## 主要功能
+1. 下载 ZIP，完整解压到可写目录，再运行 `DIYTools.exe`；不要直接在压缩包中运行。
+2. 无团队接入配置时使用本机模式。团队用户由管理员配置连接，用自己的成员账号登录，再选择云端下载或旧数据迁移。
+3. 选择店铺、商品链接和配置，编辑后保存；按需要导出图片或复制到 WPS。
 
-| 模块 | 能力 |
+需要 Windows x64 和 Microsoft Edge WebView2 Runtime，不需要安装 Node.js、Rust 或 Python。便携版数据保存在程序旁的 `data`。已有用户可通过“更多 → 检查更新”升级并保留数据。
+
+## 可以做什么
+
+| 功能 | 使用方式 |
 | --- | --- |
-| 商品与配置 | 按店铺、商品链接维护配置；选择配置后加载详情，编辑中的配置保持加载 |
-| 配件与价格 | 实际配件、展示配件、数量、售价、成本、利润和升级说明 |
-| 批量维护 | 批量替换配件、修改内容、统一排版和导出图片 |
-| 图片制作 | 机箱素材、图片与文字图层、配置图与 SKU 图、单张和批量导出 |
-| 历史与空间 | 本机历史、还原、恢复草稿、缓存预览与清理 |
-| 团队同步 | 配置外部服务后登录，先保存本机，再手动或每 2 小时同步；冲突需处理 |
-| ERP 与库存 | 安装本机适配器后只读查询，预览差异再应用至本机配置 |
-| 软件更新 | Gitea 优先、GitHub 备用，验证签名后更新 Windows 程序 |
+| 配置管理 | 按店铺和链接管理多套配置，维护实际配件、展示内容、价格与利润 |
+| 批量修改 | 更换配件、修改加购说明和展示名称，先预览再应用，支持本次修改单次还原 |
+| 差异确认 | 按配件分类查看输出源变化，相同描述变动成组选择 |
+| 图片导出 | 配置图和 SKU 图，保留各套主题，选择全部或仅变动配置导出；文件名如 `1_配置1.png` |
+| WPS 回填 | 勾选配置，复制数量、展示名称和到手价到 F:H |
+| 数据维护 | 本机历史、恢复草稿、备份与缓存管理；可选接入团队同步、ERP 只读查询 |
 
-## 三分钟上手
+## 文档
 
-1. 下载 Windows 便携 ZIP，完整解压至可写目录，运行 `DIYTools.exe`。
-2. 无外部配置时直接使用本机模式；需要团队登录与 ERP 时由管理员准备本机接入文件。
-3. 选择店铺、链接和配置，修改配件、价格及说明，保存到本机。
-4. 调整图片布局，选择配置图或 SKU 图导出；批量文件夹使用链接名称区分。
-5. 已连接团队服务时，在“数据与同步”查看进度或立即同步，可关闭窗口继续编辑。
-6. 在“更多 → 检查更新”查看新版，并按提示执行一键更新。
+- [使用说明](docs/PUBLIC-USAGE.md)：首次使用、批量操作、图片、备份与更新。
+- [接入说明](docs/PUBLIC-INTEGRATIONS.md)：团队同步和可选 ERP 配置。
+- [源码开发](docs/DEVELOPMENT.md)：环境、运行、测试和构建。
+- [系统架构](docs/PUBLIC-ARCHITECTURE.md) · [发布维护](docs/PUBLIC-RELEASE.md)。
 
-升级已有工作台或遇到保存冲突时，按[使用说明](docs/PUBLIC-USAGE.md)保留完整数据与草稿。
+发行包仅包含程序、便携标记和使用说明。团队连接、成员账号、业务数据和私有 ERP 组件由管理员在本机配置。
 
-## 系统架构
+[Gitea 主仓库](https://gitea.cq360.top/CoreStudio/diy-tools-refactor) · [GitHub 镜像](https://github.com/yamakaze1234/diytools-refactor)
 
-![DIY Tools 重构版系统架构](docs/diagrams/architecture.png)
-
-[打开交互架构图](docs/diagrams/architecture.html) · [查看架构 JSON](docs/diagrams/architecture.json) · [阅读架构说明](docs/PUBLIC-ARCHITECTURE.md)
-
-React 宿主在 iframe 中承载现有工作台，桥接层将受支持的页面请求转换为 Tauri IPC。Rust 负责本机存储、历史、后台同步和更新；ERP 通过可选的本机 Python 运行时接入。图中外部服务表示可选连接，发行包不提供现有团队的访问权限。
-
-## 源码运行
-
-Windows 需要 PowerShell 7、Node.js 24 或更高版本、pnpm 11、Rust stable、Windows C++ 构建工具和 Microsoft Edge WebView2 Runtime。
-
-```powershell
-git clone https://gitea.cq360.top/CoreStudio/diy-tools-refactor.git
-Set-Location diy-tools-refactor
-pnpm install --frozen-lockfile
-pnpm dev
-```
-
-仅查看前端可运行 `pnpm dev:web`；涉及本机保存、ERP、同步和更新的功能需要 Tauri 宿主。Python 适配层为可选功能，见 [ERP worker](services/erp-worker/README.md)。开发数据与发行数据相互独立。
-
-## 测试与打包
-
-```powershell
-$tests = @(rg --files apps/desktop/tests | Where-Object { $_ -match '\.test\.mjs$' })
-node --test @tests
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
-pnpm build:web
-pnpm build:desktop --no-bundle
-```
-
-以上检查不代表已完成真实团队服务或原生窗口验收。可分发 ZIP、签名和 Release 按[发布流程](docs/PUBLIC-RELEASE.md)制作。
-
-## 目录
-
-| 路径 | 内容 |
-| --- | --- |
-| `apps/desktop/src/` | React 宿主、登录界面与旧页面桥接 |
-| `apps/desktop/public/workbench/` | 配置工作台页面、业务规则与绘图模块 |
-| `apps/desktop/src-tauri/` | Rust 本机服务、SQLite、同步和签名更新 |
-| `services/erp-worker/` | 可选 Python ERP 适配协议与通用服务 |
-| `tools/` | 源码检查、构建、打包与发布工具 |
-| `docs/` | 使用、接入、架构与发布文档 |
-
-## 数据边界
-
-仓库和发行包不包含业务库、原图、恢复草稿、真实服务地址、账号、密钥或企业私有 ERP 依赖。真实接入文件仅保存在本机；发布私钥留在发布者电脑，源码仅包含验证公钥。
-
-便携程序使用 EXE 相邻的 `data`。升级、迁移或备份应保留完整目录；不要用空目录覆盖现有数据。旧版仓库与轻量网页版本独立维护，本仓库面向 Windows 重构工作台。
-
-本仓库尚未指定开源许可证；第三方依赖与品牌素材保留各自权利。
+本项目尚未指定开源许可证；第三方依赖和素材遵循各自许可。
