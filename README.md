@@ -4,6 +4,12 @@
 
 **Windows x64 · 当前版本 0.2.15 · 解压即用**
 
+## 系统架构
+
+![DIY 配置工作台系统架构](docs/diagrams/architecture.png)
+
+[查看架构说明](docs/PUBLIC-ARCHITECTURE.md)
+
 ## 下载与开始使用
 
 | 下载入口 | 说明 |
