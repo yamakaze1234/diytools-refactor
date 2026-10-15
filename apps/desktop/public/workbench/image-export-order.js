@@ -18,7 +18,14 @@ export function numberedImageEntries(configs,layout=null){
  const key=c=>JSON.stringify([c.shopId,c.productId||c.product||c.spu||'']);
  // 多链接导出按链接建目录；同名链接加序号，避免在 Windows 上合并。
  for(const c of ordered){if(groups.has(key(c)))continue;let label=String(c.product||'未命名链接').slice(0,80),folder=imageFolderName(label,layout),n=1;while(used.has(folder.toLowerCase()))folder=imageFolderName(`${label}_${++n}`,layout);used.add(folder.toLowerCase());groups.set(key(c),folder);}
- return ordered.map((config,i)=>({config,name:`${layout&&groups.size>1?groups.get(key(config))+'/':''}${i+1}.png`}));
+ const indexes=new Map();
+ return ordered.map(config=>{const group=key(config),index=indexes.get(group)||0;indexes.set(group,index+1);return {config,name:`${layout&&groups.size>1?groups.get(group)+'/':''}${imageConfigFilename(config,index)}`};});
+}
+
+/** 链接内序号保证重名配置仍可独立导出；保留已有配置编号。 */
+export function imageConfigFilename(config,index){
+ const number=/^配置\s*([\d一二三四五六七八九十百]+)$/.exec(config.name||'');
+ return `${index+1}_配置${number?number[1]:index+1}.png`;
 }
 
 /** 文件夹只使用链接名称和图种；非法路径字符替换，避免被解释成子目录。 */

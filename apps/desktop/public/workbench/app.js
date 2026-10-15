@@ -681,7 +681,7 @@ async function batchExportFull(){
  const selectedConfig=current(),layout=selectedConfig.layout,width=Number($('#export-width').value)||defaultPosterWidth(selectedConfig);
  const exportEntries=numberedImageEntries(configs,layout),snapshots=exportEntries.map(({config:c})=>({...clone(c),layout})),draft=dirty||!!savePromise||conflict,revision=state.revision,shopId=activeShopId,shopName=currentShop().name;
  exportJobs++;
- try{if(snapshots.length===1){const c=snapshots[0],r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容溢出');toast(await exportSingleImage(await toBlob(r.canvas),filename(c),{download:downloadBlob,draft}));return;}
+ try{if(snapshots.length===1){const c=snapshots[0],r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容溢出');toast(await exportSingleImage(await toBlob(r.canvas),exportEntries[0].name,{download:downloadBlob,draft}));return;}
  const report={shopId,shop:shopName,revision:draft?null:revision,source:draft?'点击时的当前草稿':'已保存配置',layout,width,entries:exportEntries.map(e=>({file:e.name,config:e.config.name,id:e.config.id,product:e.config.product,theme:e.config.theme,skuMode:e.config.skuMode}))};
  // 任务保存起始快照；关闭业务弹窗或继续编辑都不会替换任务输入。
  const task=startImageExportTask({entries:snapshots.map((config,i)=>({config,name:exportEntries[i].name})),name:imageArchiveName(snapshots,layout),title:'批量配置图片',width,report,download:downloadBlob,renderImage:(config,size)=>imageRenderGate.run(({beforeDraw})=>renderPoster(config,size,{beforeDraw}))});

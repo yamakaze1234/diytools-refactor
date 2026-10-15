@@ -1,5 +1,5 @@
 import {captureBatchRevert,batchRevertPlan} from './batch-revert.js';
-import {imageFolderName} from './image-export-order.js';
+import {imageFolderName,imageConfigFilename} from './image-export-order.js';
 /** 跨链接批量配件维护：查询使用范围、预览替换及文案调整，并导出修改后的图片。 */
 import {markSourceFieldManual} from './source-follow.js';
 import {mountProductSearch} from './product-search.js';
@@ -122,7 +122,7 @@ export function exportEntries(configs,productIds,imageKind='both',{configIds=nul
  const groups=productGroups(configs.filter(c=>!c.deletedAt)).filter(g=>productIds.includes(g.id)),entries=[],folders=new Set(),paths=new Set();
  for(const g of groups){if(g.configs.some(c=>(!selected||selected.has(c.id))&&!/^\d+$/.test(c.spu||'')))throw Error(`“${g.name}”缺少有效 SPU，请先补齐，或取消自动导出`);// 同名链接保留独立目录，比较时忽略大小写以符合 Windows 文件系统。
  let folder=safe(g.name).slice(0,80),base=folder,n=1;while(folders.has(folder.toLowerCase()))folder=`${base}_${++n}`;folders.add(folder.toLowerCase());
-  g.configs.forEach((c,i)=>{if(selected&&!selected.has(c.id))return;const number=/^配置\s*([\d一二三四五六七八九十百]+)$/.exec(c.name||'');const label=number?`配置${number[1]}`:`配置${i+1}`;for(const layout of layouts){const base=`${imageFolderName(folder,layout)}/${safe((i+1)+'_'+label)}`;let name=base+'.png',duplicate=1;while(paths.has(name))name=base+'_'+(++duplicate)+'.png';paths.add(name);entries.push({name,config:{...clone(c),layout}});}});
+  g.configs.forEach((c,i)=>{if(selected&&!selected.has(c.id))return;for(const layout of layouts){const base=`${imageFolderName(folder,layout)}/${imageConfigFilename(c,i).slice(0,-4)}`;let name=base+'.png',duplicate=1;while(paths.has(name))name=base+'_'+(++duplicate)+'.png';paths.add(name);entries.push({name,config:{...clone(c),layout}});}});
  }return entries;
 }
 
