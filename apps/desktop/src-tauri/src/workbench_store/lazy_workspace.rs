@@ -152,7 +152,7 @@ pub(super) fn save_patch(store: &WorkbenchStore, input: &Value) -> Result<ApiRes
         // This endpoint is a complete single-configuration edit, including
         // normalization and future/unknown fields. Identity/move/delete stay
         // separate from edits, and every field still passes the same merge.
-        if !rebased&&base!=&current{return Ok(failure(409,"配置基线与当前版本不一致"));}
+        if !rebased&&!same_json(base,&current){return Ok(failure(409,"配置基线与当前版本不一致"));}
         if base["shopId"]!=desired["shopId"]||base["productId"]!=desired["productId"]||base["shopId"]!=current["shopId"]||base["productId"]!=current["productId"]||desired.get("deletedAt").is_some_and(|v|!v.is_null()&&v!=""){return Ok(failure(409,"增量操作不可删除或移动配置"));}
         // 只有不重叠字段可以自动合并；同字段双方变化返回 409，整批事务随之回滚。
         let merged=match merge_configuration(Some(base),Some(desired),Some(&current)){Ok(Some(v))=>v,_=>return Ok(failure(409,"同一字段已被修改，请重新预览"))};

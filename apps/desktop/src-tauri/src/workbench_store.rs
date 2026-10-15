@@ -328,6 +328,25 @@ pub fn initialize(path: &Path, source: &Path, assets: &Path) -> Result<Workbench
     })
 }
 
+// JavaScript 会把 227.0 序列化为 227；安全整数范围内两种 JSON 数字表示等价。
+// 字符串、缺失/null、数组顺序以及超过 JS 精确范围的大整数仍保持严格比较。
+fn same_json(a: &Value, b: &Value) -> bool {
+    if a == b { return true; }
+    match (a,b) {
+        (Value::Number(x),Value::Number(y)) if x.is_f64()!=y.is_f64() => {
+            match (x.as_f64(),y.as_f64()) {
+                (Some(x),Some(y)) => x==y && x.fract()==0.0 && x.abs()<=9_007_199_254_740_991.0,
+                _ => false,
+            }
+        }
+        (Value::Array(x),Value::Array(y)) => x.len()==y.len() && x.iter().zip(y).all(|(x,y)|same_json(x,y)),
+        (Value::Object(x),Value::Object(y)) => x.len()==y.len() && x.iter().all(|(k,v)|y.get(k).is_some_and(|other|same_json(v,other))),
+        _ => false,
+    }
+}
+fn same_optional_json(a: Option<&Value>, b: Option<&Value>) -> bool {
+    match (a,b) {(Some(a),Some(b))=>same_json(a,b),(None,None)=>true,_=>false}
+}
 // An omitted field outside the submitted baseline belongs to the current document.
 // Objects merge by field; arrays are atomic to prevent silently lost ordered business rows.
 // 对象按字段三方比较；数组整体处理，缺失字段与显式 null 保持不同语义。
@@ -336,10 +355,10 @@ fn merge(
     desired: Option<&Value>,
     current: Option<&Value>,
 ) -> Result<Option<Value>> {
-    if desired == base {
+    if same_optional_json(desired, base) {
         return Ok(current.cloned());
     }
-    if current == base || current == desired {
+    if same_optional_json(current, base) || same_optional_json(current, desired) {
         return Ok(desired.cloned());
     }
     if let (Some(Value::Object(b)), Some(Value::Object(d)), Some(Value::Object(c))) =
@@ -814,7 +833,7 @@ fn save_batch(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse> {
         {
             return Ok(failure(400, "配置增量接口包含超出允许范围的修改"));
         }
-        if !rebased && base != current {
+        if !rebased && !same_json(base, current) {
             return Ok(failure(409, "配置基线与当前版本不一致"));
         }
         if base["shopId"] != desired["shopId"]

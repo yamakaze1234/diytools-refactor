@@ -34,7 +34,7 @@ export const LOCAL_WORKBENCH_ROUTES = [
   '/api/legacy-history/restore', '/api/legacy-history/profit',
 ] as const;
 
-const installations = new WeakMap<Window, Promise<void>>();
+const installations = new WeakMap<object, Promise<void>>();
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 const CLOUD_ACTIONS = new Set(['login', 'logout', 'resume', 'status', 'connect', 'load', 'commit', 'call', 'assetsEnsure', 'assetsDownload', 'assetsCancel', 'planPreview', 'planApply']);
 
@@ -108,13 +108,14 @@ function nativeAssetOrigin(): string {
 }
 
 /** Install before importing app.js. A browser preview uses the explicit Vite local provider. */
-/** 同一 iframe 只安装一次桥接；失败时允许重新尝试。 */
+/** 每份文档只安装一次；iframe 重载复用 WindowProxy，但新 Document 必须重新桥接。 */
 export function installWorkbenchBridge(targetWindow: Window, options: WorkbenchBridgeOptions = {}): Promise<void> {
-  const installed = installations.get(targetWindow);
+  const documentKey = targetWindow.document ?? targetWindow;
+  const installed = installations.get(documentKey);
   if (installed) return installed;
   const pending = install(targetWindow as WorkbenchWindow, options);
-  installations.set(targetWindow, pending);
-  pending.catch(() => installations.delete(targetWindow));
+  installations.set(documentKey, pending);
+  pending.catch(() => installations.delete(documentKey));
   return pending;
 }
 

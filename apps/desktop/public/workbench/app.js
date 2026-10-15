@@ -714,7 +714,7 @@ function openLinkPartsDialogFull(){
  });
 }
 // 跨链接批量更换配件，共用预览、事务应用和冲突保护。
-function openGlobalPartsFull(){openGlobalBatch({openUpgrades:()=>openUpgradeDescriptions(),openDialog,esc,toast,getConfigs:ordinaryAvailable,getCatalog:currentCatalog,save,download:downloadBlob,apply:async plan=>applyBatchChanges(plan,`跨链接批量更换配件：${plan.changes.length} 套配置`)});}
+function openGlobalPartsFull(){openGlobalBatch({openUpgrades:()=>openUpgradeDescriptions(),openDialog,esc,toast,getConfigs:ordinaryAvailable,getCatalog:currentCatalog,save,download:downloadBlob,apply:async plan=>applyBatchChanges(plan,`${plan.undo?'还原跨链接批量配件':'跨链接批量更换配件'}：${plan.changes.length} 套配置`)});}
 // 维护三店共用核算价，确认后重算相关数据并保存。
 function openCostsFull(){openCostEditor({openDialog,getRows:()=>selectableComponents(state.costSource),lastErp:()=>state.erpSync?.updatedAt,apply:async entries=>{checkpoint();const ids=applyManualCosts(state,entries);catalog=sourceCatalog(state.sourceCatalog);changed(`人工更新 ${entries.length} 条三店共用核算价`,[]);renderAll();await save();return ids.length;}});}
 // 接收已经提交的 ERP 数据；先尝试安全刷新，不在回调里重复保存。

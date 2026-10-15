@@ -54,3 +54,28 @@ fn edit_sync_full_config_null_override_merges_and_real_override_conflicts() {
     let r=json!([{"id":"a","custom":{}}]);
     assert!(merge_configs(&b,&l,&r).is_err());
 }
+
+
+#[test]
+fn numeric_baseline_accepts_javascript_integer_roundtrip() {
+    for endpoint in ["/api/configs/patch", "/api/configs/batch"] {
+        let store=fixture();let c=db(&store.path).unwrap();let mut current=state(&c).unwrap();
+        for field in ["parts","actualParts"] {current["configs"][0][field][0]["stockAvailable"]=json!(227.0);current["configs"][0][field][0]["erp"]=json!(9700.0);}
+        replace_fixture(&c,&current);
+        let mut base=current["configs"][0].clone();
+        for field in ["parts","actualParts"] {base[field][0]["stockAvailable"]=json!(227);base[field][0]["erp"]=json!(9700);}
+        let mut after=base.clone();for field in ["parts","actualParts"] {after[field][0]["goodsId"]=json!("new");}
+        let input=json!({"operationId":"numeric-baseline","mode":"ordinary","baseRevision":7,"changes":[{"id":"a","base":base,"after":after}]});
+        let result=request(&store,"POST",endpoint,Some(&input.to_string())).unwrap();
+        assert_eq!(result.status,200,"{endpoint}: {}",result.body);
+        assert_eq!(state(&c).unwrap()["configs"][0]["parts"][0]["goodsId"],"new");
+    }
+}
+
+#[test]
+fn numeric_baseline_preserves_real_conflicts_and_large_ids() {
+    assert!(same_json(&json!({"a":[227.0,-1.0]}),&json!({"a":[227,-1]})));
+    for (a,b) in [(json!(9007199254740993u64),json!(9007199254740992.0)),(json!("227"),json!(227)),(json!({"x":null}),json!({})),(json!([1,2]),json!([2,1]))] {assert!(!same_json(&a,&b));}
+    let base=json!({"parts":[{"erp":9700,"qty":1}]});let desired=json!({"parts":[{"erp":9700,"qty":2}]});let current=json!({"parts":[{"erp":9700.0,"qty":3}]});
+    assert!(merge_configuration(Some(&base),Some(&desired),Some(&current)).is_err());
+}

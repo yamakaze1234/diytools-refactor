@@ -1,3 +1,4 @@
+import {captureBatchRevert,batchRevertPlan} from './batch-revert.js';
 import {imageFolderName} from './image-export-order.js';
 /** 跨链接批量配件维护：查询使用范围、预览替换及文案调整，并导出修改后的图片。 */
 import {markSourceFieldManual} from './source-follow.js';
@@ -129,9 +130,9 @@ export function exportEntries(configs,productIds,imageKind='both',{configIds=nul
 export function openGlobalBatch(api){
  const {openDialog,esc,toast,getConfigs,getCatalog,apply,save,download}=api;
  const slots=[...new Set(getConfigs().flatMap(c=>(c.parts||[]).map(p=>p.slot)).filter(Boolean))];
- openDialog('批量修改配件与导图',`<div class="global-entry-bar"><p class="hint">按配件汇总当前店铺。选择配件后，勾选要修改的链接并预览。</p><button id="global-addons">只修改加购描述</button></div><div class="global-search-bar"><input id="global-query" type="search" placeholder="搜索配件名称、ERP ID、链接或 SPU" aria-label="查找原配件"><select id="global-slot" aria-label="按配件部位筛选"><option value="">全部配件部位</option>${slots.map(slot=>`<option>${esc(slot)}</option>`).join('')}</select></div><div id="global-candidates" class="global-usage-list"></div><div id="global-work" class="hidden"><div class="global-entry-bar"><strong id="global-original"></strong><button id="global-back">返回配件汇总</button></div><details id="global-link-details" open><summary>选择影响的链接 <span id="global-summary"></span></summary><label class="global-all"><input id="global-all" type="checkbox" checked> 全选关联链接</label><div id="global-links" class="global-list"></div></details><div id="global-product-search"></div><label class="field">统一数量（留空保留原数量）<input id="global-qty" type="number" min="1" step="1" placeholder="保留原数量"></label><label class="global-export"><input id="global-export" type="checkbox"> 保存后导出配置清单图和 SKU 图</label><label class="field">导出范围<select id="global-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><p class="hint">展示配件与实际配置的对应槽位同步替换。图片按链接及类型分文件夹；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="global-preview">预览修改</button><button id="global-apply" class="primary" disabled>应用修改</button></div><details id="global-diff-details"><summary>查看修改明细</summary><div id="global-diff" class="hint"></div></details></div><p id="global-status" role="status" class="hint"></p><button id="global-retry" class="hidden">导出刚修改的链接图片</button>`);
+ openDialog('批量修改配件与导图',`<div class="global-entry-bar"><p class="hint">按配件汇总当前店铺。选择配件后，勾选要修改的链接并预览。</p><button id="global-addons">只修改加购描述</button></div><div class="global-search-bar"><input id="global-query" type="search" placeholder="搜索配件名称、ERP ID、链接或 SPU" aria-label="查找原配件"><select id="global-slot" aria-label="按配件部位筛选"><option value="">全部配件部位</option>${slots.map(slot=>`<option>${esc(slot)}</option>`).join('')}</select></div><div id="global-candidates" class="global-usage-list"></div><div id="global-work" class="hidden"><div class="global-entry-bar"><strong id="global-original"></strong><button id="global-back">返回配件汇总</button></div><details id="global-link-details" open><summary>选择影响的链接 <span id="global-summary"></span></summary><label class="global-all"><input id="global-all" type="checkbox" checked> 全选关联链接</label><div id="global-links" class="global-list"></div></details><div id="global-product-search"></div><label class="field">统一数量（留空保留原数量）<input id="global-qty" type="number" min="1" step="1" placeholder="保留原数量"></label><label class="global-export"><input id="global-export" type="checkbox"> 保存后导出配置清单图和 SKU 图</label><label class="field">导出范围<select id="global-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><p class="hint">展示配件与实际配置的对应槽位同步替换。图片按链接及类型分文件夹；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="global-preview">预览修改</button><button id="global-apply" class="primary" disabled>应用修改</button></div><details id="global-diff-details"><summary>查看修改明细</summary><div id="global-diff" class="hint"></div></details></div><p id="global-status" role="status" class="hint"></p><button id="global-retry" class="hidden">导出刚修改的链接图片</button><button id="global-undo" class="hidden">一键还原本次修改</button>`);
  const $=selector=>document.querySelector(selector),root=$('#global-status'),dialog=root.closest('dialog');dialog.classList.add('global-batch-dialog');
- let partKey='',groups=[],plan=null,busy=false,exportIds=null,changedConfigIds=null,occurrences=null;
+ let partKey='',groups=[],plan=null,busy=false,exportIds=null,changedConfigIds=null,undoRecords=null,occurrences=null;
  const controller=new AbortController();dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();},{signal:controller.signal});dialog.addEventListener('close',()=>{controller.abort();dialog.classList.remove('global-batch-dialog');},{once:true,signal:controller.signal});
  const status=message=>{if(root.isConnected)root.textContent=message;};
  const invalidate=()=>{plan=null;$('#global-apply').disabled=true;$('#global-diff').textContent='';};
@@ -168,10 +169,17 @@ export function openGlobalBatch(api){
   try{
    if(JSON.stringify(replacementPicker.row())!==JSON.stringify(approved.replacement))throw Error('新配件资料已变化，请重新预览');
    if(auto)exportEntries(getConfigs(),approved.productIds,'both',exportOptions(approved.changes.map(c=>c.id)));validateReplacement(approved,getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);
-   await apply(approved);saved=true;exportIds=approved.productIds;changedConfigIds=approved.changes.map(c=>c.id);plan=null;$('#global-retry').classList.remove('hidden');
+   await apply(approved);saved=true;exportIds=approved.productIds;changedConfigIds=approved.changes.map(c=>c.id);undoRecords=captureBatchRevert(approved,getConfigs());$('#global-undo').classList.remove('hidden');$('#global-undo').textContent='一键还原本次修改';plan=null;$('#global-retry').classList.remove('hidden');
    if(auto){lock(false);await exportImages();}else status(`已统一修改并保存 ${approved.changes.length} 套配置。可以继续修改，或导出刚修改的链接图片。`);
   }catch(error){status((saved?'修改已保存，导出未完成：':'修改未完成：')+error.message);toast(error.message);}
-  finally{lock(false);if(root.isConnected){plan=null;$('#global-apply').disabled=true;}}
+  finally{lock(false);if(root.isConnected){plan=null;$('#global-apply').disabled=true;$('#global-undo').disabled=!undoRecords;}}
+ };
+ // 还原也走同一事务保存和基线校验；成功后消耗此批次的还原机会。
+ $('#global-undo').onclick=async()=>{
+  if(busy||!undoRecords)return;
+  try{lock(true);const reversal=batchRevertPlan(undoRecords,getConfigs());if(reversal.changes.length)await apply(reversal);undoRecords=null;plan=null;status('已还原本次批量修改并保存，可重新选择配件或导出图片。');$('#global-undo').textContent='本次修改已还原';}
+  catch(error){status('还原未完成：'+error.message);toast(error.message);}
+  finally{lock(false);if(root.isConnected){$('#global-undo').disabled=!undoRecords;invalidate();}}
  };
  $('#global-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(error){status('修改已保存，导出未完成：'+error.message);}finally{lock(false);if(root.isConnected)invalidate();}};
  listParts();

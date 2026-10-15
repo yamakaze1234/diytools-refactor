@@ -228,3 +228,14 @@ test('bridge installation is idempotent; folder export sends exact old payload a
   await assert.rejects(target.pywebview.api.export_image_folder(payload), /export unavailable/);
   assert.deepEqual(calls, [{ command: 'workbench_export_folder', args: { payload } }]);
 });
+
+
+test('iframe reload reinstalls native routes for a new document on the same WindowProxy',async()=>{
+ const target=frame(async()=>new Response('<!doctype html>'));
+ let calls=0;const options={invoke:async()=>{calls++;return {status:200,body:'{"ok":true}'};}};
+ target.document={};await installWorkbenchBridge(target,options);
+ const initial=target.fetch;await installWorkbenchBridge(target,options);assert.equal(target.fetch,initial);
+ target.document={};target.fetch=async()=>new Response('<!doctype html>');
+ await installWorkbenchBridge(target,options);
+ assert.deepEqual(await (await target.fetch('/api/workspace/index')).json(),{ok:true});assert.equal(calls,1);
+});
