@@ -678,11 +678,11 @@ function filename(c){return`${shopById(c.shopId).shortName}_${c.spu||'未绑定'
 // 固定点击时的配置快照逐张导出，记录部分失败并避免占用后台缓存。
 async function batchExportFull(){
  const configs=chosen();if(!configs.length)return toast('请先勾选需要导出的配置');
- const selectedConfig=current(),layout=selectedConfig.layout,theme=selectedConfig.theme,width=Number($('#export-width').value)||defaultPosterWidth(selectedConfig),skuMode=selectedConfig.skuMode||'dedicated';
- const exportEntries=numberedImageEntries(configs,layout),snapshots=exportEntries.map(({config:c})=>({...clone(c),layout,theme,skuMode})),draft=dirty||!!savePromise||conflict,revision=state.revision,shopId=activeShopId,shopName=currentShop().name;
+ const selectedConfig=current(),layout=selectedConfig.layout,width=Number($('#export-width').value)||defaultPosterWidth(selectedConfig);
+ const exportEntries=numberedImageEntries(configs,layout),snapshots=exportEntries.map(({config:c})=>({...clone(c),layout})),draft=dirty||!!savePromise||conflict,revision=state.revision,shopId=activeShopId,shopName=currentShop().name;
  exportJobs++;
  try{if(snapshots.length===1){const c=snapshots[0],r=await imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}));if(r.overflow)throw Error('方图内容溢出');toast(await exportSingleImage(await toBlob(r.canvas),filename(c),{download:downloadBlob,draft}));return;}
- const report={shopId,shop:shopName,revision:draft?null:revision,source:draft?'点击时的当前草稿':'已保存配置',layout,theme,width,entries:exportEntries.map(e=>({file:e.name,config:e.config.name,id:e.config.id,product:e.config.product}))};
+ const report={shopId,shop:shopName,revision:draft?null:revision,source:draft?'点击时的当前草稿':'已保存配置',layout,width,entries:exportEntries.map(e=>({file:e.name,config:e.config.name,id:e.config.id,product:e.config.product,theme:e.config.theme,skuMode:e.config.skuMode}))};
  // 任务保存起始快照；关闭业务弹窗或继续编辑都不会替换任务输入。
  const task=startImageExportTask({entries:snapshots.map((config,i)=>({config,name:exportEntries[i].name})),name:imageArchiveName(snapshots,layout),title:'批量配置图片',width,report,download:downloadBlob,renderImage:(config,size)=>imageRenderGate.run(({beforeDraw})=>renderPoster(config,size,{beforeDraw}))});
  toast('图片任务已开始，可在右下角查看进度、取消或重试失败项');
