@@ -25,7 +25,7 @@ function ConfigList({markup,document}: {markup: string; document: Document}) {
    <div className={heading.className} dangerouslySetInnerHTML={{__html:heading.innerHTML}} />
    <div hidden={!group.classList.contains('expanded')}>{rows.map(row=><div key={row.dataset.id} className={row.className} data-id={row.dataset.id} tabIndex={0} role="button" aria-current={row.getAttribute('aria-current')==='true'} aria-label={row.getAttribute('aria-label')||undefined}>
     <input type="checkbox" defaultChecked={row.querySelector('input')!.checked} ref={node=>{if(node)node.checked=row.querySelector('input')!.checked;}} aria-label={row.querySelector('input')!.getAttribute('aria-label')||undefined}/>
-    <div><strong>{row.querySelector('strong')?.textContent}</strong><small>{row.querySelector('small')?.textContent}</small></div>
+    <div><strong>{row.querySelector('strong')?.textContent}</strong><small className={row.querySelector('small')?.className} title={row.querySelector('small')?.title} aria-label={row.querySelector('small')?.getAttribute('aria-label')||undefined}>{row.querySelector('small')?.textContent}</small></div>
    </div>)}</div>
   </section>;
  })}</>;

@@ -156,3 +156,8 @@ details>summary:hover,#dialog-body details>summary:hover{background:#e4edff}
 .cloud-conflict-table td:nth-child(2){background:#fffaf1}.cloud-conflict-table td:nth-child(3){background:#f2f8ff}.cloud-conflict-card>.actions{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}
 .cloud-conflict-empty{padding:30px 10px;text-align:center;color:#52637c}
 @media(max-width:600px){.cloud-conflict-toolbar .actions>button{flex:1 1 100%}.cloud-conflict-table th,.cloud-conflict-table td{padding:7px!important;font-size:12px}.cloud-conflict-card{padding:10px}.cloud-conflict-table th:first-child{width:30%}}
+
+/* Full format-two summary; allow narrow navigation to wrap between fields. */
+.sidebar .config-item>div{min-width:0;flex:1}
+.sidebar .config-item .config-hardware-summary{display:block;margin-top:4px;font-size:12px;font-weight:600;line-height:1.65;color:#64748b;white-space:normal;overflow:visible;overflow-wrap:anywhere;max-height:none}
+.sidebar .config-item.active .config-hardware-summary{color:#5b86bd}
