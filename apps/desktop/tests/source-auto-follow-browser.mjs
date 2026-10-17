@@ -1,0 +1,29 @@
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)(path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
+const root=path.resolve('apps/desktop/public/workbench'),out=path.resolve('sandbox/source-auto-follow-20261017');await fs.mkdir(out,{recursive:true});
+const html=await fs.readFile(path.join(root,'index.html'),'utf8'),shell=html.match(/<dialog id="dialog">[\s\S]*?<\/dialog>/)[0],styles=html.match(/<link rel="stylesheet"[^>]*>/g).join('');
+const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'+styles+shell+'</html>');return;}const file=path.resolve(root,'.'+pathname);if(!file.startsWith(root+path.sep))throw Error('path');res.setHeader('Content-Type',pathname.endsWith('.js')?'text/javascript':pathname.endsWith('.css')?'text/css':'application/octet-stream');res.end(await fs.readFile(file));}catch{res.statusCode=404;res.end();}});await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+try{
+ browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1080}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}`);
+ await page.evaluate(async()=>{
+  const {openSourceEditor}=await import('/source-editor.js'),{sourceBatch}=await import('/source-batch.js'),{initializeSourceFollow}=await import('/source-follow.js'),{sourceUpgradeDescription}=await import('/source.js');
+  const row={sourceId:'s',shopId:'intel',goodsId:'1',name:'测试显卡',erp:650,tax:650,addonText:'【+499元升级显卡】',addonChoices:[{id:'choice',goodsId:'2',qty:1,priceCents:49900,label:'升级显卡',enabled:true}]};
+  const configs=['auto','manual'].map(id=>({id,shopId:'intel',productId:'p',product:'测试链接',name:id==='auto'?'自动跟随配置':'手动保护配置',parts:[{sourceId:'s',goodsId:'1',slot:'显卡',name:row.name,erp:650,tax:650,qty:1,upgrade:id==='auto'?sourceUpgradeDescription(row):'手动文案'}],actualParts:[{slot:'显卡',goodsId:'1',qty:1,tax:650}],addons:[{text:'人工加购保留'}]}));initializeSourceFollow(configs,[row]);
+  window.fixture={state:{configs,sourceCatalog:[row],costSource:[{goodsId:'1',name:row.name,erp:650,tax:650},{goodsId:'2',name:'新显卡',erp:1000,tax:1000}]},saves:0};const f=window.fixture;
+  openSourceEditor({shopId:()=> 'intel',getRows:()=>f.state.sourceCatalog,getAllRows:()=>f.state.sourceCatalog,getCosts:()=>f.state.costSource,getConfigs:()=>f.state.configs,flush:async()=>{},openDialog:(title,html)=>{document.querySelector('#dialog-title').textContent=title;document.querySelector('#dialog-body').innerHTML=html;document.querySelector('#dialog').showModal();},applyBatch:async entries=>{const result=sourceBatch(f.state,entries);f.state=result.next;f.saves++;return result;}});
+ });
+ await page.locator('[data-common-choices] [data-choice-price]').fill('599');await page.locator('#source-save-all').click();
+ const automatic=page.locator('[data-source-automatic]');await automatic.waitFor({state:'visible'});assert.match(await automatic.textContent(),/499元/);assert.match(await automatic.textContent(),/599元/);assert.equal(await automatic.locator('input[type=checkbox]').count(),0);
+ assert.match(await automatic.textContent(),/自动跟随配置/);assert.doesNotMatch(await automatic.textContent(),/手动保护配置/);
+ await automatic.locator('[data-auto-source-category]').filter({hasText:/^显卡/}).click();assert.equal(await automatic.locator('[data-auto-source-group]').count(),1);
+ await page.locator('#source-check').click();assert.equal(await automatic.isVisible(),true);assert.equal(await page.locator('#source-apply').isDisabled(),true);
+ await page.locator('#source-sync-top [data-source-all-links]').click();assert.match(await page.locator('[data-source-groups]').textContent(),/手动文案/);assert.match(await page.locator('[data-source-groups]').textContent(),/599元/);assert.equal(await page.locator('[data-source-select]:checked').count(),0);
+ await automatic.evaluate(el=>el.scrollIntoView({block:'start'}));await page.screenshot({path:path.join(out,'wide.png')});await page.setViewportSize({width:600,height:1000});await automatic.evaluate(el=>el.scrollIntoView({block:'start'}));await page.screenshot({path:path.join(out,'narrow.png')});
+ const width=await automatic.evaluate(el=>({client:el.clientWidth,scroll:el.scrollWidth}));assert.ok(width.scroll<=width.client+1,JSON.stringify(width));
+ const result=await page.evaluate(()=>({saves:fixture.saves,automatic:fixture.state.configs[0].parts[0].upgrade,manual:fixture.state.configs[1].parts[0].upgrade}));assert.equal(result.saves,1);assert.match(result.automatic,/599元/);assert.equal(result.manual,'手动文案');assert.deepEqual(errors,[]);
+ await fs.writeFile(path.join(out,'browser-result.json'),JSON.stringify({ok:true,result,errors,width,checks:['edit price in real source editor','save through sourceBatch','automatic old/new visible','manual differences retained','read-only automatic receipt','category filter','refresh retains receipt','wide/narrow layout']},null,2));console.log(JSON.stringify({ok:true,out,result}));
+}finally{await browser?.close();await new Promise(r=>server.close(r));}

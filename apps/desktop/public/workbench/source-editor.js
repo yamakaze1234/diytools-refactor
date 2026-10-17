@@ -71,6 +71,7 @@ export function openSourceEditor(liveApi){
    const result=await liveApi.applyBatch([...pending.values()].map(clone));
    pending.clear();if(!$('#source-detail'))return;
    const selected=api.getRows().find(r=>r.sourceId===draft?.sourceId);if(selected)select(selected);else list();
+   sourceSync?.showAutomaticChanges?.(result.autoChanges||[]);
    updatePending();await sourceSync?.refresh();message(`已一次保存 ${result.count} 条输出源及加购修改${result.skipped?'，'+result.skipped+' 家店铺已有该配件，已保留原资料':''}${result.configIds.length?'，并更新 '+result.configIds.length+' 套配置':''}。自动跟随更新 ${result.autoUpdatedFields||0} 项名称或加购说明；手动内容已保留，可在上方选择链接后确认。`);
   }catch(e){if($('#source-message'))message('保存失败，修改仍保留：'+e.message);throw e;}
   finally{busy=false;detail.inert=false;if($('#source-save-all'))$('#source-save-all').disabled=false;}

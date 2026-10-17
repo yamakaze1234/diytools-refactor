@@ -152,6 +152,8 @@ dialog.inventory-dialog{width:min(1060px,96vw)}
 .workspace-sync-controls{display:flex;flex-direction:column;gap:3px;align-items:center;min-width:90px}.workspace-sync-controls small{font-size:11px;color:#60728a}#cloud-login{display:grid;gap:12px}#cloud-login input{display:block;width:100%}
 
 .addon-check{display:flex;flex-direction:column;gap:5px;font-size:13px;margin:10px 0}.addon-warning{color:#a76b00}.addon-danger{color:#d62434;font-weight:600}.addon-pending{color:#6b7280}.addon-ok{color:#36756b}.addon-audit-row,.source-addon-editor{border:1px solid #e0e7f2;border-radius:10px;padding:12px;margin:10px 0}#source-addon-report{max-height:340px;overflow:auto}.addon-card{align-items:flex-start}.addon-card>div:first-child{flex:1}.addon-card>div:last-child{display:flex;gap:6px;flex-wrap:wrap}#addon-batch-diff{white-space:pre-wrap;max-height:300px;overflow:auto}
+/* 最近一次保存的自动更新回执，与待确认项共用描述分组样式。 */
+.source-auto-follow-panel{border:1px solid #c9e4d9;background:#f3faf7;border-radius:8px;padding:12px;margin:12px 0}.source-auto-follow-panel[hidden]{display:none}.source-auto-follow-panel h4 span{font-size:12px;font-weight:400;color:#39745e}.source-auto-follow-results{max-height:320px;overflow:auto;margin-top:10px}.source-auto-follow-results .source-description-members p{margin:6px 0;overflow-wrap:anywhere}
 /* 加购检查：沿用浅蓝边框，两个筛选维度独立组合，差价表保留原阈值颜色。 */
 .source-audit-open>#source-cost-overrides,.source-audit-open>#source-sync-top,.source-audit-open>.hint,.source-audit-open>.source-toolbar,.source-audit-open>.source-workspace{display:none}
 .source-audit-open #source-addon-report{max-height:none;overflow:visible}

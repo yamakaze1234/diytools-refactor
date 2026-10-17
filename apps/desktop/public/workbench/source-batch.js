@@ -83,6 +83,6 @@ export function sourceBatch(state,changes,at=new Date().toISOString()){
   }
  }
  const configIds=taxes.size?applyManualCosts(next,[...taxes].map(([goodsId,tax])=>({goodsId,tax})),at):[];
- const followed=followSourceChanges(next.configs,state.sourceCatalog,next.sourceCatalog);
- return {next,configIds:[...new Set([...configIds,...erpIds,...followed.configIds])],autoUpdatedFields:followed.count,count:changes.length,skipped};
+ const followed=followSourceChanges(next.configs,state.sourceCatalog,next.sourceCatalog,{captureChanges:true});
+ return {next,configIds:[...new Set([...configIds,...erpIds,...followed.configIds])],autoUpdatedFields:followed.count,autoChanges:followed.autoChanges,count:changes.length,skipped};
 }

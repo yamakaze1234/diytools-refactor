@@ -41,18 +41,25 @@ function writeFollow(part,field,value){
  part.sourceFollow[field]={mode:'follow',value,sourceValue:value};
 }
 /** 比较来源前后值，只更新仍符合跟随条件的配置字段。 */
-export function followSourceChanges(configs,beforeRows,afterRows){
+export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges=false}={}){
  const beforeIndex=catalog(beforeRows),afterIndex=catalog(afterRows),configIds=new Set();let count=0;
+ const automatic=new Map();
  for(const config of configs){
   if(config.deletedAt)continue;
-  for(const part of config.parts||[]){
+  for(const [partIndex,part] of (config.parts||[]).entries()){
    const before=sourceFor(beforeIndex,config,part),after=sourceFor(afterIndex,config,part);if(!before||!after)continue;
    if(['name','upgrade'].every(field=>sourceValue(config,before,field)===sourceValue(config,after,field)))continue;
    const previousPart=JSON.stringify(part),tracking=initializePart(config,part,before);
    for(const field of ['name','upgrade']){
     const oldSource=sourceValue(config,before,field),target=sourceValue(config,after,field),record=tracking[field];
     if(oldSource!==target&&record.mode==='follow'){
-     if(effective(part,field)!==target){count++;configIds.add(config.id);}
+     if(effective(part,field)!==target){
+      count++;configIds.add(config.id);
+      if(captureChanges){
+       if(!automatic.has(config.id))automatic.set(config.id,{id:config.id,product:config.product,name:config.name,before:{shopId:config.shopId||'intel',productId:config.productId},details:[]});
+       automatic.get(config.id).details.push({key:sourceFollowKey(config.id,part.sourceId,partIndex,part.slot,field),slot:part.slot,partIndex,sourceId:part.sourceId,field,before:effective(part,field),after:target});
+      }
+     }
      writeFollow(part,field,target);
     }else observe(record,target);
    }
@@ -65,7 +72,7 @@ export function followSourceChanges(configs,beforeRows,afterRows){
    if(JSON.stringify(part)!==previousPart)configIds.add(config.id);
   }
  }
- return {configIds:[...configIds],count};
+ return {configIds:[...configIds],count,...(captureChanges?{autoChanges:[...automatic.values()]}:{})};
 }
 export const sourceFollowKey=(configId,sourceId,partIndex,slot,field)=>JSON.stringify([configId,sourceId,partIndex,slot,field]);
 /** 按店铺与字段范围生成来源跟随预览。 */
