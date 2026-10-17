@@ -1,0 +1,46 @@
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)(path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
+const root=path.resolve('apps/desktop/public/workbench'),out=path.resolve('sandbox/addon-audit-20261017');
+await fs.mkdir(out,{recursive:true});
+const html=await fs.readFile(path.join(root,'index.html'),'utf8'),shell=html.match(/<dialog id="dialog">[\s\S]*?<\/dialog>/)[0],styles=html.match(/<link rel="stylesheet"[^>]*>/g).join('');
+const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'+styles+shell+'</html>');return;}const file=path.resolve(root,'.'+pathname);if(!file.startsWith(root+path.sep))throw Error('path');res.setHeader('Content-Type',pathname.endsWith('.js')?'text/javascript':pathname.endsWith('.css')?'text/css':'application/octet-stream');res.end(await fs.readFile(file));}catch{res.statusCode=404;res.end();}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
+try{
+ browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage({viewport:{width:1440,height:1080}}),errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(`http://127.0.0.1:${server.address().port}`);
+ await page.evaluate(async()=>{
+  const {openSourceEditor}=await import('/source-editor.js');
+  const mk=(id,name,patch={})=>({sourceId:'s'+id,shopId:'intel',goodsId:String(10+id),name,erp:650,tax:650,addonText:'【+799元升级 '+name+'】',addonGoodsId:'2',addonPriceCents:79900,addonQty:2,...patch});
+  const rows=[mk(1,'泰可驰 3200 镁光颗粒 16G'),mk(2,'硬盘升级方案'),mk(3,'电源升级方案'),mk(4,'CPU 核算负差价',{erp:700}),mk(5,'散热待补充',{tax:null}),mk(6,'正常配件',{addonPriceCents:90000}),mk(7,'未分类配件',{addonPriceCents:90000})];
+  const configs=rows.slice(0,6).map((r,i)=>({id:'c'+i,shopId:'intel',productId:'p',product:'测试链接',name:'配置'+i,parts:[{sourceId:r.sourceId,goodsId:r.goodsId,slot:['内存','硬盘','电源','CPU','散热','机箱'][i],qty:1,erp:r.erp,tax:r.tax,name:r.name,upgrade:''}]}));
+  const costs=[{goodsId:'2',name:'金百达 刃RGB 3600 16G',erp:750,tax:750},...rows.map(r=>({goodsId:r.goodsId,name:r.name,erp:r.erp,tax:r.tax}))];
+  window.fixture={rows,costs,configs,writes:0,before:JSON.stringify(rows)};
+  openSourceEditor({shopId:()=> 'intel',getRows:()=>rows,getAllRows:()=>rows,getCosts:()=>costs,getConfigs:()=>configs,flush:async()=>{},openDialog:(title,html)=>{document.querySelector('#dialog-title').textContent=title;document.querySelector('#dialog-body').innerHTML=html;document.querySelector('#dialog').showModal();},applyBatch:async()=>{window.fixture.writes++;throw Error('read-only fixture');}});
+ });
+ await page.locator('#source-addon-check').click();
+ const status=s=>page.locator(`[data-audit-status-key="${s}"]`),category=name=>page.locator('[data-audit-category-index]').filter({hasText:new RegExp('^'+name)});
+ assert.equal(await status('danger').getAttribute('aria-pressed'),'true');assert.equal(await page.locator('.addon-audit-row').count(),3);
+ assert.match(await page.locator('.addon-audit-table').first().textContent(),/−¥51\.00/);
+ await page.screenshot({path:path.join(out,'wide.png')});
+ await category('内存').click();assert.equal(await page.locator('.addon-audit-row').count(),1);
+ await status('ok').click();assert.equal(await page.locator('.addon-audit-row').count(),0);assert.match(await page.locator('.addon-audit-empty').textContent(),/没有加购项目/);
+ await category('全部配件').click();assert.equal(await page.locator('.addon-audit-row').count(),2);
+ await status('all').click();await page.locator('[data-audit-search]').fill('12');assert.equal(await page.locator('.addon-audit-row').count(),1);assert.match(await page.locator('.addon-audit-row').textContent(),/硬盘升级/);
+ await page.locator('[data-audit-search]').fill('');await status('pending').click();assert.equal(await page.locator('.addon-audit-row').count(),1);
+ await status('warning').click();assert.equal(await page.locator('.addon-audit-row').count(),1);
+ await status('danger').click();await page.locator('.addon-audit-group').first().locator('summary').click();assert.equal(await page.locator('.addon-audit-group').first().getAttribute('open'),null);
+ await page.locator('.addon-audit-group').first().locator('summary').click();
+ await page.setViewportSize({width:600,height:1000});await page.screenshot({path:path.join(out,'narrow.png')});
+ const overflow=await page.locator('.addon-audit').evaluate(el=>({width:el.clientWidth,scroll:el.scrollWidth}));assert.ok(overflow.scroll<=overflow.width+1,JSON.stringify(overflow));
+ await page.locator('[data-addon-source="s2"]').click();assert.equal(await page.locator('#source-name').inputValue(),'硬盘升级方案');assert.equal(await page.locator('.addon-audit').count(),0);
+ await page.locator('#source-name').fill('硬盘待保存名称');await page.locator('#source-addon-check').click();
+ assert.match(await page.locator('[data-addon-source="s2"]').locator('..').textContent(),/硬盘待保存名称/);
+ await page.locator('[data-audit-close]').click();assert.equal(await page.locator('#source-name').inputValue(),'硬盘待保存名称');assert.match(await page.locator('#source-pending').textContent(),/待保存/);
+ const result=await page.evaluate(()=>({writes:window.fixture.writes,unchanged:JSON.stringify(window.fixture.rows)===window.fixture.before}));assert.deepEqual(result,{writes:0,unchanged:true});assert.deepEqual(errors,[]);
+ await fs.writeFile(path.join(out,'browser-result.json'),JSON.stringify({ok:true,errors,overflow,...result,checks:['default danger','combined filters','empty state','search ERP ID','four severities','collapse','narrow layout','edit exact source','pending draft retained','no writes']},null,2));
+ console.log(JSON.stringify({ok:true,out,...result}));
+}finally{await browser?.close();await new Promise(r=>server.close(r));}

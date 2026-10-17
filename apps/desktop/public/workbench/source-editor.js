@@ -9,8 +9,8 @@ import {mountSourceSync} from './source-sync-ui.js';
 import {mountShopAddons} from './shop-addon-ui.js';
 import {excludedComponent} from './component-policy.js';
 import {clone,erpUnitCost} from './core.js';
-import {sourceAddon,sourceAddonFields,validateAddon,addonCheck,sourceAddonOptions,addonChecks} from './addon-data.js';
-import {addonStatusHtml} from './addon-ui.js';
+import {sourceAddon,sourceAddonFields,validateAddon} from './addon-data.js';
+import {mountAddonAudit} from './addon-audit.js';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={name:'显示名称',tax:'含税核算单价',addon:'加购文案'};
 
@@ -101,7 +101,18 @@ export function openSourceEditor(liveApi){
    message(`已导出本店全部 ${values.length} 条在用输出源，列顺序：goodsid（ERP ID）、ERP名称、展示名称、升级项（本店加购描述）。${pending.size||draft&&isEdited()?'包含当前未保存内容，导出不会自动保存更改。':''}`);
   }catch(e){message('导出失败：'+e.message);}finally{button.disabled=false;}
  };
- $('#source-addon-check').onclick=()=>{if(busy||!stageCurrent())return;const rows=api.getRows().filter(r=>!r.deletedAt),checks=rows.flatMap(row=>sourceAddonOptions(row).flatMap(addonChecks).filter(a=>a.text?.trim()).map(addon=>({row,addon,result:addonCheck(addon,api.getCosts(),[row])}))),counts=checks.reduce((a,x)=>(a[x.result.severity]=(a[x.result.severity]||0)+1,a),{});$('#source-addon-report').innerHTML=`<p class="hint">共 ${checks.length} 项加购：需要调整 ${counts.danger||0}，核算负差价（未同时红色）${counts.warning||0}，核算待补充 ${counts.pending||0}，核算正常 ${counts.ok||0}。</p>`+checks.sort((a,b)=>({danger:0,warning:1,pending:2,ok:3}[a.result.severity]-{danger:0,warning:1,pending:2,ok:3}[b.result.severity])).map(({row,addon})=>`<div class="addon-audit-row"><strong>${esc(row.name)}</strong><p>${esc(addon.text)}</p>${addonStatusHtml(addon,api.getCosts(),[row])}<button data-addon-source="${esc(row.sourceId)}">编辑此加购</button></div>`).join('');$$('[data-addon-source]').forEach(b=>b.onclick=()=>{if(!stageCurrent())return;showDeleted=false;$('#source-deleted').textContent='已删除';select(api.getRows().find(r=>r.sourceId===b.dataset.addonSource));$('#source-detail').scrollIntoView({block:'start'});});};
+ const closeAudit=()=>{$('#source-addon-report').innerHTML='';root.classList.remove('source-audit-open');};
+ $('#source-addon-check').onclick=()=>{
+  if(busy||!stageCurrent())return;
+  root.classList.add('source-audit-open');
+  mountAddonAudit($('#source-addon-report'),{getRows:api.getRows,getCosts:api.getCosts,getConfigs:api.getConfigs,stage:()=>!busy&&stageCurrent(),close:closeAudit,edit:id=>{
+   if(busy||!stageCurrent())return;
+   const row=api.getRows().find(r=>r.sourceId===id&&!r.deletedAt);
+   if(!row){message('该输出源已变化，请重新检查。');return;}
+   closeAudit();showDeleted=false;specialOnly=false;page=0;$('#source-search').value='';$('#source-deleted').textContent='已删除';$('#source-special-list').textContent='特殊配件';select(row);$('#source-detail').scrollIntoView({block:'start'});
+  }});
+  dialog.scrollTop=0;
+ };
  $('#source-deleted').onclick=()=>{if(busy)return;if(!stageCurrent())return;showDeleted=!showDeleted;page=0;draft=null;selectedId=null;$('#source-deleted').textContent=showDeleted?'返回在用':'已删除';const first=filtered()[0];if(first)select(first);else{$('#source-detail').innerHTML='<p class="hint">没有记录。</p>';list();}};
  $('#source-special-list').onclick=()=>{if(busy)return;if(!stageCurrent())return;specialOnly=!specialOnly;$('#source-special-list').textContent=specialOnly?'全部配件':'特殊配件';$('#source-search').value='';page=0;draft=null;selectedId=null;const first=filtered()[0];if(first)select(first);else{$('#source-detail').innerHTML='<p class="hint">点击新增配件，创建特殊配件。</p>';list();}};
  $('#source-search').oninput=()=>{page=0;list();};$('#source-prev').onclick=()=>{page--;list();};$('#source-next').onclick=()=>{page++;list();};$('#source-new').onclick=()=>{if(busy)return;if(!stageCurrent())return;showDeleted=false;$('#source-deleted').textContent='已删除';select({sourceId:crypto.randomUUID(),goodsId:'',name:'',specialComponent:specialOnly,erp:specialOnly?0:null,tax:specialOnly?0:null,upgrade:'',addonText:'',addonNote:''});};
