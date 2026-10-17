@@ -1,3 +1,4 @@
+import {saveConflictHtml} from './save-conflict-view.js';
 import {openWpsExport} from './wps-export.js';
 // 批量图片任务在弹窗之外保留进度与失败项。
 import {startImageExportTask} from './image-export-tasks.js';
@@ -440,7 +441,28 @@ function scheduleImageSave(){clearTimeout(imageTimer);pendingImages.clear();}
 // 保留草稿并提供备份、重新比较和明确选择，不自动覆盖冲突字段。
 function openConflict(message){openDialog('保存版本需要比较',`<p class="error">${esc(message)}</p><p class="hint">当前输入仍保留。可以重新比较并保存本页修改，或备份当前草稿后载入已保存版本。</p><div class="actions"><button id="conflict-backup">下载当前草稿</button><button id="conflict-compare" class="primary">重新比较</button><button id="conflict-reload">备份草稿并重新载入</button></div>`);$('#conflict-backup').onclick=backup;
  $('#conflict-reload').onclick=async()=>{try{await request('/api/recovery-draft',{method:'POST',body:JSON.stringify(await recoverySnapshot())});conflict=false;dirty=false;location.reload();}catch(e){toast(e.message);}};
- $('#conflict-compare').onclick=async()=>{try{const complete=await completeWorkspaceSnapshot(),remote=complete.remote,merged={state:complete.state,conflict:complete.conflict};openDialog('选择保存版本',`<p class="hint">已读取最新保存版本。独立字段会自动合并；选择保留本页修改时，同一字段冲突以当前输入为准。</p><div class="actions"><button id="conflict-apply-local" class="primary">保留本页修改并保存</button><button id="conflict-cancel">返回编辑</button></div>`);$('#conflict-cancel').onclick=closeDialog;$('#conflict-apply-local').onclick=async()=>{try{await request('/api/recovery-draft',{method:'POST',body:JSON.stringify(await recoverySnapshot())});acceptedState=cloneEditorState(remote);state=merged.state;fullWorkspace=true;invalidateSaveScope(state,'conflict resolution draft');conflict=false;dirty=true;closeDialog();await save();renderAll();}catch(e){toast(e.message);}};}catch(e){toast(e.message);}};
+ $('#conflict-compare').onclick=compareSaveConflict;
+}
+// 预览与实际保存使用同一份合并快照；预览后发生输入时要求重新比较。
+async function compareSaveConflict(){
+ const button=$('#conflict-compare')||$('#conflict-refresh');if(button)button.disabled=true;
+ try{
+  const complete=await completeWorkspaceSnapshot(),remote=complete.remote;
+  if(button&&!button.isConnected)return;
+  openDialog('选择保存版本',`<p class="hint">已读取最新保存版本。独立字段已自动合并；同一字段冲突保留本页输入。请核对下方内容后保存。</p>${saveConflictHtml(complete.state,remote,esc)}<p id="conflict-message" class="error" role="status"></p><div class="actions"><button id="conflict-apply-local" class="primary">保留本页修改并保存</button><button id="conflict-refresh">重新比较</button><button id="conflict-cancel">返回编辑</button></div>`);
+  $('#conflict-cancel').onclick=closeDialog;$('#conflict-refresh').onclick=compareSaveConflict;
+  $('#conflict-apply-local').onclick=async()=>{
+   const apply=$('#conflict-apply-local');apply.disabled=true;
+   try{
+    const assertCurrent=()=>{if(complete.counter!==changeCounter)throw Error('比较后有新的输入，请重新比较；当前输入已保留。');};
+    assertCurrent();
+    await request('/api/recovery-draft',{method:'POST',body:JSON.stringify(await recoverySnapshot())});
+    assertCurrent();
+    acceptedState=cloneEditorState(remote);state=complete.state;fullWorkspace=true;invalidateSaveScope(state,'conflict resolution draft');conflict=false;dirty=true;closeDialog();await save();renderAll();
+   }catch(e){if(apply.isConnected){$('#conflict-message').textContent=e.message;apply.disabled=false;}toast(e.message);}
+  };
+ }catch(e){toast(e.message);}finally{if(button?.isConnected)button.disabled=false;}
+
 }
 // 刷新当前配置的标题和基础信息，避免重建整个工作区。
 function updateHeading(){const c=current();if(!c){$('#config-heading').textContent=ordinaryAvailable().length?'请选择配置':'暂无配置';$('#breadcrumb').textContent='商品配置';return;}$('#config-heading').textContent=`${c.name} · ${c.version}`;$('#breadcrumb').textContent=`商品配置 / ${c.product||'未命名商品链接'}`;$('#sample-note').textContent=c.sampleNote||'';}
