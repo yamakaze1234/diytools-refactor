@@ -35,7 +35,7 @@ import {applyStandardProduct,standardId} from './product-standard.js';
 import {componentStockView} from './component-stock-view.js';
 import {DEFAULT_SERVICE_TEXT,defaultServiceText,saveServiceDefault} from './service-promises.js';
 import {actualParts,ensureActualParts} from './actual-parts.js';
-import {syncDisplayParts,cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,prepareSavedReceipt,applySavedReceiptDraft,captureHistorySnapshot,captureConfigHistorySnapshot,isConfigHistorySnapshot,sameHistorySnapshot,restoreHistorySnapshot,rebaseHistorySnapshot,historySnapshotBytes} from './editor-performance.js';
+import {syncDisplayParts,cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,prepareSavedReceipt,applySavedReceiptDraft,captureHistorySnapshot,captureWorkspaceHistorySnapshot,rebaseWorkspaceHistorySnapshot,captureConfigHistorySnapshot,isConfigHistorySnapshot,compactConfigHistory,sameHistorySnapshot,restoreHistorySnapshot,rebaseHistorySnapshot,historySnapshotBytes} from './editor-performance.js';
 import {prepareWorkspaceState} from './workspace-state-apply.js';
 import {createSourceIndex} from './component-index.js';
 import {saveFullState} from './full-save.js';
@@ -123,7 +123,7 @@ function toast(message){const el=$('#toast');el.textContent=message;el.setAttrib
 // 统一 JSON 请求、超时及登录失效通知；保留 HTTP 状态码供冲突恢复判断。
 async function request(url,options={}){const r=await fetch(url,{signal:AbortSignal.timeout(options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)?120000:45000),...options,headers:{'Content-Type':'application/json',...options.headers}}),j=await r.json();if(!r.ok){const e=Error(j.error||'请求失败');e.status=r.status;if(r.status===401)window.dispatchEvent(new CustomEvent('workspace-auth-error',{detail:e.message}));throw e;}return j;}
 const lazyWorkspace=createLazyWorkspace({request});
-let fullWorkspace=false,workspaceLoad=null,activationGeneration=0;
+let fullWorkspace=false,workspaceLoad=null,activationGeneration=0,fullActionBusy=0;
 const loadedIds=()=>state.configs.map(c=>c.id);
 // 仅在没有草稿和保存请求时淘汰详情，当前编辑项和待处理图片始终保留。
 function pruneDetails(){
@@ -193,17 +193,19 @@ async function ensureFullWorkspace(){
  workspaceLoad=(async()=>{const workspace=$('.workspace'),inert=workspace.inert,status=$('#save-status'),previousStatus=status.textContent,loadingStatus='正在载入此操作需要的完整配置…';workspace.inert=true;status.textContent=loadingStatus;
   try{const complete=await completeWorkspaceSnapshot();if(complete.conflict)throw Object.assign(Error('载入期间同一配置已变化，请先处理保存冲突'),{status:409});
    const prepared=await prepareWorkspaceState(complete.state,baseCatalog);if(complete.counter!==changeCounter)throw Error('载入期间有新的输入，请重试');
+   const rebased=[history,redoHistory].map(stack=>stack.map(item=>rebaseWorkspaceHistorySnapshot(item,complete.remote)));
+   [history,redoHistory].forEach((stack,i)=>{const rows=rebased[i];stack.splice(0,stack.length,...(rows.some(row=>row.conflict)?[]:rows.map(row=>row.snapshot)));});
    state=prepared.state;acceptedState=complete.remote;catalog=prepared.catalog;fullWorkspace=true;rememberDisplayParts();renderAll(null,false);
   }finally{workspace.inert=inert;if(status.textContent===loadingStatus)status.textContent=previousStatus;}})().finally(()=>{workspaceLoad=null;});return workspaceLoad;
 }
 // 将批量或全局功能包装为先完整载入、再执行，普通配置编辑仍走按需路径。
-function fullAction(fn){return function(...args){if(fullWorkspace)return fn.apply(this,args);return ensureFullWorkspace().then(()=>fn.apply(this,args)).catch(error=>{toast(error.message);throw error;});};}
+function fullAction(fn){return async function(...args){fullActionBusy++;try{await ensureFullWorkspace();return await fn.apply(this,args);}catch(error){toast(error.message);throw error;}finally{fullActionBusy--;setTimeout(()=>compactWorkspace().catch(()=>{}),0);}};}
 // 在独立加载器中准备新摘要及当前已加载详情，验证前不改动活动工作区。
-async function prepareCompactSnapshot(skipUnchanged=false){
+async function prepareCompactSnapshot(skipUnchanged=false,retainIds=null){
  const loader=createLazyWorkspace({request}),counter=changeCounter,index=await loader.refresh();
  if(skipUnchanged&&index.revision===state.revision)return null;
  // 所有已载入详情都参与比较，避免草稿较多时被缓存容量截断；不加载未点击的其他配置。
- const ids=loadedIds().filter(id=>index.summaries.some(c=>c.id===id)),wanted=active&&!ids.includes(active)&&index.summaries.some(c=>c.id===active)?[...ids,active]:ids;
+ const known=new Set(index.summaries.map(c=>c.id)),ids=(retainIds||loadedIds()).filter(id=>known.has(id)),wanted=active&&!ids.includes(active)&&known.has(active)?[...ids,active]:ids;
  const raw=await loader.load(wanted),prepared=await prepareWorkspaceState({...index.metadata,configs:[],revision:index.revision,updatedAt:index.updatedAt},baseCatalog);
  const detailState=await normalizeWorkspaceStateAsync({dataVersion:index.metadata.dataVersion,configs:raw,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:prepared.state.shopSettings},[]);
  bindSources(detailState.configs,prepared.catalog);alignDisplaySourceNames(detailState.configs,prepared.catalog);normalizeProducts(detailState.configs);for(const c of detailState.configs){c.modules=posterModules(c);c.upgradeWeight??=400;}
@@ -219,11 +221,25 @@ function applyCompactSnapshot(result){
  displayBaseline.clear();rememberDisplayParts(loadedIds());
 }
 // 全量操作结束且没有未保存内容时，回到按需加载模式以减少驻留内存。
+let compactionFlight=null;
 async function compactWorkspace(){
- if(!fullWorkspace||dirty||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending())return;
- if([...history,...redoHistory].some(h=>!isConfigHistorySnapshot(h)))return;
- const result=await prepareCompactSnapshot();if(result.counter!==changeCounter||dirty||savePromise||batchPromise||$('#dialog').open)return;
- applyCompactSnapshot(result);renderAll();
+ if(compactionFlight)return compactionFlight;
+ const blocked=()=>!fullWorkspace||workspaceLoad||fullActionBusy||dirty||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending();
+ if(blocked())return;
+ const beforeState=state,beforeBase=acceptedState,selectedId=active,generation=activationGeneration,stacks=[history.slice(),redoHistory.slice()];
+ const compacted=compactConfigHistory(stacks,state);if(!compacted)return;
+ // Keep the active preview and pending image work plus at most 16 recent
+ // details, rather than reloading every detail hydrated by a global action.
+ const keep=new Set([active,...pendingImages].filter(Boolean));
+ for(const id of lazyWorkspace.cachedIds().reverse())if(keep.size<16)keep.add(id);
+ compactionFlight=(async()=>{
+  const result=await prepareCompactSnapshot(false,[...keep]);
+  if(blocked()||state!==beforeState||acceptedState!==beforeBase||active!==selectedId||activationGeneration!==generation||result.counter!==changeCounter||result.index.revision!==beforeState.revision||[history,redoHistory].some((stack,i)=>stack.length!==stacks[i].length||stack.some((entry,j)=>entry!==stacks[i][j])))return;
+  applyCompactSnapshot(result);[history,redoHistory].forEach((stack,i)=>{stack.splice(0,stack.length,...compacted[i]);trimHistory(stack);});
+  pruneDetails();syncHistoryButtons();
+  // Active editor objects survive applyCompactSnapshot; do not rebuild input
+  // nodes or move the caret when background compaction finishes.
+ })().finally(()=>{compactionFlight=null;});return compactionFlight;
 }
 // 按当前加载模式读取保存回执，补全服务器合并结果，避免把摘要当作配置。
 async function savedReceiptState(receipt){
@@ -293,9 +309,24 @@ function checkpoint(){if(!fullWorkspace)throw Error('此操作需要先载入完
 // 普通编辑仅记录目标配置的历史和保存范围。
 function checkpointConfig(ids=[active]){declareSaveScope(state,acceptedState,ids);const snapshot=captureConfigHistorySnapshot(state,{active,activeShopId,selected},ids,history.at(-1));if(snapshot)addCheckpoint(snapshot);else checkpoint();}
 // 撤销或重做仍通过正常保存与冲突检查，不绕过服务端版本保护。
-async function stepHistory(from,to,message){if(!fullWorkspace&&from.length){const entry=from.at(-1);if(isConfigHistorySnapshot(entry)){for(const c of entry.configs)await loadDetail(c.id);}else await ensureFullWorkspace();}
- // 撤销/重做只回退编辑集合；后续保存仍须通过基线合并与服务端冲突检查。
- let next,snapshot;while((next=from.pop())){snapshot=isConfigHistorySnapshot(next)?captureConfigHistorySnapshot(state,{active,activeShopId,selected},next.configs.map(config=>config.id)):historySnapshot();if(!sameHistorySnapshot(next,snapshot))break;}if(!next||!snapshot){syncHistoryButtons();return;}
+async function stepHistory(from,to,message){
+ // 每个候选（包括跳过空操作后露出的条目）都先补齐详情；加载失败不消费撤销记录。
+ let next,snapshot;while((next=from.at(-1))){
+  if(!fullWorkspace){if(isConfigHistorySnapshot(next)){
+   const ids=new Set(next.configs.map(c=>c.id));if(next.active&&lazyWorkspace.index().summaries.some(c=>c.id===next.active&&!c.deletedAt))ids.add(next.active);
+   for(const id of ids)await loadDetail(id);
+  }else await ensureFullWorkspace();}
+  // Full hydration may rebase or invalidate the history after a remote update.
+  // Never restore the stale entry captured before that asynchronous boundary.
+  if(from.at(-1)!==next)continue;
+  if(isConfigHistorySnapshot(next)&&next.baseline){
+   const rebased=rebaseWorkspaceHistorySnapshot(next,acceptedState);
+   if(rebased.conflict){from.length=0;syncHistoryButtons();return;}
+   next=rebased.snapshot;from[from.length-1]=next;
+  }
+  snapshot=next.historyScope==='workspace'?captureWorkspaceHistorySnapshot(state,{active,activeShopId,selected},next):isConfigHistorySnapshot(next)?captureConfigHistorySnapshot(state,{active,activeShopId,selected},next.configs.map(config=>config.id)):historySnapshot();
+  if(!snapshot){syncHistoryButtons();return;}from.pop();if(!sameHistorySnapshot(next,snapshot))break;
+ }if(!next||!snapshot){syncHistoryButtons();return;}
  const restored=restoreHistorySnapshot(state,next);to.push(snapshot);trimHistory(to);transferSaveScope(state,restored,acceptedState,isConfigHistorySnapshot(next)?next.configs.map(config=>config.id):null);state=restored;
  const ids=isConfigHistorySnapshot(next)?next.configs.map(config=>config.id):null;
  activeShopId=next.activeShopId||'intel';localStorage.setItem('diy-active-shop',activeShopId);
@@ -404,7 +435,7 @@ async function sendBatchPending(){
   batchPending=null;$('#save-status').textContent=dirty?'尚未保存':`已保存 ${new Date(remote.updatedAt).toLocaleTimeString('zh-CN')}`;
   if(!dirty)pollDerivedStatus().catch(()=>{});
   scheduleImageSave();if(dirty)timer=setTimeout(()=>save().catch(()=>{}),0);return receipt;
- }catch(e){invalidateSaveScope(state,'batch request failure');dirty=true;if(e.status===409){batchPending=null;conflict=true;$('#save-status').textContent='保存冲突';openConflict(e.message);}else{$('#save-status').textContent='保存失败 · 请重试';toast(e.message);}throw e;}finally{batchPromise=null;}})();
+ }catch(e){invalidateSaveScope(state,'batch request failure');dirty=true;if(e.status===409){batchPending=null;conflict=true;$('#save-status').textContent='保存冲突';openConflict(e.message);}else{$('#save-status').textContent='保存失败 · 请重试';toast(e.message);}throw e;}finally{batchPromise=null;if(!dirty)setTimeout(()=>compactWorkspace().catch(()=>{}),0);}})();
  return batchPromise;
 }
 // 把预览确认的批量更换转换成事务请求，保持展示配件和实际 BOM 一致。
@@ -716,20 +747,37 @@ async function batchExportFull(){
 }
 // 使用完整配置和本机成本数据执行利润检查。
 async function showPriceChanges(options={}){
+ if(!options.automatic)priceNotifications.length=0;
+ if(options.automatic&&pricePopupBlocked())return false;
  await ensureFullWorkspace();
+ if(options.automatic&&pricePopupBlocked())return false;
  return openPriceChanges({openDialog,request,toast,download:downloadBlob,configs:()=>acceptedState.configs,shopName:id=>shopById(id).name,locate:async id=>{
   const target=state.configs.find(c=>c.id===id&&!c.deletedAt);if(!target)return toast('配置已删除');
   closeDialog();await save();activeShopId=target.shopId;localStorage.setItem('diy-active-shop',activeShopId);$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;await activate(id);renderAll();$('#locate-editing')?.click();switchTab('costs');
  }},options);
 }
-// 回执落盘后检查一次新批次；编辑或其他弹窗未结束时延后，重启仍可找回未读批次。
-let priceCheckedRevision=null,pricePendingRevision=null,priceChecking=false;
+// 仅本次本机同步成功回执可排队；启动、普通保存和历史未读批次不会自动弹窗。
+const priceNotifications=[],priceNotificationKeys=new Set();let priceChecking=false;
+function queuePriceChanges({source,after,revision}){
+ if(!['erp','cost-source'].includes(source)||!Number.isSafeInteger(after)||!Number.isSafeInteger(revision)||revision<=after)return;
+ const key=`${source}:${after}:${revision}`;if(priceNotificationKeys.has(key))return;
+ priceNotificationKeys.add(key);priceNotifications.push({after,revision});
+ if(priceNotificationKeys.size>128)priceNotificationKeys.delete(priceNotificationKeys.values().next().value);
+}
+function pricePopupBlocked(){return !window.workbenchReady||window.workbenchHasPendingChanges()||conflict||!!workspaceLoad||fullActionBusy>0||$('#dialog').open||document.activeElement?.matches('input,textarea,select');}
 async function checkPriceChanges(){
- if(!window.workbenchReady||priceChecking||window.workbenchHasPendingChanges()||conflict)return;
+ if(priceChecking||!priceNotifications.length||pricePopupBlocked())return;
  priceChecking=true;
  try{
-  if(priceCheckedRevision!==state.revision){const revision=state.revision;const result=await request('/api/price-changes/list',{method:'POST',body:'{}'});priceCheckedRevision=revision;pricePendingRevision=result.batches.find(b=>!b.seen)?.revision||null;}
-  if(pricePendingRevision&&!window.workbenchHasPendingChanges()&&!conflict&&!$('#dialog').open&&!document.activeElement?.matches('input,textarea,select')){const revision=pricePendingRevision;pricePendingRevision=null;await showPriceChanges({revision,automatic:true});}
+  const pending=priceNotifications[0];
+  if(pending.batchRevision===undefined){
+   const result=await request('/api/price-changes/list',{method:'POST',body:'{}'});
+   pending.batchRevision=result.batches.find(b=>!b.seen&&b.revision>pending.after&&b.revision<=pending.revision)?.revision||null;
+  }
+  if(priceNotifications[0]!==pending)return;
+  if(!pending.batchRevision){priceNotifications.shift();return;}
+  if(pricePopupBlocked())return;
+  if(await showPriceChanges({revision:pending.batchRevision,automatic:true})!==false)priceNotifications.shift();
  }catch(error){console.warn('价格变化记录读取失败',error.message);}finally{priceChecking=false;}
 }
 setInterval(()=>checkPriceChanges(),2500);
@@ -759,9 +807,10 @@ function openLinkPartsDialogFull(){
 // 跨链接批量更换配件，共用预览、事务应用和冲突保护。
 function openGlobalPartsFull(){openGlobalBatch({openUpgrades:()=>openUpgradeDescriptions(),openDialog,esc,toast,getConfigs:ordinaryAvailable,getCatalog:currentCatalog,save,download:downloadBlob,apply:async plan=>applyBatchChanges(plan,`${plan.undo?'还原跨链接批量配件':'跨链接批量更换配件'}：${plan.changes.length} 套配置`)});}
 // 维护三店共用核算价，确认后重算相关数据并保存。
-function openCostsFull(){openCostEditor({openDialog,getRows:()=>selectableComponents(state.costSource),lastErp:()=>state.erpSync?.updatedAt,apply:async entries=>{checkpoint();const ids=applyManualCosts(state,entries);catalog=sourceCatalog(state.sourceCatalog);changed(`人工更新 ${entries.length} 条三店共用核算价`,[]);renderAll();await save();return ids.length;}});}
+function openCostsFull(){openCostEditor({openDialog,getRows:()=>selectableComponents(state.costSource),lastErp:()=>state.erpSync?.updatedAt,apply:async entries=>{await save();const beforeRevision=acceptedState.revision;checkpoint();const ids=applyManualCosts(state,entries);catalog=sourceCatalog(state.sourceCatalog);changed(`人工更新 ${entries.length} 条三店共用核算价`,[]);renderAll();await save();queuePriceChanges({source:'cost-source',after:beforeRevision,revision:acceptedState.revision});return ids.length;}});}
 // 接收已经提交的 ERP 数据；先尝试安全刷新，不在回调里重复保存。
 async function receiveErp(result){
+ if(result?.ok===true)queuePriceChanges({source:'erp',after:result.revision-1,revision:result.revision});
  // 按需工作区先尝试安全更新；只有确实涉及当前草稿时才转入显式比较。
  if(!fullWorkspace&&!conflict){if(await refreshCompactWorkspace())return true;if(!window.workbenchHasPendingChanges())return false;}
  const blocked=()=>window.workbenchHasPendingChanges()||conflict;
@@ -807,7 +856,7 @@ async function showActivity(){await save();openActivity({openDialog,esc,request,
 function bind(){
  // 原生关闭事件可能排在再次打开之后，只清理仍关闭的对话框，避免释放新表单。
  $('#dialog').addEventListener('close',()=>{if($('#dialog').open)return;$('#dialog-body').querySelectorAll('.product-search').forEach(destroyProductSearch);reactWorkbench.release($('#dialog-body'));});
- $('#dialog').addEventListener('close',()=>setTimeout(()=>compactWorkspace().catch(error=>toast(error.message)),0));
+ $('#dialog').addEventListener('close',()=>setTimeout(()=>{if($('#dialog').open||window.workbenchSourceEditor?.hasPending())return;$('#dialog-body').replaceChildren();compactWorkspace().catch(()=>{});},0));
  mountNameFormatEntry(openNameFormats);
  $('#operator-open').textContent='操作人：'+operator;$('#operator-open').onclick=()=>workspaceSyncUi?.open();$('#shop-settings').onclick=openShopSettings;
  $('#shop-picker').onchange=async()=>{const next=$('#shop-picker').value;if(next===activeShopId)return;const previous=activeShopId;try{await save();posterEditor?.clear();activeShopId=next;templateSectionOpen=false;localStorage.setItem('diy-active-shop',next);active=fullWorkspace?(ordinaryConfigs(available())[0]?.id||null):null;selected=new Set(active?[active]:[]);collapsedProducts.clear();if(!fullWorkspace)productGroups(available()).forEach(p=>collapsedProducts.add(p.id));listPinnedProduct=null;$('#search').value='';$('#link-category-filter').value='';renderAll();}catch(e){activeShopId=previous;$('#shop-picker').value=previous;toast(e.message);}};

@@ -76,7 +76,7 @@ test('partial documents cannot reach full-state save and summary projection pres
 test('global UI action refuses to mutate after hydration failure; compact render never normalizes unseen configurations',async()=>{
  const text=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
  const action=text.slice(text.indexOf('function fullAction('),text.indexOf('async function prepareCompactSnapshot('));
- let changed=false;const context=vm.createContext({fullWorkspace:false,ensureFullWorkspace:async()=>{throw Error('revision changed');},toast(){}});vm.runInContext(action,context);
+ let changed=false;const context=vm.createContext({fullWorkspace:false,fullActionBusy:0,setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('revision changed');},toast(){}});vm.runInContext(action,context);
  await assert.rejects(context.fullAction(()=>{changed=true;})(),/revision changed/);assert.equal(changed,false);
  const compact=text.slice(text.indexOf('function renderCompact('),text.indexOf('let previewFrame='));
  assert.doesNotMatch(compact,/migrateSavedTemplates|applyPosterTheme|applyPosterView/);

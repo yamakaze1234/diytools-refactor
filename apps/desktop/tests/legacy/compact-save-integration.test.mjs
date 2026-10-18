@@ -9,7 +9,7 @@ import {normalizeWorkspaceStateAsync} from '../../public/workbench/shops.js';
 import {createSourceIndex} from '../../public/workbench/component-index.js';
 import {bindSources,alignDisplaySourceNames,sourceCatalog} from '../../public/workbench/source.js';
 import {normalizeProducts,posterModules} from '../../public/workbench/core.js';
-import {cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,applySavedReceiptDraft} from '../../public/workbench/editor-performance.js';
+import {cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,applySavedReceiptDraft,historySnapshotBytes,compactConfigHistory,captureHistorySnapshot,isConfigHistorySnapshot,restoreHistorySnapshot} from '../../public/workbench/editor-performance.js';
 import {sameEditingState} from '../../public/workbench/workspace-ui-merge.js';
 import {planCompactRefresh,sameWorkspaceMetadata} from '../../public/workbench/compact-refresh.js';
 import {prepareWorkspaceState} from '../../public/workbench/workspace-state-apply.js';
@@ -23,8 +23,8 @@ const implementation=extract('function pruneDetails(','async function completeWo
  +extract('function acceptSavedState(','async function sendBatchPending(){');
 const deferred=()=>{let resolve;const promise=new Promise(done=>resolve=done);return {promise,resolve};};
 
-async function fixture(onPatch){
- const documents=Array.from({length:3},(_,i)=>({id:'c'+i,shopId:'intel',productId:'link',product:'链接',name:'旧名称'+i,price:10,unknown:{raw:'00123'}}));
+async function fixture(onPatch,count=3){
+ const documents=Array.from({length:count},(_,i)=>({id:'c'+i,shopId:'intel',productId:'link',product:'链接',name:'旧名称'+i,price:10,unknown:{raw:'00123'}}));
  const metadata={dataVersion:3,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{}};
  const requests=[],nodes=new Map(),captures=[];let revision=7;
  const request=async(url,options)=>{
@@ -37,11 +37,11 @@ async function fixture(onPatch){
  const lazyWorkspace=createLazyWorkspace({request});await lazyWorkspace.refresh();
  const state=markPartialWorkspace(await normalizeWorkspaceStateAsync({...metadata,revision,configs:[]}));
  const context={...scope,request,lazyWorkspace,state,acceptedState:structuredClone(state),fullWorkspace:false,dirty:false,conflict:false,
-  createLazyWorkspace,markPartialWorkspace,planCompactRefresh,sameWorkspaceMetadata,prepareWorkspaceState,baseCatalog:[],workspaceLoad:null,
+  createLazyWorkspace,markPartialWorkspace,planCompactRefresh,sameWorkspaceMetadata,prepareWorkspaceState,baseCatalog:[],workspaceLoad:null,activationGeneration:0,fullActionBusy:0,
   window:{},document:{activeElement:null},imageRecords:new Map(),selected:new Set(),renderList(){},
   changeCounter:0,savePromise:null,batchPromise:null,batchPending:null,ordinaryPending:null,history:[],redoHistory:[],catalog:[],changed:{message:'编辑配置'},operator:'tester',
   normalizeWorkspaceStateAsync,createSourceIndex,bindSources,alignDisplaySourceNames,normalizeProducts,posterModules,assertLoadedChanges,
-  cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,applySavedReceiptDraft,sameEditingState,sourceCatalog,
+  cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,applySavedReceiptDraft,sameEditingState,sourceCatalog,historySnapshotBytes,compactConfigHistory,isConfigHistorySnapshot,
   crypto:{randomUUID},rememberDisplayParts(){},syncHistoryButtons(){},trimHistory(){},renderAll(){},pollDerivedStatus:async()=>{},scheduleImageSave(){},toast(){},
   active:'c0',pendingImages:new Set(),displayBaseline:new Map(),setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('compact save unexpectedly hydrated full workspace');},
   captureSaveSnapshot(state,base){const result=scope.captureSaveSnapshot(state,base);captures.push(scope.saveSnapshotIds(result));return result;},
@@ -51,6 +51,55 @@ async function fixture(onPatch){
  await context.load('c0');
  return {context,requests,documents,captures,metadata,advance:()=>++revision,patches:()=>requests.filter(row=>row.url==='/api/configs/patch').map(row=>row.payload)};
 }
+
+async function hydrate(c,documents){
+ c.acceptedState={...structuredClone(c.acceptedState),configs:structuredClone(documents)};
+ c.state=(await prepareWorkspaceState(c.acceptedState,[])).state;c.fullWorkspace=true;
+}
+
+test('全局操作后只重新读取有限详情，保留活动编辑对象和完整摘要',async()=>{
+ const {context:c,documents,requests}=await fixture(null,250);await hydrate(c,documents);
+ const live=c.state.configs[0];c.renderAll=()=>assert.fail('后台释放不能重建输入控件');
+ await Promise.all([c.compactWorkspace(),c.compactWorkspace()]);
+ assert.equal(c.fullWorkspace,false);assert.equal(c.state.configs.length,1);assert.equal(c.acceptedState.configs.length,1);
+ assert.equal(c.state.configs[0],live);assert.equal(c.lazyWorkspace.index().summaries.length,250);
+ assert.deepEqual(requests.filter(r=>r.url==='/api/configs/load').at(-1).payload.ids,['c0']);
+ assert.equal(requests.filter(r=>r.url==='/api/workspace/index').length,2);
+ scope.declareSaveScope(c.state,c.acceptedState,['c0']);live.name='释放后继续输入';c.dirty=true;await c.runSave();assert.equal(c.acceptedState.configs[0].name,'释放后继续输入');
+});
+
+test('仅配置内容变化的全量撤销记录缩为涉及配置，未加载项撤销仍可恢复',async()=>{
+ const {context:c,documents}=await fixture(null,120);await hydrate(c,documents);
+ const before=structuredClone(c.state);before.configs[90].price=123;
+ c.history.push(captureHistorySnapshot(before,{active:'c90',activeShopId:'intel',selected:new Set(['c90'])}));
+ await c.compactWorkspace();assert.equal(c.fullWorkspace,false);assert.equal(c.history[0].historyScope,'configs');
+ assert.deepEqual(Array.from(c.history[0].configs,row=>row.id),['c90']);assert.equal(c.history[0].costSource,undefined);
+ await c.load('c90');const restored=restoreHistorySnapshot(c.state,c.history[0]);assert.equal(restored.configs.find(row=>row.id==='c90').price,123);
+});
+
+test('公共资料撤销压缩后释放全量详情并保留公共资料还原值',async()=>{
+ const {context:c,documents}=await fixture();await hydrate(c,documents);
+ const before=structuredClone(c.state);before.shopSettings.intel.coupon=88;
+ c.history.push(captureHistorySnapshot(before,{active:'c0',activeShopId:'intel',selected:new Set()}));
+ await c.compactWorkspace();assert.equal(c.fullWorkspace,false);assert.equal(c.state.configs.length,1);
+ assert.equal(c.history[0].historyScope,'workspace');assert.equal(c.history[0].configs.length,0);assert.equal(c.history[0].globals.shopSettings.intel.coupon,88);
+});
+
+test('释放等待期间的导航、输入、弹窗、保存及版本变化均使旧结果失效',async()=>{
+ for(const reason of ['navigation','input','dialog','save','revision','global-action','pending']){
+  const {context:c,documents,advance}=await fixture();await hydrate(c,documents);const original=c.request,state=c.state;
+  c.request=async(...args)=>{const result=await original(...args);if(args[0]==='/api/workspace/index'){
+   if(reason==='navigation'){c.active='c1';c.activationGeneration++;}
+   if(reason==='input'){c.state.configs[0].name='草稿';c.dirty=true;c.changeCounter++;}
+   if(reason==='dialog')c.$('#dialog').open=true;
+   if(reason==='save')c.savePromise=Promise.resolve();
+   if(reason==='global-action')c.fullActionBusy=1;
+   if(reason==='pending')c.ordinaryPending={};
+   if(reason==='revision'){advance();result.revision++;}
+  }return result;};
+  await c.compactWorkspace();assert.equal(c.fullWorkspace,true,reason);assert.equal(c.state,state,reason);
+ }
+});
 
 test('continuous name, price and parts edits retain the live config and scoped baseline across real save/prune cycles',async()=>{
  const {context:c,requests,captures,patches}=await fixture(),live=c.state.configs[0],parts=live.parts;
@@ -102,7 +151,7 @@ test('compact patch selection skips shared public collections but still detects 
 
 test('clean compaction and remote refresh retain editor config, parts and module object references',async()=>{
  const {context:c}=await fixture(),live=c.state.configs[0];live.parts.push({slot:'CPU',name:'old'});live.modules.push({id:'custom',text:'old'});
- c.markPartialWorkspace=markPartialWorkspace;c.loadedIds=()=>c.state.configs.map(row=>row.id);vm.runInNewContext(extract('function applyCompactSnapshot(','async function compactWorkspace('),c);
+ c.markPartialWorkspace=markPartialWorkspace;c.loadedIds=()=>c.state.configs.map(row=>row.id);
  const index=c.lazyWorkspace.index(),configs=structuredClone(c.state.configs);configs[0].parts[0].name='remote';configs[0].modules.at(-1).text='remote';const parts=live.parts,part=parts[0],module=live.modules.at(-1);
  c.applyCompactSnapshot({index,raw:structuredClone(configs),prepared:{state:{...index.metadata,configs:[],revision:index.revision},catalog:[]},configs});
  assert.equal(c.state.configs[0],live);assert.equal(live.parts,parts);assert.equal(live.parts[0],part);assert.equal(live.modules.at(-1),module);assert.equal(part.name,'remote');assert.equal(module.text,'remote');
@@ -110,7 +159,7 @@ test('clean compaction and remote refresh retain editor config, parts and module
 
 test('full-load status is restored on success and failure without overwriting a newer save status',async()=>{
  for(const outcome of ['success','failure','new-status']){
-  const workspace={inert:false},status={textContent:'已保存'},c={fullWorkspace:false,workspaceLoad:null,changeCounter:0,baseCatalog:[],
+  const workspace={inert:false},status={textContent:'已保存'},c={fullWorkspace:false,workspaceLoad:null,changeCounter:0,baseCatalog:[],history:[],redoHistory:[],
    $:id=>id==='.workspace'?workspace:status,completeWorkspaceSnapshot:async()=>{if(outcome==='failure')throw Error('load failed');return {state:{},remote:{},counter:0};},
    prepareWorkspaceState:async()=>({state:{},catalog:[]}),rememberDisplayParts(){},renderAll(){if(outcome==='new-status')status.textContent='尚未保存';}};
   vm.runInNewContext(extract('async function ensureFullWorkspace(','function fullAction('),c);

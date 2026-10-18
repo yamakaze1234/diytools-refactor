@@ -118,6 +118,52 @@ export function captureHistorySnapshot(state,{active,activeShopId,selected},prev
  return capture({caseGallery,configs,templates,sourceCatalog,costSource,shopSettings,active,activeShopId,selected:[...selected]},isConfigHistorySnapshot(previous)?undefined:previous);
 }
 export const isConfigHistorySnapshot=snapshot=>snapshot?.historyScope==='configs';
+const historyGlobals=['caseGallery','templates','sourceCatalog','costSource','shopSettings'];
+function workspaceHistoryBaseline(snapshot,state){
+ const ids=new Set(snapshot.configIds),keys=Object.keys(snapshot.globals);
+ return {configs:structuredClone(state.configs.filter(c=>ids.has(c.id))),order:state.configs.map(c=>c.id),globals:structuredClone(Object.fromEntries(keys.map(key=>[key,state[key]])))};
+}
+/** 全局撤销只持有变动配置、完整ID顺序及变动的公共资料；回放时再载入当前详情。 */
+export function captureWorkspaceHistorySnapshot(state,{active,activeShopId,selected},target){
+ const ids=new Set(target.configIds);
+ const snapshot={historyScope:'workspace',configIds:[...ids],configOrder:state.configs.map(c=>c.id),
+  configs:structuredClone(state.configs.filter(c=>ids.has(c.id))),
+  globals:structuredClone(Object.fromEntries(Object.keys(target.globals).map(key=>[key,state[key]]))),
+  active,activeShopId,selected:[...selected]};
+ return {...snapshot,baseline:workspaceHistoryBaseline(snapshot,state)};
+}
+/** 从按需模式补全时，用稀疏旧基线合并未加载配置的远端变化，再允许撤销。 */
+export function rebaseWorkspaceHistorySnapshot(snapshot,remote){
+ if(isConfigHistorySnapshot(snapshot)){
+  if(!snapshot.baseline)return {snapshot,conflict:false};
+  const ids=new Set(snapshot.configs.map(c=>c.id));
+  return rebaseHistorySnapshot(snapshot,{configs:snapshot.baseline.configs,shopSettings:{}},{configs:remote.configs.filter(c=>ids.has(c.id)),shopSettings:{}});
+ }
+ if(snapshot.historyScope!=='workspace')return {snapshot,conflict:false};
+ if(!snapshot.baseline)return {snapshot,conflict:true};
+ const rows=new Map(snapshot.baseline.configs.map(c=>[c.id,c]));
+ return rebaseHistorySnapshot(snapshot,{...snapshot.baseline.globals,configs:snapshot.baseline.order.map(id=>rows.get(id)||{id})},remote);
+}
+/** 不保留未变化的全量详情，同时保留增删、排序、公共资料与混合撤销的语义。 */
+export function compactConfigHistory(stacks,state){
+ const ids=state.configs.map(config=>config.id),current=new Map(state.configs.map(config=>[config.id,config])),targets=new Set();
+ const globals=new Set();let workspace=false;
+ for(const snapshot of stacks.flat()){
+  if(isConfigHistorySnapshot(snapshot)){for(const config of snapshot.configs)targets.add(config.id);continue;}
+  if(snapshot.historyScope==='workspace'){for(const id of snapshot.configIds)targets.add(id);for(const key of Object.keys(snapshot.globals))globals.add(key);continue;}
+  if(!sameValue(ids,snapshot.configs.map(config=>config.id)))workspace=true;
+  for(const key of historyGlobals)if(!sameValue(snapshot[key],state[key])){globals.add(key);workspace=true;}
+  const present=new Set(snapshot.configs.map(c=>c.id));for(const id of ids)if(!present.has(id))targets.add(id);
+  for(const config of snapshot.configs)if(!sameValue(config,current.get(config.id)))targets.add(config.id);
+ }
+ // Include differences from every undo/redo entry, even when a later edit has
+ // returned a field to its original value. Otherwise an earlier undo loses it.
+ return stacks.map(stack=>stack.map(snapshot=>snapshot.historyScope?snapshot:{historyScope:workspace?'workspace':'configs',
+  ...(workspace?{configIds:[...targets],configOrder:snapshot.configs.map(c=>c.id),globals:Object.fromEntries([...globals].map(key=>[key,snapshot[key]]))}:{}),
+  configs:snapshot.configs.filter(config=>targets.has(config.id)),active:snapshot.active,activeShopId:snapshot.activeShopId,selected:snapshot.selected}).filter(snapshot=>snapshot.historyScope==='workspace'||snapshot.configs.length)
+  .map(snapshot=>snapshot.historyScope==='workspace'?{...snapshot,baseline:workspaceHistoryBaseline(snapshot,state)}:
+   {...snapshot,baseline:{configs:structuredClone(snapshot.configs.flatMap(c=>current.has(c.id)?[current.get(c.id)]:[]))}}));
+}
 /** 仅记录指定配置及选择状态，减少普通编辑的撤销快照大小。 */
 export function captureConfigHistorySnapshot(state,{active,activeShopId,selected},ids,previous){
  const targets=new Set(ids);
@@ -127,10 +173,16 @@ export function captureConfigHistorySnapshot(state,{active,activeShopId,selected
  return capture({historyScope:'configs',configs,active,activeShopId,selected:[...selected]},isConfigHistorySnapshot(previous)?previous:undefined);
 }
 export function sameHistorySnapshot(before,after){
- return isConfigHistorySnapshot(before)===isConfigHistorySnapshot(after)&&sameValue(before,after);
+ const content=value=>{if(!value)return value;const {baseline,...rest}=value;return rest;};
+ return isConfigHistorySnapshot(before)===isConfigHistorySnapshot(after)&&sameValue(content(before),content(after));
 }
 /** 从全量或局部快照恢复编辑状态，保留未覆盖的其他配置。 */
 export function restoreHistorySnapshot(state,snapshot){
+ if(snapshot.historyScope==='workspace'){
+  const rows=new Map(state.configs.map(c=>[c.id,c]));for(const row of structuredClone(snapshot.configs))rows.set(row.id,row);
+  if(snapshot.configOrder.some(id=>!rows.has(id)))throw Error('撤销所需配置尚未完整载入');
+  return {...state,...structuredClone(snapshot.globals),configs:snapshot.configOrder.map(id=>rows.get(id))};
+ }
  if(isConfigHistorySnapshot(snapshot)){
   const restored=new Map(structuredClone(snapshot.configs).map(config=>[config.id,config]));
   if([...restored.keys()].some(id=>!state.configs.some(config=>config.id===id)))throw Error('撤销目标已不存在，请先重新载入配置');
@@ -140,6 +192,22 @@ export function restoreHistorySnapshot(state,snapshot){
  return {...state,...Object.fromEntries(['caseGallery','configs','templates','sourceCatalog','costSource','shopSettings'].map(key=>[key,restored[key]]))};
 }
 export function rebaseHistorySnapshot(snapshot,sent,remote){
+ if(snapshot.historyScope==='workspace'){
+  const ids=new Set(snapshot.configIds),keys=Object.keys(snapshot.globals);
+  const pick=value=>({configs:value.configs.filter(c=>ids.has(c.id)),...Object.fromEntries(keys.map(key=>[key,value[key]]))});
+  const merged=mergeEditingState(pick(sent),{configs:snapshot.configs,...snapshot.globals},pick(remote));
+  const beforeIds=new Set(sent.configs.map(c=>c.id)),afterIds=new Set(remote.configs.map(c=>c.id));
+  const removed=new Set([...beforeIds].filter(id=>!afterIds.has(id))),order=snapshot.configOrder.filter(id=>!removed.has(id));
+  for(const id of afterIds)if(!beforeIds.has(id)&&!order.includes(id))order.push(id);
+  // A concurrent order change cannot be safely merged with historical order.
+  const sameMembership=beforeIds.size===afterIds.size&&[...beforeIds].every(id=>afterIds.has(id));
+  const orderConflict=sameMembership&&!sameValue(sent.configs.map(c=>c.id),remote.configs.map(c=>c.id));
+  const bases=new Map((snapshot.baseline?.configs||[]).map(c=>[c.id,c]));
+  for(const id of removed)bases.delete(id);for(const row of remote.configs)if(ids.has(row.id))bases.set(row.id,structuredClone(row));
+  const baseOrder=(snapshot.baseline?.order||snapshot.configOrder).filter(id=>!removed.has(id));for(const id of afterIds)if(!baseOrder.includes(id))baseOrder.push(id);
+  return {snapshot:{...snapshot,configOrder:order,configs:merged.state.configs,globals:Object.fromEntries(keys.map(key=>[key,merged.state[key]])),
+   baseline:{configs:[...bases.values()],order:baseOrder,globals:structuredClone(Object.fromEntries(keys.map(key=>[key,remote[key]])))}},conflict:merged.conflict||orderConflict};
+ }
  if(isConfigHistorySnapshot(snapshot)){
   const ids=new Set(snapshot.configs.map(config=>config.id)),pick=state=>({configs:state.configs.filter(config=>ids.has(config.id)),shopSettings:{}});
   const receipt=pick(remote);
@@ -149,7 +217,9 @@ export function rebaseHistorySnapshot(snapshot,sent,remote){
   // a still-sent target is instead a concurrency conflict.
   if([...ids].some(id=>sentIds.has(id)&&!remoteIds.has(id)))return {snapshot,conflict:true};
   const result=mergeEditingState(pick(sent),{configs:snapshot.configs,shopSettings:{}},receipt);
-  return {snapshot:{...snapshot,configs:result.state.configs},conflict:result.conflict};
+  const bases=new Map((snapshot.baseline?.configs||[]).map(c=>[c.id,c]));for(const row of receipt.configs)bases.set(row.id,structuredClone(row));
+  const baseline=[...ids].every(id=>bases.has(id))?{configs:[...bases.values()]}:snapshot.baseline;
+  return {snapshot:{...snapshot,configs:result.state.configs,...(baseline?{baseline}:{})},conflict:result.conflict};
  }
  const result=mergeEditingState(withoutActivityLogs(sent),snapshot,withoutActivityLogs(remote));
  // A receipt may normalize rows while preserving the sent list order. Keep
@@ -163,7 +233,7 @@ export function rebaseHistorySnapshot(snapshot,sent,remote){
 }
 /** 在新保存回执上重建撤销快照，保留用户自己的编辑变化。 */
 export async function rebaseHistorySnapshotAsync(snapshot,sent,remote,options){
- if(isConfigHistorySnapshot(snapshot))return rebaseHistorySnapshot(snapshot,sent,remote);
+ if(isConfigHistorySnapshot(snapshot)||snapshot.historyScope==='workspace')return rebaseHistorySnapshot(snapshot,sent,remote);
  const result=await mergeEditorStateAsync(sent,snapshot,remote,options);
  if(sameValue(sent.configs.map(config=>config.id),remote.configs.map(config=>config.id))){
   const rows=new Map(result.state.configs.map(config=>[config.id,config])),ordered=snapshot.configs.flatMap(config=>rows.has(config.id)?[rows.get(config.id)]:[]),seen=new Set(ordered.map(config=>config.id));

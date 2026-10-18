@@ -1,12 +1,31 @@
+const encodeImageFile=async file=>({name:file.name,base64:await new Promise((resolve,reject)=>{
+ const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(Error('读取导出图片失败'));reader.readAsDataURL(new Blob([file.bytes]));
+})});
+
+/** 先选一次目录，再逐张交付。调用方必须在 finally 中结束会话。 */
+export async function openImageFolderSession(name){
+ const session=globalThis.pywebview?.api?.export_image_folder_session;
+ if(!session)return null;
+ const opened=await session({phase:'begin',name:name.replace(/\.zip$/i,'')});
+ if(opened?.cancelled)return opened;
+ if(!opened?.token)throw Error('未能创建图片导出会话');
+ return {
+  directory:opened.directory,
+  async append(file){
+   if(file.bytes.byteLength>128*1024*1024)throw Error('单个导出文件超过128 MiB');
+   return session({phase:'append',token:opened.token,files:[await encodeImageFile(file)]});
+  },
+  finish:()=>session({phase:'finish',token:opened.token})
+ };
+}
+
 /** 提交文件集合和建议目录名，返回原生保存结果。 */
 /** 图片文件夹导出适配：把生成结果交给本机接口保存到用户选择的目录。 */
 export async function saveImageFolder(files,name,{signal}={}){
  // 文件编码阶段仍可取消，进入原生保存后以逐文件回执确认实际结果。
  const active=()=>{if(signal?.aborted)throw new DOMException('图片导出已取消','AbortError');};active();
  const api=globalThis.pywebview?.api,bridge=api?.export_image_folder;
- const encode=async file=>({name:file.name,base64:await new Promise((resolve,reject)=>{
-  const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=()=>reject(Error('读取导出图片失败'));reader.readAsDataURL(new Blob([file.bytes]));
- })});
+ const encode=encodeImageFile;
  const session=api?.export_image_folder_session;
  if(session){
   // 编码与IPC都分批进行，单次最多8 MiB原始数据（单张大图单独传输）。

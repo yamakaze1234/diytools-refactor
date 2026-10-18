@@ -1,6 +1,6 @@
 /** 图片任务独立于业务弹窗：固定输入快照，记录实际交付，失败重试不重复成功文件。 */
 import {renderPoster} from './poster.js';
-import {saveImageFolder} from './folder-export.js';
+import {saveImageFolder,openImageFolderSession} from './folder-export.js';
 import {makeZip} from './zip.js';
 
 const tasks=new Map(),listeners=new Set();let serial=0;
@@ -11,13 +11,63 @@ const emit=()=>{for(const listener of listeners)listener();};
 export const imageExportTasks=()=>[...tasks.values()];
 
 /** 任务只在当前工作台会话保留，不把业务快照或图片写入浏览器存储。 */
-export function startImageExportTask({entries,name,title='批量图片导出',width=1400,renderImage=renderPoster,saveFolder=saveImageFolder,download,status=()=>{},signal,report={}}){
+export function startImageExportTask({entries,name,title='批量图片导出',width=1400,renderImage=renderPoster,saveFolder=saveImageFolder,openFolder=saveFolder===saveImageFolder?openImageFolderSession:null,download,status=()=>{},signal,report={}}){
  if(!entries.length)throw Error('本次没有可导出的链接配置');
  const task={id:++serial,title,name,phase:'queued',message:'等待生成',items:entries.map(entry=>({...copy(entry),state:'pending',error:'',bytes:null})),busy:false,attempt:0,controller:null};
  // 后续执行只持有任务自己的副本，不额外延长调用方整批配置的生命周期。
  entries=null;
  const notify=message=>{task.message=message;try{status(message);}catch{/* 旧弹窗已卸载时仍继续任务。 */}emit();};
  const active=()=>{if(task.controller.signal.aborted)throw cancelled();};
+ // 原生会话逐张写盘，任务中心只保留失败项的配置快照，不保留 PNG。
+ async function stream(selected,session){
+  let receipt,failure;
+  const manifestName=task.attempt===1?'导出清单.json':`导出清单_重试${task.attempt-1}.json`;
+  let manifestSaved=false;
+  const reconcile=result=>{
+   if(!Array.isArray(result?.files))return;
+   const written=new Set(result.files);
+   if(written.has(manifestName))manifestSaved=true;
+   for(const item of selected)if(written.has(item.name)){item.state='saved';item.bytes=null;item.config=null;item.error='';}
+  };
+  try{
+   for(const [index,item] of selected.entries()){
+    active();task.phase='rendering';item.state='rendering';item.error='';notify(`正在生成并保存 ${index+1}/${selected.length}：${item.name}`);
+    let result;
+    try{
+     result=await renderImage(copy(item.config),width);active();
+     if(result.overflow)throw Error('图片内容超出，请调整模块或字号');
+     const blob=await new Promise(resolve=>result.canvas.toBlob(resolve,'image/png'));active();if(!blob)throw Error('图片生成失败');
+     item.bytes=new Uint8Array(await blob.arrayBuffer());active();
+    }catch(error){active();item.state='failed';item.error=error.message;continue;}
+    finally{
+     // renderPoster 每次返回独立画布；PNG 编码结束即释放位图，不触碰预览或素材缓存。
+     if(result?.canvas){result.canvas.width=0;result.canvas.height=0;}
+     result=null;
+    }
+    task.phase='saving';item.state='generated';
+    try{
+     receipt=await session.append({name:item.name,bytes:item.bytes});reconcile(receipt);
+     if(!receipt?.ok||!delivered(item))throw Error(receipt?.error||'未收到图片保存确认');
+    }finally{item.bytes=null;}
+    emit();
+   }
+   active();task.phase='saving';
+   const manifest={...report,createdAt:new Date().toISOString(),success:selected.filter(delivered).map(item=>item.name),failures:task.items.filter(item=>item.state==='failed').map(item=>({name:item.name,error:item.error}))};
+   receipt=await session.append({name:manifestName,bytes:new TextEncoder().encode(JSON.stringify(manifest,null,2))});reconcile(receipt);
+   if(!receipt?.ok)throw Error(receipt?.error||'导出清单未保存');
+  }catch(error){failure=error;}
+  finally{
+   try{receipt=await session.finish();reconcile(receipt);if(!receipt?.ok)failure??=Error(receipt?.error||'图片未完整保存');}catch(error){failure??=error;}
+   for(const item of selected){item.bytes=null;if(!delivered(item)&&item.state!=='failed'){item.state=task.controller.signal.aborted?'pending':'failed';item.error=task.controller.signal.aborted?'':('保存未确认：'+(failure?.message||'图片未写出'));}}
+  }
+  const succeeded=selected.filter(delivered).length,failed=task.items.filter(item=>item.state==='failed').length;
+  task.manifestSaved=manifestSaved;
+  task.directory=receipt?.directory||session.directory;
+  if(task.controller.signal.aborted&&selected.some(item=>!delivered(item))){task.phase='cancelled';notify(`已取消图片导出，已保存 ${succeeded} 张，可继续未完成项。`);return task;}
+  task.phase=failed||failure||!manifestSaved?'partial':'completed';
+  notify(`已导出 ${succeeded} 张图片，失败 ${failed} 张。文件夹：${task.directory}${failure?'；'+failure.message:''}${!manifestSaved?'；导出清单未确认保存，本次导出未完整完成（已保存图片有效）。':''}`);
+  return task;
+ }
  async function run(mode){
   if(task.busy)return task.done;
   const selected=task.items.filter(item=>mode==='failed'?item.state==='failed':!delivered(item));
@@ -26,6 +76,13 @@ export function startImageExportTask({entries,name,title='批量图片导出',wi
   // 外部取消只约束首次运行；重试由任务中心创建新的取消控制器。
   const abort=()=>task.controller.abort();if(task.attempt===1){if(signal?.aborted)abort();else signal?.addEventListener('abort',abort,{once:true});}
   try{
+   if(openFolder){
+    active();task.phase='saving';notify('正在选择图片导出位置…');
+    const session=await openFolder(name);
+    if(session?.cancelled){task.phase='cancelled';notify('已取消图片导出，可在任务中心重新选择位置。');return task;}
+    if(session)return await stream(selected,session);
+    task.phase='rendering';
+   }
    for(const [index,item] of selected.entries()){
     active();if(item.bytes){item.state='generated';continue;}
     item.state='rendering';item.error='';notify(`正在生成 ${index+1}/${selected.length}：${item.name}`);

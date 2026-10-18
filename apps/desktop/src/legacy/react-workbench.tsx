@@ -18,15 +18,17 @@ function ConfigList({markup,document}: {markup: string; document: Document}) {
  const template=document.createElement('template');template.innerHTML=markup;
  return <>{Array.from(template.content.children).map((group,index)=> {
   if(!group.matches('[data-list-product]')) return <p key={`empty-${index}`} className="hint">{group.textContent}</p>;
-  const rows=Array.from(group.querySelectorAll<HTMLElement>('.config-item'));
+  const expanded=group.classList.contains('expanded');
+  // 折叠即释放配置行及其 React 节点；勾选、当前项由业务状态在展开时重建。
+  const rows=expanded?Array.from(group.querySelectorAll<HTMLElement>('.config-item')):[];
   const heading=group.firstElementChild!;
   const style=group.getAttribute('style');
   return <section key={group.getAttribute('data-list-product')} className={group.className} data-list-product={group.getAttribute('data-list-product')} data-link-colored={group.hasAttribute('data-link-colored')?'':undefined} ref={node=>{if(node){if(style)node.setAttribute('style',style);else node.removeAttribute('style');}}}>
    <div className={heading.className} dangerouslySetInnerHTML={{__html:heading.innerHTML}} />
-   <div hidden={!group.classList.contains('expanded')}>{rows.map(row=><div key={row.dataset.id} className={row.className} data-id={row.dataset.id} tabIndex={0} role="button" aria-current={row.getAttribute('aria-current')==='true'} aria-label={row.getAttribute('aria-label')||undefined}>
+   {expanded&&<div>{rows.map(row=><div key={row.dataset.id} className={row.className} data-id={row.dataset.id} tabIndex={0} role="button" aria-current={row.getAttribute('aria-current')==='true'} aria-label={row.getAttribute('aria-label')||undefined}>
     <input type="checkbox" defaultChecked={row.querySelector('input')!.checked} ref={node=>{if(node)node.checked=row.querySelector('input')!.checked;}} aria-label={row.querySelector('input')!.getAttribute('aria-label')||undefined}/>
     <div><strong>{row.querySelector('strong')?.textContent}</strong><small className={row.querySelector('small')?.className} title={row.querySelector('small')?.title} aria-label={row.querySelector('small')?.getAttribute('aria-label')||undefined}>{row.querySelector('small')?.textContent}</small></div>
-   </div>)}</div>
+   </div>)}</div>}
   </section>;
  })}</>;
 }

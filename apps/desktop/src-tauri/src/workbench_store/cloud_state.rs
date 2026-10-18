@@ -63,12 +63,17 @@ pub(super) fn load(store: &WorkbenchStore) -> Result<ApiResponse> {
     let mut c = db(&store.path)?;
     schema(&c)?;
     let tx = c.transaction().map_err(|e| e.to_string())?;
-    let state = state(&tx)?;
-    let (version, document) = stored(&tx)?;
-    Ok(response(
-        200,
-        json!({"state":state,"cloudVersion":version,"document":document}),
-    ))
+    let state: String = tx.query_row("SELECT document FROM workbench_state WHERE id=1", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    let cloud: Option<(i64, String)> = tx.query_row("SELECT version,document FROM workbench_cloud_state WHERE id=1", [], |r| Ok((r.get(0)?,r.get(1)?))).optional().map_err(|e| e.to_string())?;
+    let (version, document) = cloud.unwrap_or_else(|| (0, "null".into()));
+    // 只验证完整 JSON 语法，不构造整库 Value，也不改变数值或字符串的原始表示。
+    serde_json::from_str::<serde::de::IgnoredAny>(&state).map_err(|e| e.to_string())?;
+    serde_json::from_str::<serde::de::IgnoredAny>(&document).map_err(|e| e.to_string())?;
+    let mut body = String::with_capacity(state.len() + document.len() + 80);
+    body.push_str("{\"state\":");body.push_str(&state);
+    body.push_str(",\"cloudVersion\":");body.push_str(&version.to_string());
+    body.push_str(",\"document\":");body.push_str(&document);body.push('}');
+    Ok(ApiResponse { status: 200, body })
 }
 
 fn identity(value: &Value, field: &str) -> Result<String> {
@@ -606,6 +611,63 @@ pub(super) fn commit(store: &WorkbenchStore, input: &Value) -> Result<ApiRespons
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn raw_load_fixture(state: &str, cloud: Option<&str>) -> WorkbenchStore {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../sandbox/native-load-optimization-20261018/tests").join(unique());
+        fs::create_dir_all(&root).unwrap();
+        let store = WorkbenchStore { path: root.join("workbench.sqlite"), assets: root.join("assets") };
+        let c = db(&store.path).unwrap();
+        // 已存在投影表表示迁移已完成；无触发器允许模拟磁盘损坏正文。
+        c.execute_batch("CREATE TABLE workbench_state(id INTEGER PRIMARY KEY,document TEXT);CREATE TABLE workbench_cloud_state(id INTEGER PRIMARY KEY,version INTEGER,document TEXT);CREATE TABLE workbench_cloud_header(id INTEGER PRIMARY KEY);").unwrap();
+        c.execute("INSERT INTO workbench_state VALUES(1,?1)", [state]).unwrap();
+        if let Some(raw) = cloud { c.execute("INSERT INTO workbench_cloud_state VALUES(1,42,?1)", [raw]).unwrap(); }
+        store
+    }
+
+    #[test]
+    fn raw_load_preserves_json_semantics_escapes_and_exact_numeric_tokens() {
+        let state = r#" {"revision":7,"configs":[{"name":"中文\"\\\n\u0000","price":0.123456789012345678901,"large":18446744073709551615,"exponent":1.2300e+45}],"unknown":null} "#;
+        let document = r#"{"uid":"u","outbox":[{"payload":{"text":"},\"state\":false","negative":-0.000,"array":[true,null,1]}}]}"#;
+        let result = load(&raw_load_fixture(state,Some(document))).unwrap();
+        assert_eq!(result.status,200);
+        assert_eq!(result.body,format!("{{\"state\":{state},\"cloudVersion\":42,\"document\":{document}}}"));
+        let value: Value = serde_json::from_str(&result.body).unwrap();
+        assert_eq!(value["state"],serde_json::from_str::<Value>(state).unwrap());
+        assert_eq!(value["document"],serde_json::from_str::<Value>(document).unwrap());
+        assert_eq!(value["cloudVersion"],42);
+    }
+
+    #[test]
+    fn raw_load_without_checkpoint_keeps_zero_version_and_null_document() {
+        let result = load(&raw_load_fixture(r#"{"revision":0,"configs":[]}"#,None)).unwrap();
+        let value: Value = serde_json::from_str(&result.body).unwrap();
+        assert_eq!(value,json!({"state":{"revision":0,"configs":[]},"cloudVersion":0,"document":null}));
+    }
+
+    #[test]
+    fn raw_load_rejects_damaged_json_in_either_document() {
+        for bad in ["", "{", "{} false", r#"{"text":"\x"}"#, r#"{"n":01}"#, "[1,]"] {
+            assert!(load(&raw_load_fixture(bad,Some("{}"))).is_err(),"state: {bad}");
+            assert!(load(&raw_load_fixture("{}",Some(bad))).is_err(),"checkpoint: {bad}");
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires an explicitly selected isolated SQLite snapshot; load only"]
+    fn isolated_raw_load_memory_probe() {
+        let root = PathBuf::from(std::env::var_os("DIYTOOLS_SYNC_PROBE_DIR").expect("isolated probe directory"));
+        let store = WorkbenchStore { path: root.join("workbench.sqlite"), assets: root.join("assets") };
+        let start = std::time::Instant::now();
+        let legacy = std::env::var_os("DIYTOOLS_SYNC_PROBE_LEGACY_LOAD").is_some();
+        let snapshot = if legacy {
+            let mut c = db(&store.path).unwrap();schema(&c).unwrap();let tx = c.transaction().unwrap();
+            let state = state(&tx).unwrap();let (version,document) = stored(&tx).unwrap();
+            response(200,json!({"state":state,"cloudVersion":version,"document":document}))
+        } else { load(&store).unwrap() };
+        let report = json!({"measurement":"Rust debug load only on isolated copy; no commit", "legacy":legacy,"loadMs":start.elapsed().as_secs_f64()*1000.0,"loadResponseBytes":snapshot.body.len(),"responseSha256":format!("{:x}",Sha256::digest(snapshot.body.as_bytes()))});
+        fs::write(root.join(if legacy { "legacy-load-benchmark.json" } else { "raw-load-benchmark.json" }),serde_json::to_vec_pretty(&report).unwrap()).unwrap();
+        println!("{}",report);
+    }
 
     fn fixture() -> WorkbenchStore {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

@@ -13,6 +13,72 @@ const app=await fs.readFile(new URL('../../public/workbench/app.js',import.meta.
 // Keep these existing undo/retry fixtures on the complete-workspace branch.
 const fullBranch={fullWorkspace:true,pruneDetails(){},compactWorkspace:async()=>false,setTimeout:()=>0};
 const historyCode=app.slice(app.indexOf('function historySnapshot(){'),app.indexOf('function visiblePosterInput('));
+test('全量历史压缩包含其他撤销步骤涉及的配置，往返修改不能丢撤销',()=>{
+ const state=makeState(),first=helpers.captureHistorySnapshot(state,ui());
+ state.configs[0].name='middle';const middle=helpers.captureConfigHistorySnapshot(state,ui(),['one']);state.configs[0].name='one';
+ const stacks=helpers.compactConfigHistory([[first,middle],[]],state);assert(stacks);
+ assert.equal(stacks[0][0].configs[0].name,'one');assert.equal(stacks[0][0].configs.length,1);
+ const undo1=helpers.restoreHistorySnapshot(state,stacks[0][1]);assert.equal(undo1.configs[0].name,'middle');
+ const undo2=helpers.restoreHistorySnapshot(undo1,stacks[0][0]);assert.equal(undo2.configs[0].name,'one');
+ for(const change of [s=>s.configs.reverse(),s=>s.configs.pop(),s=>s.shopSettings.intel.coupon++]){
+  const changed=structuredClone(state);change(changed);const compressed=helpers.compactConfigHistory([[first],[]],changed)[0][0];
+  assert.equal(compressed.historyScope,'workspace');assert(sameEditingState(helpers.restoreHistorySnapshot(changed,compressed),state));
+ }
+});
+test('全局排序与公共资料撤销不保留无变化配置，按需补全后可往返恢复',async()=>{
+ const state=makeState(),before=helpers.captureHistorySnapshot(state,ui());state.configs.reverse();state.shopSettings.intel.coupon=88;
+ const history=helpers.compactConfigHistory([[before],[]],state)[0];assert.equal(history[0].configs.length,0);assert.deepEqual(Object.keys(history[0].globals),['shopSettings']);
+ const {context,calls}=compactHarness(state,['one'],history);context.ensureFullWorkspace=async()=>{calls.hydrated=true;context.state=structuredClone(state);context.fullWorkspace=true;};
+ await context.undo();assert(calls.hydrated);assert.deepEqual(Array.from(context.state.configs,c=>c.id),['one','two']);assert.equal(context.state.shopSettings.intel.coupon,0);
+ assert.equal(context.redoHistory[0].configs.length,0);await context.redo();assert.deepEqual(Array.from(context.state.configs,c=>c.id),['two','one']);assert.equal(context.state.shopSettings.intel.coupon,88);
+});
+test('全局增删压缩保留缺失配置正文，撤销与重做不会丢新增或已删除项',async()=>{
+ for(const modify of [s=>s.configs.pop(),s=>s.configs.push(config('three'))]){
+  const state=makeState(),before=helpers.captureHistorySnapshot(state,ui());modify(state);
+  const entry=helpers.compactConfigHistory([[before],[]],state)[0][0],opposite=helpers.captureWorkspaceHistorySnapshot(state,ui(),entry);
+  const restored=helpers.restoreHistorySnapshot(state,entry);assert.deepEqual(restored.configs,makeState().configs);
+  assert.deepEqual(helpers.restoreHistorySnapshot(restored,opposite).configs,state.configs);
+ }
+});
+test('压缩全局撤销在局部保存后保留公共资料和未加载的变动配置，并合入远端非冲突字段',()=>{
+ const state=makeState(),before=helpers.captureHistorySnapshot(state,ui());state.configs[1].price=20;state.shopSettings.intel.coupon=30;
+ const entry=helpers.compactConfigHistory([[before],[]],state)[0][0];
+ const sent={...structuredClone(state),configs:[structuredClone(state.configs[0])]},remote=structuredClone(sent);remote.configs[0].name='其他配置修改';
+ const rebased=helpers.rebaseHistorySnapshot(entry,sent,remote);assert.equal(rebased.conflict,false);assert.equal(rebased.snapshot.configs[0].price,10);
+ const full={...state,configs:[remote.configs[0],state.configs[1]]},restored=helpers.restoreHistorySnapshot(full,rebased.snapshot);
+ assert.equal(restored.shopSettings.intel.coupon,0);assert.equal(restored.configs[0].name,'其他配置修改');assert.equal(restored.configs[1].price,10);
+ const allRemote=structuredClone(state);allRemote.configs[1].name='云端非重叠字段';
+ const refreshed=helpers.rebaseHistorySnapshot(entry,state,allRemote);assert.equal(refreshed.conflict,false);assert.equal(refreshed.snapshot.configs[0].name,'云端非重叠字段');
+ allRemote.shopSettings.intel.coupon=99;assert.equal(helpers.rebaseHistorySnapshot(entry,state,allRemote).conflict,true);
+});
+test('按需刷新后补全全局历史，保留未加载配置远端字段和远端新增项',()=>{
+ const state=makeState(),before=helpers.captureHistorySnapshot(state,ui());state.configs[1].price=20;state.shopSettings.intel.coupon=30;
+ let entry=helpers.compactConfigHistory([[before],[]],state)[0][0];
+ const partial={...structuredClone(state),configs:[structuredClone(state.configs[0])]};
+ entry=helpers.rebaseHistorySnapshot(entry,partial,partial).snapshot;
+ const remote=structuredClone(state);remote.configs[1].name='远端名称';remote.configs.push(config('remote-added'));
+ const rebased=helpers.rebaseWorkspaceHistorySnapshot(entry,remote);assert.equal(rebased.conflict,false);
+ const restored=helpers.restoreHistorySnapshot(remote,rebased.snapshot);
+ assert.equal(restored.configs[1].name,'远端名称');assert.equal(restored.configs[1].price,10);assert(restored.configs.some(c=>c.id==='remote-added'));
+ const overlapping=structuredClone(remote);overlapping.configs[1].price=99;assert.equal(helpers.rebaseWorkspaceHistorySnapshot(entry,overlapping).conflict,true);
+});
+test('混合局部与全局栈补全后连续撤销不覆盖未加载配置的远端字段',()=>{
+ const state=makeState(),local=helpers.captureConfigHistorySnapshot(state,ui(),['two']);state.configs[1].price=20;
+ const global=helpers.captureHistorySnapshot(state,ui());state.shopSettings.intel.coupon=1;
+ const stack=helpers.compactConfigHistory([[local,global],[]],state)[0],partial={...state,configs:[state.configs[0]]};
+ const refreshed=stack.map(item=>helpers.rebaseHistorySnapshot(item,partial,partial).snapshot),remote=structuredClone(state);remote.configs[1].name='云端名称';
+ const rebased=refreshed.map(item=>helpers.rebaseWorkspaceHistorySnapshot(item,remote));assert(rebased.every(item=>!item.conflict));
+ const undoGlobal=helpers.restoreHistorySnapshot(remote,rebased[1].snapshot),undoLocal=helpers.restoreHistorySnapshot(undoGlobal,rebased[0].snapshot);
+ assert.equal(undoLocal.configs[1].name,'云端名称');assert.equal(undoLocal.configs[1].price,10);assert.equal(undoLocal.shopSettings.intel.coupon,0);
+});
+test('本地全局移除配置后补全不误判远端删除，仍可先恢复再撤销局部编辑',()=>{
+ const state=makeState(),local=helpers.captureConfigHistorySnapshot(state,ui(),['two']);state.configs[1].price=20;
+ const global=helpers.captureHistorySnapshot(state,ui());state.configs.pop();
+ const stack=helpers.compactConfigHistory([[local,global],[]],state)[0];assert.deepEqual(stack[0].baseline.configs,[]);
+ const rebased=stack.map(item=>helpers.rebaseWorkspaceHistorySnapshot(item,state));assert(rebased.every(item=>!item.conflict));
+ const restored=helpers.restoreHistorySnapshot(state,rebased[1].snapshot);assert.equal(restored.configs[1].price,20);
+ assert.equal(helpers.restoreHistorySnapshot(restored,rebased[0].snapshot).configs[1].price,10);
+});
 function harness(state=makeState()){
  const calls={changed:[],bound:[],aligned:[],rendered:[]};
  const context={...fullBranch,...helpers,...ui(),state,history:[],redoHistory:[],sameEditingState,mergeEditingState,clone:structuredClone,restoringHistory:false,posterEditor:null,catalog:state.sourceCatalog,$:()=>({disabled:false}),localStorage:{setItem(){}},sourceCatalog:rows=>rows,costRows:(_,rows)=>rows,bindSources:rows=>calls.bound.push(rows.map(row=>row.id)),alignDisplaySourceNames:rows=>calls.aligned.push(rows.map(row=>row.id)),available:()=>context.state.configs.filter(config=>!config.deletedAt),changed:(message,ids)=>calls.changed.push({message,ids}),renderAll:ids=>calls.rendered.push(ids)};
@@ -20,6 +86,41 @@ function harness(state=makeState()){
  return {context,calls};
 }
 const row=(context,id)=>context.state.configs.find(config=>config.id===id);
+
+function compactHarness(fullState,loadedIds,history,active='one'){
+ const {context,calls}=harness({...structuredClone(fullState),configs:structuredClone(fullState.configs.filter(row=>loadedIds.includes(row.id)))});
+ context.fullWorkspace=false;context.history=history;context.active=active;context.selected=new Set([active]);context.acceptedState=structuredClone(context.state);
+ context.lazyWorkspace={index:()=>({summaries:fullState.configs.map(row=>({id:row.id}))})};calls.loaded=[];
+ context.loadDetail=async id=>{if(row(context,id))return;calls.loaded.push(id);const detail=fullState.configs.find(row=>row.id===id);assert.ok(detail);context.state.configs.push(structuredClone(detail));context.acceptedState.configs.push(structuredClone(detail));};
+ return {context,calls};
+}
+
+test('压缩后的全量撤销同时加载变化配置与原活动项，保持编辑页面',async()=>{
+ const state=makeState();state.configs.push(config('three'));
+ const before=helpers.captureHistorySnapshot(state,ui());state.configs[1].price=20;
+ const history=helpers.compactConfigHistory([[before],[]],state)[0];assert.deepEqual(history[0].configs.map(row=>row.id),['two']);
+ const {context,calls}=compactHarness(state,['three'],history,'three');await context.undo();
+ assert.deepEqual(calls.loaded,['two','one']);assert.equal(context.active,'one');assert.ok(row(context,context.active));assert.equal(row(context,'two').price,10);assert.equal(context.redoHistory.length,1);
+ await context.redo();assert.equal(row(context,'two').price,20);assert.equal(context.active,'three');
+});
+
+test('跳过无变化聚焦记录后继续加载下个压缩撤销项，不丢失修改',async()=>{
+ const state=makeState(),before=helpers.captureHistorySnapshot(state,ui());state.configs[1].price=20;
+ const noop=helpers.captureConfigHistorySnapshot(state,ui(),['one']);
+ const history=helpers.compactConfigHistory([[before,noop],[]],state)[0];
+ const {context,calls}=compactHarness(state,['one'],history);await context.undo();
+ assert.deepEqual(calls.loaded,['two']);assert.equal(row(context,'two').price,10);assert.equal(context.history.length,0);assert.equal(context.redoHistory.length,1);
+ await context.redo();assert.equal(row(context,'two').price,20);
+});
+
+test('压缩撤销详情加载失败保留栈及草稿，重试仍可恢复',async()=>{
+ const state=makeState(),before=helpers.captureHistorySnapshot(state,ui());state.configs[1].price=20;
+ const history=helpers.compactConfigHistory([[before],[]],state)[0],entry=history[0];
+ const {context}=compactHarness(state,['one'],history),load=context.loadDetail;
+ context.loadDetail=async id=>{if(id==='two')throw Error('网络中断');return load(id);};
+ await assert.rejects(context.undo(),/网络中断/);assert.equal(context.history.length,1);assert.equal(context.history[0],entry);assert.equal(context.redoHistory.length,0);assert.equal(context.active,'one');assert.equal(row(context,'two'),undefined);
+ context.loadDetail=load;await context.undo();assert.equal(row(context,'two').price,10);assert.equal(context.history.length,0);assert.equal(context.redoHistory.length,1);
+});
 
 test('普通编辑首次只捕获目标，重复聚焦去重；未变全局与其他配置不进入条目',()=>{
  const {context}=harness();context.scoped();assert.equal(context.history.length,1);const entry=context.history[0];

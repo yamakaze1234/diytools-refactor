@@ -38,3 +38,23 @@ test('取消传输释放会话并保留已落盘图片，未传输文件不报�
  },async()=>{const result=await saveImageFolder([{name:'a.png',bytes:new Uint8Array(8*1024*1024)},{name:'b.png',bytes:new Uint8Array(1)}],'x',{signal:controller.signal});assert.equal(result.ok,false);assert.deepEqual(result.files,['a.png']);});
  assert.equal(ends,1);
 });
+
+test('默认图片任务连接原生会话，PNG仅保留当前一张且每张写入确认后再渲染',async()=>{
+ const {startImageExportTask}=await import('../../public/workbench/image-export-tasks.js');
+ const saved=[];let generated=0,begins=0,finishes=0,task;
+ await withBridge(async payload=>{
+  if(payload.phase==='begin'){begins++;return {token:'stream',directory:'test'};}
+  if(payload.phase==='finish'){finishes++;return {ok:true,files:[...saved],directory:'test'};}
+  assert.equal(payload.files.length,1);assert.ok(task.items.filter(item=>item.bytes).length<=1);
+  for(const file of payload.files)saved.push(file.name);
+  return {ok:true,files:[...saved],directory:'test'};
+ },async()=>{
+  task=startImageExportTask({name:'stream',entries:Array.from({length:24},(_,i)=>({name:`${i}.png`,config:{id:i}})),renderImage:async()=>{
+   assert.equal(saved.length,generated);generated++;
+   assert.ok(task.items.every(item=>item.bytes===null));
+   return {canvas:{toBlob:cb=>cb(new Blob([new Uint8Array(2*1024*1024)]))}};
+  }});
+  await task.done;assert.equal(task.phase,'completed');assert.equal(generated,24);assert.equal(saved.length,25);assert.ok(task.items.every(item=>item.bytes===null));
+ });
+ assert.equal(begins,1);assert.equal(finishes,1);
+});

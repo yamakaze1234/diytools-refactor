@@ -33,3 +33,55 @@ test('原生部分写出回执保留成功项，重试不再次输出成功图�
  const outputs=[];const task=startImageExportTask({entries:entries(),name:'测试',renderImage:render,saveFolder:async files=>{outputs.push(files.map(file=>file.name));return outputs.length===1?{ok:false,directory:'test',files:['a.png'],error:'磁盘已满'}:{ok:true,directory:'test_retry',files:files.map(file=>file.name)};}});
  await task.done;assert.equal(task.items[0].state,'saved');assert.equal(task.items[1].state,'failed');assert.match(task.message,/已导出 1 张图片/);await task.retryFailed();assert.deepEqual(outputs[1],['b.png','导出清单_重试1.json']);
 });
+
+test('原生流式任务逐张落盘后才生成下一张，完成后不保留PNG和配置',async()=>{
+ const input=Array.from({length:80},(_,i)=>({name:`${i}.png`,config:{id:i}}));let renders=0,writes=0,opened=0,ended=0;const saved=[];
+ const task=startImageExportTask({entries:input,name:'stream',renderImage:async config=>{assert.equal(writes,renders);renders++;return render(config);},openFolder:async()=>{opened++;return {directory:'stream',append:async file=>{if(file.name.endsWith('.png')){writes++;assert.equal(renders,writes);}saved.push(file.name);return {ok:true,files:[...saved]};},finish:async()=>{ended++;return {ok:true,files:saved,directory:'stream'};}};}});
+ await task.done;assert.equal(task.phase,'completed');assert.equal(opened,1);assert.equal(ended,1);assert.equal(writes,80);assert.ok(task.items.every(item=>item.bytes===null&&item.config===null));
+});
+test('流式取消选目录不生成图片，继续只重新选择一次目录',async()=>{
+ let opens=0,renders=0;const saved=[];
+ const task=startImageExportTask({entries:entries(),name:'stream',renderImage:async c=>{renders++;return render(c);},openFolder:async()=>++opens===1?{cancelled:true}:{append:async f=>{saved.push(f.name);return {ok:true,files:[...saved]};},finish:async()=>({ok:true,files:saved})}});
+ await task.done;assert.equal(renders,0);assert.equal(task.phase,'cancelled');await task.resume();assert.equal(renders,2);assert.equal(opens,2);assert.equal(task.phase,'completed');
+});
+test('流式中途保存失败释放所有PNG，失败重试重新生成且跳过已落盘项',async()=>{
+ let attempts=0,ended=0;const renders=[],batches=[];
+ const task=startImageExportTask({entries:entries(),name:'stream',renderImage:async c=>{renders.push(c.id);return render(c);},openFolder:async()=>{const attempt=++attempts,saved=[];batches.push(saved);return {append:async f=>{if(attempt===1&&f.name==='b.png')return {ok:false,files:saved,error:'磁盘已满'};saved.push(f.name);return {ok:true,files:[...saved]};},finish:async()=>{ended++;return {ok:true,files:saved};}};}});
+ await task.done;assert.equal(task.phase,'partial');assert.deepEqual(task.items.map(i=>i.state),['saved','failed']);assert.ok(task.items.every(i=>i.bytes===null));await task.retryFailed();assert.deepEqual(renders,['a','b','b']);assert.deepEqual(batches[1],['b.png','导出清单_重试1.json']);assert.equal(ended,2);
+});
+test('流式保存回执之后取消保留成功项并关闭会话，继续不重复已交付图片',async()=>{
+ const controller=new AbortController();let opens=0,ends=0;const renders=[];
+ const task=startImageExportTask({entries:entries(),name:'stream',signal:controller.signal,renderImage:async c=>{renders.push(c.id);return render(c);},openFolder:async()=>{const attempt=++opens,saved=[];return {append:async f=>{saved.push(f.name);if(attempt===1)controller.abort();return {ok:true,files:[...saved]};},finish:async()=>{ends++;return {ok:true,files:saved};}};}});
+ await task.done;assert.equal(task.phase,'cancelled');assert.deepEqual(task.items.map(i=>i.state),['saved','pending']);assert.ok(task.items.every(i=>i.bytes===null));await task.resume();assert.deepEqual(renders,['a','b']);assert.equal(ends,2);assert.equal(task.phase,'completed');
+});
+test('流式结束回执能恢复append丢失的确认，未知保存不误报成功',async()=>{
+ let ends=0;
+ const task=startImageExportTask({entries:entries(),name:'stream',renderImage:render,openFolder:async()=>({append:async()=>{throw Error('连接中断');},finish:async()=>{ends++;return {ok:true,files:['a.png']};}})});
+ await task.done;assert.deepEqual(task.items.map(i=>i.state),['saved','failed']);assert.equal(task.phase,'partial');assert.equal(ends,1);assert.ok(task.items.every(i=>i.bytes===null));
+});
+
+test('流式渲染失败继续其他图片，失败项可独立重新生成',async()=>{
+ let fail=true;const outputs=[];
+ const task=startImageExportTask({entries:entries(),name:'stream',renderImage:async c=>{if(fail&&c.id==='a')throw Error('图片太高');return render(c);},openFolder:async()=>{const saved=[];outputs.push(saved);return {append:async f=>{saved.push(f.name);return {ok:true,files:[...saved]};},finish:async()=>({ok:true,files:saved})};}});
+ await task.done;assert.deepEqual(task.items.map(i=>i.state),['failed','saved']);assert.ok(task.items.every(i=>i.bytes===null));fail=false;await task.retryFailed();assert.deepEqual(outputs[1],['a.png','导出清单_重试1.json']);assert.equal(task.phase,'completed');
+});
+test('流式渲染中取消释放会话且不写出尚未生成的文件',async()=>{
+ const gate=deferred();let started;const rendering=new Promise(r=>started=r);let ends=0,saves=0;
+ const task=startImageExportTask({entries:entries(),name:'stream',renderImage:async c=>{started();await gate.promise;return render(c);},openFolder:async()=>({append:async()=>{saves++;return {ok:true,files:[]};},finish:async()=>{ends++;return {ok:true,files:[]};}})});
+ await rendering;task.cancel();gate.resolve();await task.done;assert.equal(task.phase,'cancelled');assert.equal(ends,1);assert.equal(saves,0);assert.ok(task.items.every(i=>i.bytes===null&&i.state==='pending'));
+});
+
+test('流式任务在成功编码、溢出和取消后都释放任务画布位图',async()=>{
+ for(const mode of ['saved','overflow','cancelled']){
+  const controller=new AbortController(),canvas={width:1400,height:2400,toBlob:callback=>{assert.equal(canvas.width,1400);callback(new Blob(['png']));}};const saved=[];
+  const task=startImageExportTask({entries:entries().slice(0,1),name:mode,signal:controller.signal,renderImage:async()=>{if(mode==='cancelled')controller.abort();return {canvas,overflow:mode==='overflow'};},openFolder:async()=>({append:async f=>{assert.equal(canvas.width,0);assert.equal(canvas.height,0);saved.push(f.name);return {ok:true,files:[...saved]};},finish:async()=>({ok:true,files:saved})})});
+  await task.done;assert.equal(canvas.width,0);assert.equal(canvas.height,0);assert.equal(task.items[0].bytes,null);
+ }
+});
+test('清单写入失败或回执漏报时图片仍记账，但明确提示导出未完整完成',async()=>{
+ for(const mode of ['throw','missing']){
+  const saved=[];
+  const task=startImageExportTask({entries:entries(),name:'manifest',renderImage:render,openFolder:async()=>({append:async f=>{if(f.name.endsWith('.json')){if(mode==='throw')throw Error('磁盘已满');return {ok:true,files:[...saved]};}saved.push(f.name);return {ok:true,files:[...saved]};},finish:async()=>({ok:true,files:saved})})});
+  await task.done;assert.ok(task.items.every(item=>item.state==='saved'));assert.equal(task.phase,'partial');assert.equal(task.manifestSaved,false);assert.match(task.message,/导出清单未确认保存，本次导出未完整完成/);
+ }
+});

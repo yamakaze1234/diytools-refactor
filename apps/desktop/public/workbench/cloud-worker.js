@@ -1,6 +1,7 @@
 /** 同步 Worker 入口：在独立线程运行协议引擎，通过消息让宿主执行本机 I/O。 */
 import {createCloudEngine} from './cloud-engine.js';
 import {createCloudCheckpointCache} from './cloud-checkpoint-cache.js';
+import {createCloudCacheLifecycle} from './cloud-cache-lifecycle.js';
 let sequence=0;const pending=new Map();
 /** 为发往宿主的操作分配请求关联，并等待对应结果。 */
 async function request(action,payload={}){
@@ -10,11 +11,13 @@ async function request(action,payload={}){
  if(result.status<200||result.status>=300)throw Object.assign(Error(value.error||'云同步失败'),{status:result.status});return value;
 }
 const cache=createCloudCheckpointCache(request,{patch:true});
+const cacheLifecycle=createCloudCacheLifecycle(cache.invalidate);
 const engine=createCloudEngine({load:cache.load,commit:cache.commit,call:input=>request('call',input),uploadAssets:({urls})=>request('assetsEnsure',{urls}),downloadAssets:({urls})=>request('assetsDownload',{urls}),onProgress:value=>self.postMessage({kind:'progress',value})});
 self.onmessage=async({data})=>{
  if(data.kind==='native-result'){const job=pending.get(data.id);if(!job)return;pending.delete(data.id);if(data.error)job.reject(Error(data.error));else job.resolve(data.result);return;}
- if(data.kind==='stop'){engine.stop();return;}
+ if(data.kind==='stop'){engine.stop();cacheLifecycle.stop();return;}
  if(data.kind!=='command')return;
+ cacheLifecycle.begin({resume:data.method==='run'||data.method==='verifyAssets'});
  try{
   let value;
   if(data.method==='run')value=await engine.run(data.args[0]);
@@ -32,4 +35,5 @@ self.onmessage=async({data})=>{
   else throw Error('未知同步任务');
   self.postMessage({kind:'result',id:data.id,value});
  }catch(error){self.postMessage({kind:'result',id:data.id,error:{message:error.message,status:error.status,code:error.code}});}
+ finally{cacheLifecycle.end();}
 };
