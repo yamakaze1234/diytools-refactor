@@ -108,3 +108,10 @@ test('source sync releases its retained controls and does not block cancelling a
  body.append(root);assert.equal(root.isConnected,true);assert.equal(refresh.disabled,false);
  assert.match(root.querySelector('[data-source-sync-message]').textContent,/版本发生变化/);
 });
+
+test('discarding source edits with no remaining rows leaves a closable empty editor',()=>{
+ const env=harness();env.document.querySelector('#source-name').value='未保存修改';env.rows.length=0;
+ assert.doesNotThrow(()=>env.document.querySelector('#source-discard-all').onclick());
+ assert.equal(env.document.querySelector('#source-name'),null);assert.equal(env.editor.hasPending(),false);
+ assert.equal(env.dialog.dispatch('cancel').defaultPrevented,false);
+});
