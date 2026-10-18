@@ -165,6 +165,7 @@ pub(super) fn save_patch(store: &WorkbenchStore, input: &Value) -> Result<ApiRes
         let order={let mut q=tx.prepare("SELECT id FROM workbench_configs ORDER BY position").map_err(|e|e.to_string())?;
             q.query_map([],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())?.map(|r|r.map(Value::String).map_err(|e|e.to_string())).collect::<Result<Vec<_>>>()?};
         let delta=batch_delta(before.get("revision").cloned(),before.get("updatedAt").cloned(),&mut after,changes,order,now());
+        price_changes::capture(&tx, &after, &delta, input)?;
         // 只更新变化的配置行；根元数据不再携带 configs，写放大与配置总数无关。
         for (_,id,raw,summary) in &patches {
             tx.execute("UPDATE workbench_configs SET document=?1 WHERE id=?2",params![raw,id]).map_err(|e|e.to_string())?;

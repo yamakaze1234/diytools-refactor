@@ -1,3 +1,4 @@
+import {capacityFieldsHtml,readCapacityFields,updateCapacityHints} from '../public/workbench/source-capacity-ui.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -29,7 +30,7 @@ function harness({apply,realSync=false}={}){
  document.append(dialog);dialog.append(form,body);dialog.open=true;
  const rows=[{sourceId:'s',shopId:'intel',name:'原名称',goodsId:'',specialComponent:true,tax:0,upgrade:'',addonText:'',addonNote:''}],writes=[];
  const api={shopId:()=> 'intel',getRows:()=>rows,getAllRows:()=>rows,getCosts:()=>[],getConfigs:()=>[],openDialog:(_title,html)=>{body.innerHTML=html;dialog.open=true;},async applyBatch(entries){writes.push(structuredClone(entries));await apply?.(entries,api);for(const entry of entries)Object.assign(rows.find(r=>r.sourceId===entry.row.sourceId),entry.row);return{count:entries.length,configIds:[]};}};
- const context=vm.createContext({document,window:{},AbortController,structuredClone,clone:value=>structuredClone(value),requestAnimationFrame:fn=>fn(),setTimeout:fn=>fn(),confirm:()=>true,configCostLinksHtml:()=>'',componentStockHtml:()=>'',mountSourceSync:()=>({invalidate(){},async refresh(){}}),isSpecialComponent:r=>!!r.specialComponent,normalizeSpecialComponent:r=>r,erpUnitCost:()=>({cents:0}),sourceAddon:r=>({text:r.addonText||'',note:r.addonNote||''}),sourceAddonFields:a=>({addonText:a.text,addonNote:a.note}),excludedComponent:()=>false,shops:[{id:'intel'}]});
+ const context=vm.createContext({capacityFieldsHtml,readCapacityFields,updateCapacityHints,document,window:{},AbortController,structuredClone,clone:value=>structuredClone(value),requestAnimationFrame:fn=>fn(),setTimeout:fn=>fn(),confirm:()=>true,configCostLinksHtml:()=>'',componentStockHtml:()=>'',mountSourceSync:()=>({invalidate(){},async refresh(){}}),isSpecialComponent:r=>!!r.specialComponent,normalizeSpecialComponent:r=>r,erpUnitCost:()=>({cents:0}),sourceAddon:r=>({text:r.addonText||'',note:r.addonNote||''}),sourceAddonFields:a=>({addonText:a.text,addonNote:a.note}),excludedComponent:()=>false,shops:[{id:'intel'}]});
  if(realSync){
   context.queueMicrotask=()=>{};context.sourceFollowPlan=()=>({changes:[]});api.flush=async()=>{};
   const syncSource=readFileSync(new URL('../public/workbench/source-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export function mountSourceSync','function mountSourceSync');
@@ -94,7 +95,7 @@ test('source sync releases its retained controls and does not block cancelling a
  const document=new Element('document'),dialog=new Element('dialog'),body=new Element(),root=new Element();document.append(dialog);dialog.append(body);body.append(root);
  const before={id:'c',productId:'link'},detail={key:'c:name',field:'name',before:'旧名',after:'新名'};
  let rejectApply;const applied=new Promise((_resolve,reject)=>{rejectApply=reject;});
- const context=vm.createContext({structuredClone,queueMicrotask(){},sourceFollowPlan:(_configs,_rows,_fields,_shop,options)=>({changes:options&&!options.keys.length?[]:[{id:'c',before,product:'链接',name:'配置',details:[detail]}],sources:[],fields:['name'],shopId:'intel'})});
+ const context=vm.createContext({capacityFieldsHtml,readCapacityFields,updateCapacityHints,structuredClone,queueMicrotask(){},sourceFollowPlan:(_configs,_rows,_fields,_shop,options)=>({changes:options&&!options.keys.length?[]:[{id:'c',before,product:'链接',name:'配置',details:[detail]}],sources:[],fields:['name'],shopId:'intel'})});
  const syncSource=readFileSync(new URL('../public/workbench/source-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export function mountSourceSync','function mountSourceSync');
  vm.runInContext(syncSource,context);
  const panel=context.mountSourceSync(root,{message(){},isEdited:()=>false,flush:async()=>{},getRows:()=>[],getConfigs:()=>[before],shopId:()=> 'intel',apply:()=>applied});

@@ -23,6 +23,8 @@ mod sql_sync;
 mod legacy_history;
 #[path = "workbench_store/profit.rs"]
 mod profit;
+#[path = "workbench_store/price_changes.rs"]
+mod price_changes;
 #[path = "workbench_store/cloud_state.rs"]
 mod cloud_state;
 #[path = "workbench_store/legacy_migration.rs"]
@@ -494,6 +496,7 @@ fn persist_prepared(
     changes: Value,
     input: &Value,
 ) -> Result<Vec<Value>> {
+    price_changes::capture(tx, after, &changes, input)?;
     profile_start!(history_timer);
     let mut activity = Vec::new();
     for change in changes["configs"].as_array().unwrap() {
@@ -1217,6 +1220,9 @@ pub fn request(
     };
     profile_finish!(parse_timer, "request_json_parse");
     let endpoint = path.split('?').next().unwrap_or(path);
+    if method == "POST" && endpoint.starts_with("/api/price-changes/") {
+        return price_changes::request(store, endpoint.trim_start_matches("/api/price-changes/"), &input).or_else(|error| Ok(failure(400, &error)));
+    }
     if endpoint.starts_with("/api/legacy-history/") {
         return legacy_history::request(store, method, endpoint, &input)
             .or_else(|error| Ok(failure(400, &error)));
@@ -1515,6 +1521,34 @@ pub async fn workbench_export_folder(payload: Value) -> Result<Value> {
     })
         .await
         .map_err(|e| e.to_string())?
+}
+
+#[cfg(feature = "review-host")]
+// 无窗口验收复用实际文件API；碰撞文件制造真实拒绝覆盖错误，不能用于正式目录。
+pub fn review_export_files(payload: &Value, directory: &Path, fail_at: Option<usize>) -> Result<Value> {
+    let sandbox = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../sandbox").canonicalize().map_err(|e|e.to_string())?;
+    let parent = directory.parent().ok_or("缺少验收目录")?.canonicalize().map_err(|e|e.to_string())?;
+    if !parent.starts_with(&sandbox) || parent == sandbox { return Err("仅允许隔离验收目录".into()); }
+    fs::create_dir_all(directory).map_err(|e|e.to_string())?;
+    if !directory.canonicalize().map_err(|e|e.to_string())?.starts_with(&parent) { return Err("验收导出目录不能指向隔离目录外".into()); }
+    if fail_at.is_none() { return export_files(payload, directory); }
+    let rows = payload["files"].as_array().ok_or("缺少文件")?;
+    let mut files = Vec::new();
+    for row in rows {
+        let name = row["name"].as_str().ok_or("缺少名称")?;
+        let segments = name.split('/').collect::<Vec<_>>();
+        if segments.len()>2 || !segments.iter().all(|s|export_segment_valid(s)) { return Err("无效验收文件名".into()); }
+        files.push((name.to_string(), decode_limited(row["base64"].as_str().ok_or("缺少编码")?,MAX_GENERATED_IMAGE_BYTES)?));
+    }
+    let suggested = payload["name"].as_str().ok_or("缺少目录名")?;
+    if !export_segment_valid(suggested) { return Err("无效验收目录名".into()); }
+    let folder = create_export_folder(directory,suggested)?;
+    let mut index=0;
+    write_export_files(&folder,&files,|path,bytes| {
+        let current=index;index+=1;
+        if Some(current)==fail_at { write_new(path,b"isolated-existing-file")?; }
+        write_new(path,bytes)
+    })
 }
 
 #[cfg(test)]

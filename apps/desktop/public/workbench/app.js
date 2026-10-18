@@ -49,6 +49,7 @@ import {openLinkParts} from './link-parts.js';
 import {validateBatchSources,ordinarySaveChanges} from './batch-save.js';
 import {openInventoryCheck} from './inventory-check-ui.js';
 import {openProfitCheck} from './profit-check-ui.js';
+import {openPriceChanges} from './price-changes-ui.js';
 import {validateStockReplacement} from './inventory-check-data.js';
 import {isSpecialComponent} from './special-components.js';
 import {copyPartPayload,pastePartPayload,overviewProfits} from "./part-transfer.js";
@@ -585,7 +586,7 @@ function renderEditor(){/* 销毁上一页搜索订阅后才替换节点，避�
  }
 }
 // 复用业务对话框容器，替换内容后由调用方绑定本次操作。
-function openDialog(title,html){$('#dialog').classList.remove('template-editor-dialog','global-batch-dialog','profit-check-dialog','template-dialog','link-parts-dialog','source-dialog','cost-dialog','overview-dialog','inventory-dialog','case-gallery-dialog','stock-check-dialog');$('#dialog-title').textContent=title;$('#dialog-body').querySelectorAll('.product-search').forEach(destroyProductSearch);reactWorkbench.release($('#dialog-body'));$('#dialog-body').innerHTML=html;if(title==='配置总览')$('#dialog').classList.add('overview-dialog');$('#dialog').scrollTop=0;$('#dialog-body').scrollTop=0;if(!$('#dialog').open)$('#dialog').showModal();}
+function openDialog(title,html){$('#dialog').classList.remove('price-changes-dialog','template-editor-dialog','global-batch-dialog','profit-check-dialog','template-dialog','link-parts-dialog','source-dialog','cost-dialog','overview-dialog','inventory-dialog','case-gallery-dialog','stock-check-dialog');$('#dialog-title').textContent=title;$('#dialog-body').querySelectorAll('.product-search').forEach(destroyProductSearch);reactWorkbench.release($('#dialog-body'));$('#dialog-body').innerHTML=html;if(title==='配置总览')$('#dialog').classList.add('overview-dialog');$('#dialog').scrollTop=0;$('#dialog-body').scrollTop=0;if(!$('#dialog').open)$('#dialog').showModal();}
 // 关闭当前业务弹窗，保留工作台和草稿状态。
 function closeDialog(){$('#dialog').close();}
 // 格式化配件库存展示，区分未知库存与真实零库存。
@@ -714,6 +715,24 @@ async function batchExportFull(){
  }catch(e){toast(e.message);}finally{exportJobs--;scheduleImageSave();}
 }
 // 使用完整配置和本机成本数据执行利润检查。
+async function showPriceChanges(options={}){
+ await ensureFullWorkspace();
+ return openPriceChanges({openDialog,request,toast,download:downloadBlob,configs:()=>acceptedState.configs,shopName:id=>shopById(id).name,locate:async id=>{
+  const target=state.configs.find(c=>c.id===id&&!c.deletedAt);if(!target)return toast('配置已删除');
+  closeDialog();await save();activeShopId=target.shopId;localStorage.setItem('diy-active-shop',activeShopId);$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;await activate(id);renderAll();$('#locate-editing')?.click();switchTab('costs');
+ }},options);
+}
+// 回执落盘后检查一次新批次；编辑或其他弹窗未结束时延后，重启仍可找回未读批次。
+let priceCheckedRevision=null,pricePendingRevision=null,priceChecking=false;
+async function checkPriceChanges(){
+ if(!window.workbenchReady||priceChecking||window.workbenchHasPendingChanges()||conflict)return;
+ priceChecking=true;
+ try{
+  if(priceCheckedRevision!==state.revision){const revision=state.revision;const result=await request('/api/price-changes/list',{method:'POST',body:'{}'});priceCheckedRevision=revision;pricePendingRevision=result.batches.find(b=>!b.seen)?.revision||null;}
+  if(pricePendingRevision&&!window.workbenchHasPendingChanges()&&!conflict&&!$('#dialog').open&&!document.activeElement?.matches('input,textarea,select')){const revision=pricePendingRevision;pricePendingRevision=null;await showPriceChanges({revision,automatic:true});}
+ }catch(error){console.warn('价格变化记录读取失败',error.message);}finally{priceChecking=false;}
+}
+setInterval(()=>checkPriceChanges(),2500);
 function openProfitFull(){openProfitCheck({openDialog,request,save,shopId:()=>activeShopId,configs:ordinaryAvailable,selected:chosen,esc,toast,locate:id=>{const target=ordinaryAvailable().find(c=>c.id===id);if(!target)return toast('配置已删除或不在当前店铺');closeDialog();$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;activate(id);$('#locate-editing')?.click();switchTab('costs');}});}
 // 检查配置配件库存并为可用替换方案提供入口。
 function openStockCheckFull(){openInventoryCheck({openDialog,esc,getConfigs:()=>state.configs.filter(config=>!isLegacyTemplateConfig(config)),getCosts:()=>state.costSource,getCatalog:currentCatalog,shop:currentShop(),save,download:downloadBlob,locate:id=>{const target=available().find(c=>c.id===id);if(!target)return toast('配置已变化，请重新检查');closeDialog();$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;activate(id);$('#locate-editing')?.click();switchTab('parts');},apply:async plan=>{validateStockReplacement(plan,state.configs,state.costSource,currentCatalog());checkpoint();const ids=applyReplacement(plan,state.configs);changed(`库存检查替换配件及绑定加购：${ids.length} 套配置`,ids);renderAll();await save();}});}
@@ -801,7 +820,7 @@ function bind(){
  $('#duplicate').onclick=fullAction(()=>{const capacityError=configCapacityMessage(state.configs,activeShopId,1);if(capacityError)return toast(capacityError);checkpoint();const c=clone(current());c.id=crypto.randomUUID();c.name+=' · 副本';c.skuId='';state.configs=insertConfigAfter(state.configs,active,c);active=c.id;selected.add(c.id);changed('复制配置');renderAll();});
  $('#delete-current').onclick=()=>removeConfigurations([active]);$('#delete-selected').onclick=()=>removeConfigurations([...selected]);$('#deleted-configs').onclick=openDeletedConfigs;$('#empty-create').onclick=()=>openProduct();
  $('#new-product').onclick=()=>openProduct();$('#copy-shop').onclick=openCopyToShop;
-$('#name-generate').onclick=()=>{checkpointConfig();current().shortNameAuto=true;current().nameFormat=$('#name-format').value;syncPosterShortName(current());changed('生成简称');renderAll();};$('#ids').onclick=openIds;$('#link-parts').onclick=openLinkPartsDialog;$('#batch-style').onclick=openBatchStyle;$('#global-batch-open').onclick=openGlobalParts;$('#link-upgrades').onclick=()=>openUpgradeDescriptions(true);$('#link-display-names').onclick=()=>openUpgradeDescriptions(true,'displayName');$('#inventory-check-open').onclick=openStockCheck;$('#profit-check-open').onclick=openProfit;$('#inventory-export-open').onclick=fullAction(()=>openInventoryExport({openDialog,esc,getConfigs:()=>state.configs.filter(config=>!isLegacyTemplateConfig(config)),shop:currentShop(),download:downloadBlob,toast}));
+$('#name-generate').onclick=()=>{checkpointConfig();current().shortNameAuto=true;current().nameFormat=$('#name-format').value;syncPosterShortName(current());changed('生成简称');renderAll();};$('#ids').onclick=openIds;$('#link-parts').onclick=openLinkPartsDialog;$('#batch-style').onclick=openBatchStyle;$('#global-batch-open').onclick=openGlobalParts;$('#link-upgrades').onclick=()=>openUpgradeDescriptions(true);$('#link-display-names').onclick=()=>openUpgradeDescriptions(true,'displayName');$('#inventory-check-open').onclick=openStockCheck;$('#profit-check-open').onclick=openProfit;$('#price-changes-open').onclick=()=>showPriceChanges();$('#inventory-export-open').onclick=fullAction(()=>openInventoryExport({openDialog,esc,getConfigs:()=>state.configs.filter(config=>!isLegacyTemplateConfig(config)),shop:currentShop(),download:downloadBlob,toast}));
  $('#poster-auto-width').onchange=()=>{checkpointConfig();const c=current();c.autoWidth=$('#poster-auto-width').checked;delete c.freeCanvasLayouts?.[c.layout];delete c.textTransforms?.[c.layout];delete c.moduleTransforms?.[c.layout];posterEditor?.clear();changed('按型号适配图片宽度');};
  $('#sku-mode').onchange=()=>setPosterView({layout:current().layout,skuMode:$('#sku-mode').value});
  $('#layout').onchange=()=>setPosterView({layout:$('#layout').value,skuMode:current().skuMode||'dedicated'});$$('[data-theme]').forEach(b=>b.onclick=fullAction(()=>{checkpoint();const legacy=isLegacyTemplateConfig(current());if(!legacy)currentSettings().posterTheme=b.dataset.theme;const ids=applyPosterTheme(legacy?[current()]:ordinaryAvailable(),b.dataset.theme);changed(legacy?'修改主机模板图片主题':'统一本店图片主题',ids,'asset');$$('[data-theme]').forEach(x=>x.classList.toggle('active',x===b));if(tab==='modules')renderEditor();toast((legacy?'当前主机模板':'本店日常配置')+'已统一为'+(b.dataset.theme==='dark'?'深色':'浅色')); }));$('#export-width').onchange=()=>toast('导出宽度已调整，预览使用默认尺寸，导出使用所选宽度');

@@ -1,3 +1,4 @@
+import {copyCapacity} from './component-capacity.js';
 /** 输出源与配置配件绑定：统一替换、名称对齐、差异计算和来源删除规则。 */
 import {allConfigParts} from './actual-parts.js';
 import {isSpecialComponent,normalizeSpecialComponent} from './special-components.js';
@@ -14,11 +15,11 @@ export function bindSources(configs,catalog,index=createSourceIndex(catalog)){
  for(const c of configs)for(const p of allConfigParts(c)){
   const shopId=c.shopId||'intel';
   // 已有 sourceId 在本店存在时不重绑；重名或重复 goodsId 无法唯一消歧时保持未绑定。
-  if(p.sourceId&&index.bySourceId(shopId,p.sourceId).length)continue;
+  if(p.sourceId&&index.bySourceId(shopId,p.sourceId).length){const row=index.bySourceId(shopId,p.sourceId).at(-1);if(row.goodsId===p.goodsId)copyCapacity(row,p);continue;}
   const ids=index.byGoodsId(shopId,p.goodsId);
   const exact=ids.filter(r=>r.name===p.name||r.originalName===p.name);
   const row=exact.length===1?exact[0]:ids.length===1?ids[0]:null;
-  if(row)p.sourceId=row.sourceId;
+  if(row){p.sourceId=row.sourceId;copyCapacity(row,p);}
  }
 }
 /** 利用同一来源索引对齐展示名称，保留各配置的业务绑定。 */
@@ -30,7 +31,7 @@ export function alignDisplaySourceNames(configs,catalog,index=createSourceIndex(
   part.name=source.name;
  }
 }
-export function sourcePart(row){row=normalizeSpecialComponent(row);if(excludedComponent(row))throw Error('带 * 或 *! 标记的配件不可选用');if(row.deletedAt)throw Error('该输出源已删除，请先恢复');const {sourceId,goodsId,name,erp,tax}=row;return{sourceId,goodsId,name,erp,tax,taxOverride:null,upgrade:'',sourceFollow:{sourceId,name:{mode:'follow',value:name,sourceValue:name},upgrade:{mode:'follow',value:'',sourceValue:sourceUpgradeDescription(row)}},specialComponent:isSpecialComponent(row),stockAvailable:row.stockAvailable??null,stockUpdatedAt:row.stockUpdatedAt??null,stockSource:row.stockSource??null,erpUpdatedAt:row.erpUpdatedAt??null,erpMissing:row.erpMissing??false,erpUnknown:row.erpUnknown??(erp==null),erpName:row.erpName||row.originalName||name};}
+export function sourcePart(row){row=normalizeSpecialComponent(row);if(excludedComponent(row))throw Error('带 * 或 *! 标记的配件不可选用');if(row.deletedAt)throw Error('该输出源已删除，请先恢复');const {sourceId,goodsId,name,erp,tax}=row;return{sourceId,goodsId,name,erp,tax,capacityOverrides:row.capacityOverrides?clone(row.capacityOverrides):undefined,taxOverride:null,upgrade:'',sourceFollow:{sourceId,name:{mode:'follow',value:name,sourceValue:name},upgrade:{mode:'follow',value:'',sourceValue:sourceUpgradeDescription(row)}},specialComponent:isSpecialComponent(row),stockAvailable:row.stockAvailable??null,stockUpdatedAt:row.stockUpdatedAt??null,stockSource:row.stockSource??null,erpUpdatedAt:row.erpUpdatedAt??null,erpMissing:row.erpMissing??false,erpUnknown:row.erpUnknown??(erp==null),erpName:row.erpName||row.originalName||name};}
 export function sourceUpgradeDescription(row,previous=[]){
  const text=selectedSourceAddons(row,previous).map(a=>a.text?.trim()).filter(Boolean).join('');
  // 明确清空或关闭展示也是有效设置，不能再取回旧 upgrade 文案。

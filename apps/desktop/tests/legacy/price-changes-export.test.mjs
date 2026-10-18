@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {priceReportSheets,priceReportWorkbook} from '../../public/workbench/price-changes-export.js';
+const c={id:'c',shopId:'s',productId:'1234567890123456789',product:'=SUM(1,2)',name:'配置',price:1000,installment:0,parts:[{name:'内存',goodsId:'1',qty:1,tax:100,erp:90}]};
+const batch={revision:2,at:'2026-10-18T01:00:00Z',handled:[],items:[{goodsId:'1234567890123456789',name:'内存 & <32G>',slots:['内存'],before:{tax:10000,erp:null},after:{tax:12000,erp:11000},configIds:['c']}],configs:[{before:c,after:{...c,parts:[{...c.parts[0],tax:120,erp:110}]}}]};
+test('报表金额和利润保留数值，编码保留文本，缺失不当零价',()=>{const sheets=priceReportSheets(batch,{configs:[c]});const part=sheets[1].rows[1],link=sheets[2].rows[1];assert.equal(part[0],'1234567890123456789');assert.equal(part[3],100);assert.equal(part[6],20);assert.equal(part[8],'待补齐');assert.equal(part[11],'不可比较');assert.equal(link[10],-20);assert.equal(link[16],890);assert.equal(link[18],'待处理');});
+test('每日缺基线拒绝导出，空变动仍有表头，文本不执行公式',async()=>{assert.throws(()=>priceReportSheets({...batch,daily:true,baselineKnown:false}),/基线/);const sheets=priceReportSheets({...batch,daily:true,baselineKnown:true,day:'2026-10-18'});const bytes=new Uint8Array(await priceReportWorkbook(sheets).arrayBuffer());const text=new TextDecoder().decode(bytes);assert.match(text,/t="inlineStr"><is><t xml:space="preserve">=SUM\(1,2\)/);assert.match(text,/内存 &amp; &lt;32G&gt;/);assert.doesNotMatch(text,/<f>/);assert.equal(priceReportSheets({...batch,items:[],configs:[]})[1].rows.length,1);});

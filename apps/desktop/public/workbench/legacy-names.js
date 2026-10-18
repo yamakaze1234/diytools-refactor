@@ -1,3 +1,4 @@
+import {partCapacity,capacityText} from './component-capacity.js';
 /** 配置命名兼容规则：解析旧编号、压缩 CPU/GPU 和容量名称，提供批量命名建议。 */
 // Naming functions extracted read-only from user supplied V5.0 HTML.
     /** 从旧配置名称识别顺序编号，供命名和排序复用。 */
@@ -122,7 +123,7 @@
 
     function compactPartCapacity(pkg, type) {
       const part = (pkg.parts || {})[type] || {};
-      return shortCapacityText(part.displayWithQty || part.display, part.qty);
+      return part.capacityGb!=null?capacityText(part.capacityGb,part.qty):shortCapacityText(part.displayWithQty || part.display, part.qty);
     }
 
 
@@ -167,4 +168,4 @@
 
 
 /** 按选定命名格式返回建议名称，不直接覆盖手工名称。 */
-export function suggestedName(c,format="compact") { const parts=Object.fromEntries(c.parts.map(p=>[p.slot,{id:p.goodsId||"0",display:p.name,qty:p.qty}])); const g=parts.显卡?.id!=="0" ? gpuInfo(parts.显卡?.display||"") : {model:"无卡",vram:"无"}; const pkg={name:c.name,version:c.version,parts,cpuShort:shortCpu(parts.CPU?.display||""),gpu:g.model,vram:g.vram,erpConfigNameRaw:""}; return format==="compact"?compactErpConfigName(pkg):normalizedErpConfigName(pkg); }
+export function suggestedName(c,format="compact") { const parts=Object.fromEntries(c.parts.map(p=>[p.slot,{id:p.goodsId||"0",display:p.name,qty:p.qty,capacityGb:partCapacity(p,p.slot==='内存'?'memoryGb':p.slot==='硬盘'?'storageGb':'vramGb')}])); const g=parts.显卡?.id!=="0" ? gpuInfo(parts.显卡?.display||"") : {model:"无卡",vram:"无"}; if(/5060\s*TI/i.test(g.model))g.vram=parts.显卡?.capacityGb===16?'16GB':''; const pkg={name:c.name,version:c.version,parts,cpuShort:shortCpu(parts.CPU?.display||""),gpu:g.model,vram:g.vram,erpConfigNameRaw:""}; return format==="compact"?compactErpConfigName(pkg):normalizedErpConfigName(pkg); }
