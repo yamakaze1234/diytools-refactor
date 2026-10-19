@@ -79,15 +79,19 @@ export function createStartupLoginController({ desktop, invoke, onState, buildMi
       emit({ session: emptySession(), localOnly: true, firstUse: false, phase: 'ready', message: '' });
       return;
     }
-    const session = sessionOf(result, true);
+    let session = sessionOf(result, true);
+    if (!session.authenticated && (result.session as { remembered?: boolean } | undefined)?.remembered === true) {
+      emit({ message: '正在恢复保留的登录信息…' });
+      session = sessionOf(await requestStartupCloud(invoke, 'resume'));
+    }
     emit({ session, localOnly: false, phase: session.authenticated ? 'preparing' : 'signed-out', message: '' });
     if (session.authenticated) await prepare();
   }); }
-  function login(username: string, password: string) { return perform(async () => {
+  function login(username: string, password: string, remember = true) { return perform(async () => {
     if (!username.trim() || !password) throw Error('请输入账号和密码。');
     emit({ message: '正在登录…' });
     let result: Record<string, unknown>;
-    try { result = await requestStartupCloud(invoke, 'login', { username: username.trim(), password }); }
+    try { result = await requestStartupCloud(invoke, 'login', { username: username.trim(), password, remember }); }
     finally { password = ''; }
     const session = sessionOf(result);
     if (!session.authenticated) throw Error('登录未完成，请检查账号和密码后重试。');

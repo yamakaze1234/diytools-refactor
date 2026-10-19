@@ -34,17 +34,17 @@ test('SQL读取关闭后继续、重新打开保留分页与预览，版本变�
 });
 
 test('SQL已应用后关闭弹窗允许按需回载，页面回载完成才允许开始下一次编辑',async()=>{
- const savedDocument=globalThis.document,savedFetch=globalThis.fetch,h=harness();let resolveReceive,received=false,toasts=0;
+ const savedDocument=globalThis.document,savedFetch=globalThis.fetch,h=harness();let resolveReceive,received=false,toasts=0,notified=0;
  globalThis.document=h.document;
  globalThis.fetch=async url=>({ok:true,json:async()=>url.endsWith('/credentials')?{saved:false}:url.endsWith('/preview')?plan:{}});
  try{
-  const api=bindSqlSync({openDialog:h.openDialog,flush:async()=>{},context:()=>1,hasPending:()=>false,operator:()=>'',receive:()=>new Promise(resolve=>{assert.equal(h.dialog.open,false,'按需工作区不能在弹窗打开时刷新');received=true;resolveReceive=resolve;}),toast:()=>{toasts++;}});
+  const api=bindSqlSync({openDialog:h.openDialog,flush:async()=>{},context:()=>1,hasPending:()=>false,operator:()=>'',receive:()=>new Promise(resolve=>{assert.equal(h.dialog.open,false,'按需工作区不能在弹窗打开时刷新');received=true;resolveReceive=resolve;}),afterApply:()=>{assert.equal(h.document.body.inert,false,'价格提示不能阻塞ERP回载的输入解锁');notified++;},toast:()=>{toasts++;}});
   api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});
   const applying=h.get('#sql-apply').onclick();await tick();assert.equal(received,true);
   assert.equal(h.dialog.open,false);
   assert.equal(h.document.body.inert,true,'SQL持久化完成但页面尚未接收，不能提前释放编辑界面');
   assert.equal(toasts,0);resolveReceive(true);await applying;
-  assert.equal(h.dialog.open,false);assert.equal(h.document.body.inert,false);assert.equal(toasts,1);
+  assert.equal(h.dialog.open,false);assert.equal(h.document.body.inert,false);assert.equal(toasts,1);assert.equal(notified,1);
  }finally{globalThis.document=savedDocument;globalThis.fetch=savedFetch;}
 });
 

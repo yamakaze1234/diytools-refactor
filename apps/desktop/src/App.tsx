@@ -58,7 +58,7 @@ export default function App() {
     setNotice(""); setDirty(false); setPage(next);
   }
   if (login.phase !== 'ready') return <StartupLogin desktop={desktop} state={login}
-    onLogin={(username, password) => loginController.current?.login(username, password) ?? Promise.resolve()}
+    onLogin={(username, password, remember) => loginController.current?.login(username, password, remember) ?? Promise.resolve()}
     onRetry={() => loginController.current?.retry() ?? Promise.resolve()}
     onChooseData={source => loginController.current?.chooseData(source) ?? Promise.resolve()}
     onLogout={() => loginController.current?.logout() ?? Promise.resolve()} />;

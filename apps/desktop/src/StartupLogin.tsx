@@ -8,18 +8,19 @@ import './StartupLogin.css';
 /** 按控制器状态禁用重复操作，提交凭据后由控制器负责后续准备。 */
 export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogout, onChooseData }: {
   desktop: boolean; state: StartupLoginState;
-  onLogin: (username: string, password: string) => Promise<void>;
+  onLogin: (username: string, password: string, remember: boolean) => Promise<void>;
   onRetry: () => Promise<void>; onLogout: () => Promise<void>;
   onChooseData: (source: 'cloud' | 'legacy') => Promise<void>;
 }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [remember, setRemember] = useState(true);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (state.busy) return;
     let secret = password;
     setPassword('');
-    const request = onLogin(username, secret);
+    const request = onLogin(username, secret, remember);
     secret = '';
     await request;
   }
@@ -48,6 +49,7 @@ export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogou
           <input id="startup-username" name="username" autoComplete="username" autoFocus value={username} onChange={event => setUsername(event.target.value)} disabled={state.busy} required />
           <label htmlFor="startup-password">密码</label>
           <input id="startup-password" name="password" type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} disabled={state.busy} required />
+          <label className="startup-login-remember"><input id="startup-remember" type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} disabled={state.busy} />保留登录信息</label>
           {state.error && <p className="startup-login-error" role="alert">{state.error}</p>}
           {state.busy && <p className="startup-login-progress" role="status">{state.message}</p>}
           <button type="submit" className="startup-login-submit" disabled={state.busy}>{state.busy ? '请稍候…' : '登录'}</button>

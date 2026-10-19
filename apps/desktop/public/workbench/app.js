@@ -748,9 +748,10 @@ async function batchExportFull(){
 // 使用完整配置和本机成本数据执行利润检查。
 async function showPriceChanges(options={}){
  if(!options.automatic)priceNotifications.length=0;
- if(options.automatic&&pricePopupBlocked())return false;
+ const blocked=()=>pricePopupBlocked()||options.isCurrent?.()===false;
+ if(options.automatic&&blocked())return false;
  await ensureFullWorkspace();
- if(options.automatic&&pricePopupBlocked())return false;
+ if(options.automatic&&blocked())return false;
  return openPriceChanges({openDialog,request,toast,download:downloadBlob,configs:()=>acceptedState.configs,shopName:id=>shopById(id).name,locate:async id=>{
   const target=state.configs.find(c=>c.id===id&&!c.deletedAt);if(!target)return toast('配置已删除');
   closeDialog();await save();activeShopId=target.shopId;localStorage.setItem('diy-active-shop',activeShopId);$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;await activate(id);renderAll();$('#locate-editing')?.click();switchTab('costs');
@@ -758,6 +759,8 @@ async function showPriceChanges(options={}){
 }
 // 仅本次本机同步成功回执可排队；启动、普通保存和历史未读批次不会自动弹窗。
 const priceNotifications=[],priceNotificationKeys=new Set();let priceChecking=false;
+let priceInteraction=0;
+for(const event of ['pointerdown','keydown'])document.addEventListener(event,()=>priceInteraction++,true);
 function queuePriceChanges({source,after,revision}){
  if(!['erp','cost-source'].includes(source)||!Number.isSafeInteger(after)||!Number.isSafeInteger(revision)||revision<=after)return;
  const key=`${source}:${after}:${revision}`;if(priceNotificationKeys.has(key))return;
@@ -766,21 +769,22 @@ function queuePriceChanges({source,after,revision}){
 }
 function pricePopupBlocked(){return !window.workbenchReady||window.workbenchHasPendingChanges()||conflict||!!workspaceLoad||fullActionBusy>0||$('#dialog').open||document.activeElement?.matches('input,textarea,select');}
 async function checkPriceChanges(){
- if(priceChecking||!priceNotifications.length||pricePopupBlocked())return;
+ if(!priceNotifications.length)return;
+ // 只在导入完成时尝试一次；忙碌时保留手动入口，不在后续点击或失焦时补弹。
+ const pending=priceNotifications.shift(),interaction=priceInteraction;
+ if(priceChecking||pricePopupBlocked()){toast('价格已更新，可在“工具与资料 → 检查价格变化”查看明细');return;}
  priceChecking=true;
  try{
-  const pending=priceNotifications[0];
-  if(pending.batchRevision===undefined){
-   const result=await request('/api/price-changes/list',{method:'POST',body:'{}'});
-   pending.batchRevision=result.batches.find(b=>!b.seen&&b.revision>pending.after&&b.revision<=pending.revision)?.revision||null;
-  }
-  if(priceNotifications[0]!==pending)return;
-  if(!pending.batchRevision){priceNotifications.shift();return;}
-  if(pricePopupBlocked())return;
-  if(await showPriceChanges({revision:pending.batchRevision,automatic:true})!==false)priceNotifications.shift();
+  const result=await request('/api/price-changes/list',{method:'POST',body:'{}'});
+  const batch=result.batches.find(b=>!b.seen&&b.revision>pending.after&&b.revision<=pending.revision);
+  if(!batch||priceInteraction!==interaction||pricePopupBlocked())return;
+  await showPriceChanges({revision:batch.revision,automatic:true,isCurrent:()=>priceInteraction===interaction});
  }catch(error){console.warn('价格变化记录读取失败',error.message);}finally{priceChecking=false;}
 }
-setInterval(()=>checkPriceChanges(),2500);
+async function receiveErpForPrices(result){
+ try{const accepted=await receiveErp(result);if(accepted===false)priceNotifications.length=0;return accepted;}
+ catch(error){priceNotifications.length=0;throw error;}
+}
 function openProfitFull(){openProfitCheck({openDialog,request,save,shopId:()=>activeShopId,configs:ordinaryAvailable,selected:chosen,esc,toast,locate:id=>{const target=ordinaryAvailable().find(c=>c.id===id);if(!target)return toast('配置已删除或不在当前店铺');closeDialog();$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;activate(id);$('#locate-editing')?.click();switchTab('costs');}});}
 // 检查配置配件库存并为可用替换方案提供入口。
 function openStockCheckFull(){openInventoryCheck({openDialog,esc,getConfigs:()=>state.configs.filter(config=>!isLegacyTemplateConfig(config)),getCosts:()=>state.costSource,getCatalog:currentCatalog,shop:currentShop(),save,download:downloadBlob,locate:id=>{const target=available().find(c=>c.id===id);if(!target)return toast('配置已变化，请重新检查');closeDialog();$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;activate(id);$('#locate-editing')?.click();switchTab('parts');},apply:async plan=>{validateStockReplacement(plan,state.configs,state.costSource,currentCatalog());checkpoint();const ids=applyReplacement(plan,state.configs);changed(`库存检查替换配件及绑定加购：${ids.length} 套配置`,ids);renderAll();await save();}});}
@@ -807,7 +811,7 @@ function openLinkPartsDialogFull(){
 // 跨链接批量更换配件，共用预览、事务应用和冲突保护。
 function openGlobalPartsFull(){openGlobalBatch({openUpgrades:()=>openUpgradeDescriptions(),openDialog,esc,toast,getConfigs:ordinaryAvailable,getCatalog:currentCatalog,save,download:downloadBlob,apply:async plan=>applyBatchChanges(plan,`${plan.undo?'还原跨链接批量配件':'跨链接批量更换配件'}：${plan.changes.length} 套配置`)});}
 // 维护三店共用核算价，确认后重算相关数据并保存。
-function openCostsFull(){openCostEditor({openDialog,getRows:()=>selectableComponents(state.costSource),lastErp:()=>state.erpSync?.updatedAt,apply:async entries=>{await save();const beforeRevision=acceptedState.revision;checkpoint();const ids=applyManualCosts(state,entries);catalog=sourceCatalog(state.sourceCatalog);changed(`人工更新 ${entries.length} 条三店共用核算价`,[]);renderAll();await save();queuePriceChanges({source:'cost-source',after:beforeRevision,revision:acceptedState.revision});return ids.length;}});}
+function openCostsFull(){openCostEditor({openDialog,getRows:()=>selectableComponents(state.costSource),lastErp:()=>state.erpSync?.updatedAt,apply:async entries=>{await save();const beforeRevision=acceptedState.revision;checkpoint();const ids=applyManualCosts(state,entries);catalog=sourceCatalog(state.sourceCatalog);changed(`人工更新 ${entries.length} 条三店共用核算价`,[]);renderAll();await save();queuePriceChanges({source:'cost-source',after:beforeRevision,revision:acceptedState.revision});await checkPriceChanges();return ids.length;}});}
 // 接收已经提交的 ERP 数据；先尝试安全刷新，不在回调里重复保存。
 async function receiveErp(result){
  if(result?.ok===true)queuePriceChanges({source:'erp',after:result.revision-1,revision:result.revision});
@@ -860,7 +864,7 @@ function bind(){
  mountNameFormatEntry(openNameFormats);
  $('#operator-open').textContent='操作人：'+operator;$('#operator-open').onclick=()=>workspaceSyncUi?.open();$('#shop-settings').onclick=openShopSettings;
  $('#shop-picker').onchange=async()=>{const next=$('#shop-picker').value;if(next===activeShopId)return;const previous=activeShopId;try{await save();posterEditor?.clear();activeShopId=next;templateSectionOpen=false;localStorage.setItem('diy-active-shop',next);active=fullWorkspace?(ordinaryConfigs(available())[0]?.id||null):null;selected=new Set(active?[active]:[]);collapsedProducts.clear();if(!fullWorkspace)productGroups(available()).forEach(p=>collapsedProducts.add(p.id));listPinnedProduct=null;$('#search').value='';$('#link-category-filter').value='';renderAll();}catch(e){activeShopId=previous;$('#shop-picker').value=previous;toast(e.message);}};
- bindErpSync({openDialog,toast,operator:()=>operator,flush:save,receive:receiveErp,context:()=>JSON.stringify([state.revision,changeCounter,activeShopId,active,tab]),hasPending:()=>window.workbenchHasPendingChanges()||conflict});
+ bindErpSync({openDialog,toast,operator:()=>operator,flush:save,receive:receiveErpForPrices,afterApply:checkPriceChanges,context:()=>JSON.stringify([state.revision,changeCounter,activeShopId,active,tab]),hasPending:()=>window.workbenchHasPendingChanges()||conflict});
  if($('#product-sync-open'))$('#product-sync-open').onclick=fullAction(()=>openStandardProduct({openDialog,closeDialog,toast,esc,product:currentProduct,shop:currentShop,state:()=>state,request,flush:save,download:downloadBlob,apply:async(plan,p)=>{if(currentProduct()?.id!==p.id||activeShopId!==p.shopId)throw Error('当前链接已变化，请重新打开商品同步');const result=applyStandardProduct(plan,state,p);checkpoint();state=result.next;rememberDisplayParts();changed(`导入标准商品：更新 ${plan.updated} 套，新增 ${plan.added} 套`,result.ids);renderAll();await save();}}));
  $$('[data-config]').forEach(input=>{input.onfocus=()=>checkpointConfig();input.oninput=()=>{current()[input.dataset.config]=input.value;if(input.dataset.config==='shortName'){current().shortNameAuto=false;syncPosterShortName(current());}changed('编辑配置基本信息');};});
  $$('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));$('#search').oninput=()=>{renderList();};$('#link-category-filter').onchange=()=>{renderList();$('#config-list').scrollTop=0;};document.querySelector('.list-actions-menu').addEventListener('click',e=>{if(e.target.closest('button'))document.querySelector('.list-actions-menu').open=false;});document.addEventListener('pointerdown',e=>{const menu=document.querySelector('.list-actions-menu');if(!menu.contains(e.target))menu.open=false;});document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelector('.list-actions-menu').open=false;});$('#collapse-all-links').onclick=()=>{productGroups(available()).forEach(g=>collapsedProducts.add(g.id));listPinnedProduct=null;renderList();$('#config-list').scrollTop=0;};$('#select-all').onchange=()=>{listedConfigs().forEach(c=>$('#select-all').checked?selected.add(c.id):selected.delete(c.id));renderList();};

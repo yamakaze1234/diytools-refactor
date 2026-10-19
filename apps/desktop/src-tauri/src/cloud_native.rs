@@ -68,7 +68,7 @@ impl CloudRuntime {
             Err(_) => return Err("CLOUD_CONFIG_INVALID: 无法读取本机接入配置".into()),
         };
         Ok(Self {
-            transport: Arc::new(transport),
+            transport: Arc::new(transport.with_persistence(data_dir)?),
             plan: Mutex::new(None),
             legacy: Mutex::new(None),
             identity_gate: RwLock::new(()),
@@ -471,9 +471,10 @@ fn dispatch(
         if runtime.epoch.load(Ordering::SeqCst) != epoch {
             return Err("登录已取消，请重新登录".into());
         }
-        let value = runtime.transport.login(
+        let value = runtime.transport.login_with_remember(
             payload["username"].as_str().ok_or("请输入账号")?,
             payload["password"].as_str().ok_or("请输入密码")?,
+            payload.get("remember").and_then(Value::as_bool).unwrap_or(false),
         )?;
         if runtime.epoch.load(Ordering::SeqCst) != epoch {
             return Err("登录已取消，请重新登录".into());

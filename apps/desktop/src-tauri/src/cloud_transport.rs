@@ -1,5 +1,5 @@
-// 腾讯云阻塞传输层：凭据仅驻留原生内存；调用方须通过阻塞任务执行网络请求。
-//! Native CloudBase transport. Credentials stay in memory and never cross IPC.
+// 腾讯云阻塞传输层：凭据不跨IPC；可选将续期信息保留在本机系统凭据管理器。
+//! Native CloudBase transport. Credentials never cross IPC.
 //! All network methods are blocking; callers must use `spawn_blocking`.
 use reqwest::blocking::Client;
 use reqwest::header::{AUTHORIZATION, HeaderValue};
@@ -7,6 +7,8 @@ use serde_json::{Value, json};
 use std::io::Read;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
+mod session_vault;
+use session_vault::{SavedSession, SessionVault};
 
 pub const CLOUD_NOT_CONFIGURED: &str = "CLOUD_NOT_CONFIGURED: 本机尚未配置云服务";
 const MAX_RESPONSE: usize = 32 * 1024 * 1024;
@@ -38,9 +40,12 @@ struct Session {
 struct State {
     epoch: u64,
     session: Option<Session>,
+    saved: Option<SavedSession>,
+    remember: bool,
+    restore_error: Option<String>,
 }
 
-/// No credential persistence, background task, custom URL or admin authentication.
+/// Optional OS credential storage; no background task, custom URL or admin authentication.
 pub struct CloudTransport {
     client: Client,
     base: String,
@@ -50,6 +55,7 @@ pub struct CloudTransport {
     // Serialize sign-in and refresh rotation, but let logout invalidate immediately.
     auth_gate: Mutex<()>,
     max_response: usize,
+    vault: Option<SessionVault>,
 }
 
 enum HttpError {
@@ -124,7 +130,36 @@ impl CloudTransport {
             state: Mutex::new(State::default()),
             auth_gate: Mutex::new(()),
             max_response,
+            vault: None,
         })
+    }
+
+    pub fn with_persistence(mut self, data_dir: &std::path::Path) -> Result<Self, String> {
+        if self.base.is_empty() { return Ok(self); }
+        let vault = SessionVault::new(data_dir, &self.environment);
+        match vault.load() {
+            Ok(Some(saved)) if saved.valid(&self.environment) => {
+                self.device_id = saved.device_id.clone();
+                self.state()?.saved = Some(saved);
+            }
+            Ok(None) => {}
+            _ => { self.state()?.restore_error = vault.clear().err(); }
+        }
+        self.vault = Some(vault);
+        Ok(self)
+    }
+
+    fn save_session(&self, tokens: &Tokens, member: &Value, remember: bool) -> Result<(), String> {
+        if !remember { return self.vault.as_ref().map_or(Ok(()), SessionVault::clear); }
+        let vault = self.vault.as_ref().ok_or("此环境暂不支持保留登录信息")?;
+        vault.save(&SavedSession { version: 1, environment: self.environment.clone(), refresh: tokens.refresh.clone(),
+            subject: tokens.subject.clone(), workspace_id: member["workspaceId"].as_str().unwrap_or_default().into(), device_id: self.device_id.clone() })
+    }
+    fn forget_saved(&self, state: &mut State) -> Result<(), String> {
+        state.saved = None;
+        state.remember = false;
+        state.restore_error = None;
+        self.vault.as_ref().map_or(Ok(()), SessionVault::clear)
     }
 
     fn state(&self) -> Result<MutexGuard<'_, State>, String> {
@@ -140,7 +175,11 @@ impl CloudTransport {
     /// Authenticate with the official username/password endpoint, then validate membership.
     /// The password is used for this request only and is never retained in State.
     // 账号认证后再核验正式成员资格；密码只用于当前请求，不写入会话状态。
+    #[cfg(test)]
     pub fn login(&self, username: &str, password: &str) -> Result<Value, String> {
+        self.login_with_remember(username, password, false)
+    }
+    pub fn login_with_remember(&self, username: &str, password: &str, remember: bool) -> Result<Value, String> {
         self.require_configured()?;
         if username.is_empty()
             || username.len() > 192
@@ -174,7 +213,11 @@ impl CloudTransport {
             return Err("请先退出当前成员，再切换账号".into());
         }
         // Invalidate any in-flight request made with the previous credentials.
+        self.save_session(&tokens, &member, remember)?;
         state.epoch = state.epoch.wrapping_add(1);
+        state.saved = None;
+        state.restore_error = None;
+        state.remember = remember;
         state.session = Some(Session {
             tokens,
             member: member.clone(),
@@ -182,14 +225,16 @@ impl CloudTransport {
         Ok(status(Some(member)))
     }
 
-    /// Revalidate the current native-memory session; restart requires a fresh login.
-    // 重新核验内存中的当前成员；进程重启后仍需重新登录，不恢复磁盘令牌。
+    /// Revalidate memory session, or refresh and verify an explicitly remembered session.
     pub fn resume(&self) -> Result<Value, String> {
         let epoch = {
             let state = self.state()?;
             if state.session.is_none() {
-                // 释放锁后再读取状态，避免本地 resume 在同一互斥锁上自锁。
+                if let Some(error) = &state.restore_error { return Err(error.clone()); }
+                let saved = state.saved.clone();
+                let epoch = state.epoch;
                 drop(state);
+                if let Some(saved) = saved { return self.restore(saved, epoch); }
                 return self.status();
             }
             state.epoch
@@ -205,6 +250,7 @@ impl CloudTransport {
             Err(error) => {
                 state.epoch = state.epoch.wrapping_add(1);
                 state.session = None;
+                self.forget_saved(&mut state)?;
                 return Err(error);
             }
         };
@@ -213,10 +259,55 @@ impl CloudTransport {
         {
             state.epoch = state.epoch.wrapping_add(1);
             state.session = None;
+            self.forget_saved(&mut state)?;
             return Err("成员身份已变化，请重新登录".into());
         }
         session.member = member.clone();
         Ok(status(Some(member)))
+    }
+
+    // 只使用续期令牌重建会话；网络异常保留重试机会，身份失效和主体变化立即清除。
+    fn restore(&self, saved: SavedSession, epoch: u64) -> Result<Value, String> {
+        let _gate = self.gate()?;
+        self.check_epoch(epoch)?;
+        if self.state()?.session.is_some() { return self.status(); }
+        let raw = match self.post("/auth/v1/token", &json!({"grant_type":"refresh_token","refresh_token":saved.refresh}), None) {
+            Ok(raw) => raw,
+            Err(HttpError::Unauthorized) => { self.invalidate(epoch)?; return Err(SESSION_EXPIRED.into()); }
+            Err(error) => return Err(safe_http_error(error)),
+        };
+        let tokens = match parse_tokens(&raw) {
+            Ok(tokens) if tokens.subject == saved.subject => tokens,
+            _ => { self.invalidate(epoch)?; return Err("已保留的登录身份已变化，请重新登录".into()); }
+        };
+        // 刷新令牌会轮换；先在同代次下保存新的续期信息，再进行可能离线的成员核验。
+        {
+            let mut state = self.state()?;
+            if state.epoch != epoch { return Err("登录已取消，请重新登录".into()); }
+            let mut rotated = saved.clone();
+            rotated.refresh = tokens.refresh.clone();
+            self.vault.as_ref().ok_or("无法读取本机登录存储")?.save(&rotated)?;
+            state.saved = Some(rotated);
+        }
+        let request = json!({"protocolVersion":2,"action":"session.get","requestId":uuid::Uuid::new_v4().to_string(),"payload":{}});
+        let raw = match self.business(&request, &tokens.access) {
+            Ok(raw) => raw,
+            Err(HttpError::Unauthorized) => { self.invalidate(epoch)?; return Err(SESSION_EXPIRED.into()); }
+            Err(error) => return Err(safe_http_error(error)),
+        };
+        let mut member = match parse_member(&raw, &tokens.subject) {
+            Ok(member) if member["workspaceId"] == saved.workspace_id => member,
+            _ => { self.invalidate(epoch)?; return Err("成员身份已变化，请重新登录".into()); }
+        };
+        scrub_value(&mut member, &[&tokens.access, &tokens.refresh]);
+        let mut state = self.state()?;
+        if state.epoch != epoch { return Err("登录已取消，请重新登录".into()); }
+        self.save_session(&tokens, &member, true)?;
+        state.saved = None;
+        state.remember = true;
+        state.session = Some(Session { tokens, member });
+        drop(state);
+        self.status()
     }
 
     /// Immediate local logout. Epoch cancellation prevents late network results restoring login.
@@ -225,6 +316,7 @@ impl CloudTransport {
         let mut state = self.state()?;
         state.epoch = state.epoch.wrapping_add(1);
         state.session = None;
+        self.forget_saved(&mut state)?;
         // 状态读取也会获取会话锁，登出必须先释放写锁。
         drop(state);
         self.status()
@@ -241,7 +333,9 @@ impl CloudTransport {
     }
 
     pub fn status(&self) -> Result<Value, String> {
-        let mut result = status(self.current_member()?);
+        let state = self.state()?;
+        let mut result = status(state.session.as_ref().map(|s| s.member.clone()));
+        result["remembered"] = json!(state.remember || state.saved.is_some() || state.restore_error.is_some());
         result["configured"] = json!(!self.base.is_empty());
         if self.base.is_empty() {
             result["code"] = json!("CLOUD_NOT_CONFIGURED");
@@ -464,6 +558,7 @@ impl CloudTransport {
         if state.epoch == epoch {
             state.epoch = state.epoch.wrapping_add(1);
             state.session = None;
+            self.forget_saved(&mut state)?;
         }
         Ok(())
     }
@@ -519,9 +614,13 @@ impl CloudTransport {
         {
             state.epoch = state.epoch.wrapping_add(1);
             state.session = None;
+            self.forget_saved(&mut state)?;
             return Err("成员身份已变化，请重新登录".into());
         }
         let access = tokens.access.clone();
+        let remember = state.remember;
+        self.save_session(&tokens, &member, remember)?;
+        let session = state.session.as_mut().ok_or(LOGIN_REQUIRED)?;
         session.tokens = tokens;
         session.member = member;
         Ok(access)

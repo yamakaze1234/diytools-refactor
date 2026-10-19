@@ -11,6 +11,28 @@ test('unauthenticated startup never connects or releases the editor',async()=>{
  assert.equal(env.controller.status().phase,'signed-out');assert.deepEqual(env.calls.map(c=>c.action),['status']);
  assert(!env.states.some(state=>state.phase==='ready'));
 });
+test('remembered startup resumes before preparing, without asking for account or password',async()=>{
+ const env=fixture(action=>action==='status'?answer({session:{authenticated:false,member:null,remembered:true}}):action==='resume'?answer({authenticated:true,member}):answer({initialized:true}));
+ await env.controller.initialize();assert.equal(env.controller.status().phase,'ready');
+ assert.deepEqual(env.calls.map(c=>c.action),['status','resume','firstUseStatus','connect']);
+ assert.equal(env.calls.find(c=>c.action==='resume').payloadJson,'{}');
+});
+test('failed remembered-session validation keeps the editor locked and allows retry',async()=>{
+ let offline=true;const env=fixture(action=>{
+  if(action==='status')return answer({session:{authenticated:false,member:null,remembered:true}});
+  if(action==='resume'){if(offline)throw Error('连接超时');return answer({authenticated:true,member});}
+  return answer({initialized:true});
+ });await env.controller.initialize();assert.equal(env.controller.status().phase,'signed-out');assert(!env.calls.some(c=>c.action==='connect'));
+ offline=false;await env.controller.retry();assert.equal(env.controller.status().phase,'ready');
+});
+test('login passes the selected remember preference only to native auth',async()=>{
+ for(const remember of [true,false]){
+  const env=fixture(action=>action==='login'?answer({authenticated:true,member}):answer({initialized:true}));
+  await env.controller.login('account','memory-only',remember);
+  assert.equal(JSON.parse(env.calls[0].payloadJson).remember,remember);
+  assert(!JSON.stringify(env.controller.status()).includes('memory-only'));
+ }
+});
 
 test('missing local cloud configuration opens local workbench without connect or login',async()=>{
  for(const result of [{configured:false,session:{authenticated:false,member:null}},{session:{configured:false,authenticated:false,member:null,code:'CLOUD_NOT_CONFIGURED'}}]){

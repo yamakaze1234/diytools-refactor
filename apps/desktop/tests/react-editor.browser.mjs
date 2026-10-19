@@ -31,11 +31,27 @@ try{
  });
  await page.goto(base+'/workbench/editor-fixture');await page.waitForFunction(()=>window.workbenchReady===true).catch(async error=>{console.error(await page.locator('#save-status').textContent(),await page.locator('#editor').textContent());throw error;});
  await page.locator('[data-product-toggle="product-test"]').click();await page.locator('[data-id="config-test"]').click();await page.locator('[data-react-editor="parts"]').waitFor();
+ // 折叠释放行节点，重新展开保留选择及活动项，Enter 仍能打开配置。
+ await page.locator('[data-id="config-test"] input').check();
+ await page.locator('[data-product-toggle="product-test"]').click();assert.equal(await page.locator('[data-id="config-test"]').count(),0);
+ await page.locator('[data-product-toggle="product-test"]').click();assert.equal(await page.locator('[data-id="config-test"] input').isChecked(),true);assert.equal(await page.locator('[data-id="config-test"]').getAttribute('aria-current'),'true');
+ await page.locator('[data-id="config-test"]').focus();await page.keyboard.press('Enter');await page.locator('[data-react-editor="parts"]').waitFor();
+ await page.locator('[data-id="config-test"] input').uncheck();
  const save=async()=>{await page.locator('#save').click();await page.waitForFunction(()=>!window.workbenchHasPendingChanges());};
  const live=()=>state.configs.find(c=>c.id==='config-test');
  await page.locator('[data-qty="0"]').fill('2');await save();assert.equal(live().parts[0].qty,2);assert.equal(live().actualParts[0].qty,2);
  await page.locator('[data-display-name="0"]').fill('自定义展示CPU');await page.locator('[data-qty="0"]').focus();await save();assert.equal(live().parts[0].displayName,'自定义展示CPU');
  await page.locator('[data-poster-visible="0"]').uncheck();await save();assert.equal(live().parts[0].posterVisible,false);
+ // 鼠标从手柄拖到下一行下半区，必须保存展示顺序，保持实际BOM顺序并支持撤销。
+ const actualOrder=live().actualParts.map(p=>p.goodsId);
+ await page.locator('[data-sort-part]').nth(1).scrollIntoViewIfNeeded();
+ const handle=await page.locator('[data-part-drag]').first().boundingBox(),target=await page.locator('[data-sort-part]').nth(1).boundingBox();
+ await page.mouse.move(handle.x+handle.width/2,handle.y+handle.height/2);await page.mouse.down();
+ await page.mouse.move(handle.x+handle.width/2+8,handle.y+handle.height/2+8,{steps:3});
+ await page.mouse.move(target.x+30,target.y+target.height-8,{steps:12});
+ await page.mouse.move(target.x+31,target.y+target.height-7);await page.mouse.up();
+ await save();assert.equal(live().parts[1].slot,'CPU');assert.deepEqual(live().actualParts.map(p=>p.goodsId),actualOrder);
+ await page.locator('#undo').click();await save();assert.equal(live().parts[0].slot,'CPU');
  await page.locator('[data-part-drag]').first().focus();await page.keyboard.press('ArrowDown');await save();assert.equal(live().parts[1].slot,'CPU');
  await page.locator('[data-tab="actual"]').click();await page.locator('[data-qty="0"]').fill('3');await save();assert.equal(live().actualParts[0].qty,3);assert.notEqual(live().parts.find(p=>p.slot===live().actualParts[0].slot).qty,3);
  await page.locator('[data-tab="addons"]').click();await page.locator('[data-upgrade="0"]').fill('隔离升级文案');await page.locator('#add-benefit').click();await page.locator('[data-benefit="0"]').fill('隔离福利');await save();assert.equal(live().benefits[0].text,'隔离福利');
@@ -51,5 +67,5 @@ try{
  await page.locator('#undo').click();await save();assert.notEqual(live().footer,'中文组合中');await page.locator('#redo').click();await save();assert.equal(live().footer,'中文组合中');
  await page.locator('#template-section-toggle').click();assert.equal(await page.locator('[data-react-templates] [data-template-product-toggle]').count(),1);await page.locator('[data-template-product-toggle="template-group"]').click();await page.locator('[data-template-config-id="template-test"]').click();await page.locator('[data-tab="parts"]').click();await page.locator('[data-qty="0"]').fill('4');await save();assert.equal(state.configs.find(c=>c.id==='template-test').parts[0].qty,4);
  await page.locator('[data-id="config-test"]').click();await page.locator('#add-template').click();await page.locator('[data-template-fold]').first().click();await page.locator('.template-choice').first().check();await page.locator('#template-use').click();await page.waitForFunction(()=>!document.querySelector('#dialog').open);await save();assert.ok(state.configs.length>2);
- assert.deepEqual(errors,[]);assert.ok(receipts.length>10);console.log(JSON.stringify({status:'passed',scenarios:['展示数量及BOM联动','展示名称','图片可见性','键盘排序','独立BOM','升级福利','加购草稿与错误恢复','多项加购编辑','模块样式顺序','核算覆盖与恢复','延迟保存与中文组合光标','撤销重做','模板直接编辑','模板选择导入'],saveReceipts:receipts.length,configs:state.configs.length,errors},null,2));
+ assert.deepEqual(errors,[]);assert.ok(receipts.length>10);console.log(JSON.stringify({status:'passed',scenarios:['展示数量及BOM联动','展示名称','图片可见性','鼠标拖动排序及撤销','键盘排序','独立BOM','升级福利','加购草稿与错误恢复','多项加购编辑','模块样式顺序','核算覆盖与恢复','延迟保存与中文组合光标','撤销重做','模板直接编辑','模板选择导入'],saveReceipts:receipts.length,configs:state.configs.length,errors},null,2));
 }finally{await browser.close();}

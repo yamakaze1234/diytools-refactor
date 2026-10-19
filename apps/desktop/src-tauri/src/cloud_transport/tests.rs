@@ -132,6 +132,111 @@ fn read_request(stream: &mut TcpStream) -> Option<Wire> {
 fn token(access: &str) -> Value {
     json!({"token_type":"Bearer","access_token":access,"refresh_token":"test-refresh-secret","expires_in":3600,"sub":"member-1"})
 }
+
+#[cfg(windows)]
+struct VaultCleanup(session_vault::SessionVault);
+#[cfg(windows)]
+impl Drop for VaultCleanup { fn drop(&mut self) { let _ = self.0.clear(); } }
+
+#[cfg(windows)]
+#[test]
+fn remembered_session_rotates_across_restarts_and_logout_clears_system_credential() {
+    let rotations = Arc::new(AtomicUsize::new(0));
+    let count = rotations.clone();
+    let devices = Arc::new(Mutex::new(Vec::new()));
+    let captured = devices.clone();
+    let server = Server::new(move |wire| {
+        captured.lock().unwrap().push(wire.headers.clone());
+        if wire.path == "/auth/v1/signin" { return Reply::json(token("access-one")); }
+        if wire.path == "/auth/v1/token" {
+            let i = count.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(wire.body["refresh_token"], if i == 0 { "test-refresh-secret".to_owned() } else { format!("rotated-{i}") });
+            let mut result = token("access-next"); result["refresh_token"] = format!("rotated-{}", i+1).into();
+            return Reply::json(result);
+        }
+        Reply::json(if wire.body["action"] == "session.get" { member() } else { json!({"ok":true}) })
+    });
+    let scope = std::path::PathBuf::from(format!("synthetic-session-{}", uuid::Uuid::new_v4()));
+    let _cleanup = VaultCleanup(SessionVault::new(&scope, &server.url));
+    let first = server.transport().with_persistence(&scope).unwrap();
+    first.login_with_remember("synthetic-account", "password-not-saved", true).unwrap();
+    let saved = first.vault.as_ref().unwrap().load().unwrap().unwrap();
+    let serialized = serde_json::to_string(&saved).unwrap();
+    assert!(!serialized.contains("password-not-saved") && !serialized.contains("access-one") && !serialized.contains("synthetic-account"));
+    let device = saved.device_id.clone(); drop(first);
+    for cycle in 0..2 {
+        let restored = server.transport().with_persistence(&scope).unwrap();
+        assert_eq!(restored.status().unwrap()["authenticated"], false);
+        assert_eq!(restored.status().unwrap()["remembered"], true);
+        assert_eq!(restored.device_id, device);
+        let status = restored.resume().unwrap(); assert_eq!(status["authenticated"], true);
+        assert!(!status.to_string().contains("rotated"));
+        if cycle == 0 {
+            restored.state().unwrap().session.as_mut().unwrap().tokens.expires = Instant::now();
+            restored.call(pull()).unwrap();
+            assert_eq!(restored.vault.as_ref().unwrap().load().unwrap().unwrap().refresh,"rotated-2");
+        }
+    }
+    assert_eq!(rotations.load(Ordering::SeqCst), 3);
+    assert!(devices.lock().unwrap().iter().all(|h| h.contains(&device)));
+    let other = server.transport().with_persistence(&scope.with_extension("other")).unwrap();
+    assert_eq!(other.status().unwrap()["remembered"], false);
+    let unchecked = server.transport().with_persistence(&scope).unwrap();
+    unchecked.login_with_remember("synthetic-account", "password-not-saved", false).unwrap();
+    assert!(unchecked.vault.as_ref().unwrap().load().unwrap().is_none());
+    unchecked.login_with_remember("synthetic-account", "password-not-saved", true).unwrap();
+    unchecked.logout().unwrap();assert!(unchecked.vault.as_ref().unwrap().load().unwrap().is_none());
+    assert_eq!(server.transport().with_persistence(&scope).unwrap().status().unwrap()["remembered"], false);
+}
+
+#[cfg(windows)]
+#[test]
+fn remembered_session_keeps_offline_retry_but_clears_revoked_or_changed_identity() {
+    for failure in ["offline", "revoked", "member-offline", "workspace"] {
+        let mode = failure.to_owned();
+        let server = Server::new(move |wire| {
+            if wire.path == "/auth/v1/signin" { return Reply::json(token("synthetic-access")); }
+            if wire.path == "/auth/v1/token" {
+                if mode == "offline" { return Reply::status(503,json!({})); }
+                if mode == "revoked" { return Reply::status(401,json!({})); }
+                let mut next = token("restored-access"); next["refresh_token"] = "rotated-synthetic".into();return Reply::json(next);
+            }
+            if wire.headers.contains("restored-access") {
+                if mode == "member-offline" { return Reply::status(503,json!({})); }
+                if mode == "workspace" { let mut changed=member();changed["workspaceId"]="other-workspace".into();return Reply::json(changed); }
+            }
+            Reply::json(member())
+        });
+        let scope = std::path::PathBuf::from(format!("synthetic-session-{}",uuid::Uuid::new_v4()));
+        let _cleanup=VaultCleanup(SessionVault::new(&scope,&server.url));
+        server.transport().with_persistence(&scope).unwrap().login_with_remember("synthetic","synthetic-password",true).unwrap();
+        let restored=server.transport().with_persistence(&scope).unwrap();assert!(restored.resume().is_err());
+        assert_eq!(restored.status().unwrap()["authenticated"],false);
+        let saved=restored.vault.as_ref().unwrap().load().unwrap();
+        assert_eq!(saved.is_some(),failure=="offline"||failure=="member-offline");
+        if failure=="member-offline" { assert_eq!(saved.unwrap().refresh,"rotated-synthetic"); }
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn logout_during_remembered_restore_never_recreates_credential() {
+    let (entered,started)=mpsc::channel();
+    let (release,wait)=mpsc::channel();let wait=Mutex::new(wait);
+    let server=Server::new(move |wire| {
+        if wire.path=="/auth/v1/token" { entered.send(()).unwrap();wait.lock().unwrap().recv().unwrap();return Reply::json(token("late-access")); }
+        Reply::json(if wire.path=="/auth/v1/signin" { token("initial-access") } else { member() })
+    });
+    let scope=std::path::PathBuf::from(format!("synthetic-session-{}",uuid::Uuid::new_v4()));
+    let _cleanup=VaultCleanup(SessionVault::new(&scope,&server.url));
+    server.transport().with_persistence(&scope).unwrap().login_with_remember("synthetic","synthetic-password",true).unwrap();
+    let transport=Arc::new(server.transport().with_persistence(&scope).unwrap());let pending=transport.clone();
+    let worker=thread::spawn(move ||pending.resume());started.recv_timeout(Duration::from_secs(2)).unwrap();
+    transport.logout().unwrap();let cleared=transport.vault.as_ref().unwrap().load().unwrap().is_none();
+    release.send(()).unwrap();let restored=worker.join().unwrap();assert!(cleared);assert!(restored.is_err());
+    assert!(transport.vault.as_ref().unwrap().load().unwrap().is_none());
+    assert_eq!(transport.status().unwrap()["authenticated"],false);
+}
 fn member() -> Value {
     json!({"ok":true,"uid":"member-1","workspaceId":"workspace-1","memberId":"m1","name":"成员","protocolVersion":2,"ready":true})
 }

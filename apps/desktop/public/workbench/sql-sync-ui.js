@@ -55,6 +55,8 @@ export function bindSqlSync(api){
     const wasInert=document.body.inert;document.body.inert=true;
     try{dialog.close();if(await api.receive(result)===false)return;}finally{document.body.inert=wasInert;}
     api.toast(`本机 ERP 成本与库存已更新：${plan.changes.length} 处变化，ERP 成本取自 SQL 库存成本；人工核算价保留，结果仅保存在本机。`);
+    // 配置回载及输入解锁已完成，再尝试本次价格提示；不让明细读取占用回载锁。
+    await api.afterApply?.(result);
    }catch(error){if(live()){message.textContent=error.message;button.disabled=!valid();}else api.toast(error.message);}finally{busy=false;lockClose(false);if(live()){cancel.disabled=false;refresh.disabled=false;}}
   };
  }
