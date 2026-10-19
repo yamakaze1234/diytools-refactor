@@ -250,3 +250,30 @@ test('iframe reload reinstalls native routes for a new document on the same Wind
  await installWorkbenchBridge(target,options);
  assert.deepEqual(await (await target.fetch('/api/workspace/index')).json(),{ok:true});assert.equal(calls,1);
 });
+
+test('diagnostics skip native version query and stay readable while native calls hang',async()=>{
+ const target=frame(),calls=[];let finish;
+ await installWorkbenchBridge(target,{invoke:async command=>{calls.push(command);if(command==='plugin:app|version')return new Promise(()=>{});return new Promise(resolve=>{finish=resolve;});}});
+ const exported=target.workbenchExportDiagnostics();
+ assert.deepEqual(calls,['workbench_export_folder']);
+ const text=JSON.parse(target.workbenchDiagnosticText());assert.match(text.version,/^\d+\.\d+\.\d+$/);
+ finish({cancelled:true});assert.equal(await exported,'cancelled');
+});
+
+test('save timeout records frontend wait separately from a late native save receipt',async()=>{
+ const target=frame();let complete,dispatched;
+ const ready=new Promise(resolve=>{dispatched=resolve;});
+ await installWorkbenchBridge(target,{invoke:async()=>{dispatched();return new Promise(resolve=>{complete=resolve;});}});
+ const controller=new AbortController();
+ const response=target.fetch('/api/configs/patch',{method:'POST',body:'{}',signal:controller.signal});
+ await ready;controller.abort(new DOMException('signal timed out','TimeoutError'));
+ await assert.rejects(response,{name:'TimeoutError'});
+ let entries=JSON.parse(target.workbenchDiagnosticText()).events;
+ assert(entries.some(e=>e.stage==='local-save-wait'&&e.code==='TIMEOUT'));
+ assert.equal(entries.findLast(e=>e.stage==='local-save').phase,'running');
+ complete({status:200,body:'{"ok":true}'});
+ await new Promise(resolve=>setImmediate(resolve));
+ entries=JSON.parse(target.workbenchDiagnosticText()).events;
+ assert.equal(entries.findLast(e=>e.stage==='local-save').phase,'ok');
+ assert.equal(entries.findLast(e=>e.stage==='local-save-wait').code,'TIMEOUT');
+});

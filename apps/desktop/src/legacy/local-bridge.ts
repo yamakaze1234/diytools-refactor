@@ -1,4 +1,4 @@
-import { diagnostics, exportDiagnostics, trackDiagnostic, cloudDiagnosticStage } from '../diagnostics.ts';
+import { diagnostics, diagnosticText, exportDiagnostics, trackDiagnostic, cloudDiagnosticStage } from '../diagnostics.ts';
 /** 旧页面本机桥接：将受支持的 fetch 路由映射到 Tauri IPC，素材 URL 仅在渲染时转换。 */
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
 
@@ -15,6 +15,7 @@ export interface WorkbenchBridgeOptions {
 }
 export type WorkbenchWindow = Window & {
   workbenchExportDiagnostics?: () => Promise<string>;
+  workbenchDiagnosticText?: () => string;
   workbenchRecordDiagnostic?: (stage: string, error?: unknown) => void;
   resolveWorkbenchAsset?: (url: string) => string;
   pywebview?: { api?: { export_image_folder?: (payload: WorkbenchFolderPayload) => Promise<unknown>; export_image_folder_session?: (payload: Record<string, unknown>) => Promise<unknown> } };
@@ -151,7 +152,9 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
     if (cloud && (!CLOUD_ACTIONS.has(cloudAction) || url.search || request.method !== 'POST')) return errorResponse('云同步接口参数或方法无效', 400);
     if (cloud && !invoke) return errorResponse('请在 Windows 工作台中使用成员登录与云同步');
     if (!invoke) return originalFetch(input, init);
-    return abortable(request.signal, async () => {
+    const localSave = request.method === 'POST' && ['/api/state', '/api/configs/batch', '/api/configs/patch'].includes(path);
+    const finishWait = localSave ? diagnostics.begin('local-save-wait') : undefined;
+    try { return await abortable(request.signal, async () => {
       if (assetPath(path)) {
         if (!['GET', 'HEAD'].includes(request.method)) return errorResponse('本地素材只支持读取', 405);
         let asset: WorkbenchAsset;
@@ -175,7 +178,7 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
         if (cloud) {
           // Large snapshots are parsed by Rust/worker, never by the UI thread.
           result = await trackDiagnostic(cloudDiagnosticStage(cloudAction, body || ''), () => invoke<WorkbenchResponse>('cloud_native_json_request', { action: cloudAction, payloadJson: body || '{}' }));
-        } else result = await trackDiagnostic(sql ? 'sql-request' : 'local-request', () => invoke<WorkbenchResponse>(sql ? 'sql_sync_request' : 'workbench_request', { method: request.method, path: path + url.search, body }));
+        } else result = await trackDiagnostic(sql ? 'sql-request' : localSave ? 'local-save' : 'local-request', () => invoke<WorkbenchResponse>(sql ? 'sql_sync_request' : 'workbench_request', { method: request.method, path: path + url.search, body }));
       }
       catch (error) { return errorResponse(cloud ? '云同步接口调用失败，本机修改已保留' : sql ? '公司数据库接口调用失败，请检查连接后重试' : '本机接口调用失败：' + String(error)); }
       if (!result || !Number.isInteger(result.status) || result.status < 200 || result.status > 599 || typeof result.body !== 'string') {
@@ -183,14 +186,16 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
       }
       return new Response([204, 205, 304].includes(result.status) ? null : result.body,
         { status: result.status, headers: JSON_HEADERS });
-    });
+    }); } catch (error) { finishWait?.(error); throw error; }
+    finally { finishWait?.(); }
   };
 
   // Native batch export preserves the old file contract; a failed native command rejects visibly.
   // Browser preview has no pywebview bridge, so the existing browser ZIP download remains active.
   if (invoke) {
     // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
-    targetWindow.workbenchExportDiagnostics = async () => exportDiagnostics(invoke, await invoke<string>('plugin:app|version').catch(() => 'unknown'));
+    targetWindow.workbenchExportDiagnostics = () => exportDiagnostics(invoke);
+    targetWindow.workbenchDiagnosticText = () => diagnosticText();
     targetWindow.workbenchRecordDiagnostic = (stage, error) => { diagnostics.begin(stage)(error); };
     targetWindow.pywebview = { api: {
       export_image_folder: payload => invoke('workbench_export_folder', { payload }),

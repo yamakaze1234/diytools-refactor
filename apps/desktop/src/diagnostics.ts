@@ -1,10 +1,16 @@
+import appPackage from '../package.json' with { type: 'json' };
 /** 诊断只保留白名单元信息；任何请求正文、账号、路径及原始错误都不会进入记录。 */
 export type DiagnosticPhase = 'running' | 'ok' | 'error';
-const stages = new Set(['startup-status','login','logout','first-use','connect','legacy-read','legacy-project','legacy-apply','cloud-load','cloud-commit','cloud-call','cloud-checkpoint','cloud-pull','cloud-push','assets-download','assets-upload','assets-cancel','plan-preview','plan-apply','local-request','sql-request','unknown']);
+const stages = new Set(['startup-status','login','logout','first-use','connect','legacy-read','legacy-project','legacy-apply','cloud-load','cloud-commit','cloud-call','cloud-checkpoint','cloud-pull','cloud-push','assets-download','assets-upload','assets-cancel','plan-preview','plan-apply','local-request','local-save','local-save-wait','diagnostic-export','sql-request','unknown']);
 const actions: Record<string, string> = { status:'startup-status',login:'login',logout:'logout',resume:'login',firstUseStatus:'first-use',connect:'connect',migrateLegacy:'legacy-read',migrateLegacyApply:'legacy-apply',load:'cloud-load',commit:'cloud-commit',call:'cloud-call',assetsDownload:'assets-download',assetsEnsure:'assets-upload',assetsCancel:'assets-cancel',planPreview:'plan-preview',planApply:'plan-apply' };
 interface Entry { sequence: number; stage: string; phase: DiagnosticPhase; code: string; httpStatus?: number; startedAt: string; elapsedMs: number }
 /** 不保存原文，仅将有限错误文本归类；未知内容统一为 OPERATION_FAILED。 */
 export function diagnosticCode(error: unknown): string {
+  // 工作台 iframe 的 DOMException 属于另一个 realm，不能仅依赖 instanceof Error。
+  if (error && typeof error === 'object' && 'name' in error) {
+    if (error.name === 'TimeoutError') return 'TIMEOUT';
+    if (error.name === 'AbortError') return 'CANCELLED';
+  }
   const text = (error instanceof Error ? error.message : typeof error === 'string' ? error : '').slice(0, 4096);
   if (/timeout|timed out|超时/i.test(text)) return 'TIMEOUT';
   if (/cancel|abort|取消/i.test(text)) return 'CANCELLED';
@@ -69,8 +75,30 @@ export async function trackDiagnostic<T extends { status: number; body: string }
   } catch (error) { finish(error); throw error; }
 }
 /** 复用现有原生文件夹导出，只有文件列表确认落盘才显示成功；取消不当作完成。 */
-export async function exportDiagnostics(invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>, version: string) {
-  const text = JSON.stringify(diagnostics.snapshot(version), null, 2);
+export function diagnosticText(version = appPackage.version): string {
+  return JSON.stringify(diagnostics.snapshot(version), null, 2);
+}
+type DiagnosticInvoke = (command: string, args: Record<string, unknown>) => Promise<unknown>;
+const pendingExports = new WeakMap<DiagnosticInvoke, Promise<'saved' | 'cancelled'>>();
+// 超时只停止界面等待，原生文件对话框可能仍在运行；保留任务以免重试重复弹窗/写文件。
+export async function exportDiagnostics(invoke: DiagnosticInvoke, version = appPackage.version) {
+  let pending = pendingExports.get(invoke);
+  if (!pending) {
+    const finish = diagnostics.begin('diagnostic-export');
+    pending = saveDiagnosticFile(invoke, version).then(result => { finish(); return result; }, error => { finish(error); throw error; });
+    pendingExports.set(invoke, pending);
+    const clear = () => { pendingExports.delete(invoke); };
+    void pending.then(clear, clear);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([pending, new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(Error('原生导出超时，结果尚未确认。请查看诊断文本；若已有目录选择窗口，请先处理该窗口。')), 30000);
+    })]);
+  } finally { clearTimeout(timer); }
+}
+async function saveDiagnosticFile(invoke: DiagnosticInvoke, version: string): Promise<'saved' | 'cancelled'> {
+  const text = diagnosticText(version);
   const bytes = new TextEncoder().encode(text);
   const base64 = btoa(Array.from(bytes, byte => String.fromCharCode(byte)).join(''));
   const result = await invoke('workbench_export_folder', { payload: { name: 'DIYTools-诊断-' + new Date().toISOString().replace(/[:.]/g, '-'), files: [{ name: 'diagnostics.json', base64 }] } }) as { ok?: boolean; cancelled?: boolean; files?: string[] };

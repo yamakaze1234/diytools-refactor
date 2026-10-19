@@ -4,15 +4,15 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 const source=readFileSync(new URL('../public/workbench/workspace-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function bindWorkspaceSync','async function bindWorkspaceSync');
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};}
-async function harness({diagnosticExport,save=async()=>{},stop=async()=>{},start=async()=>{},authenticated=true,configured=true,maintenance=async()=>({skipped:true}),fetcher=async()=>{throw Error('unexpected fetch');}}={}){
+async function harness({diagnosticExport,diagnosticText,save=async()=>{},stop=async()=>{},start=async()=>{},authenticated=true,configured=true,maintenance=async()=>({skipped:true}),fetcher=async()=>{throw Error('unexpected fetch');}}={}){
  const elements=new Map(),calls=[],messages=[],posted=[],intervals=[],dialogs=[];let options,historyOptions,legacyOptions;
- const node=()=>({textContent:'',title:'',disabled:false,hidden:false,dataset:{},open:true,addEventListener(){},close(){this.open=false;calls.push('close');}});
+ const node=()=>({textContent:'',title:'',disabled:false,hidden:false,dataset:{},open:true,focus(){},select(){},addEventListener(){},close(){this.open=false;calls.push('close');}});
  for(const id of ['#workspace-sync','#workspace-sync-status','#operator-open','#dialog'])elements.set(id,node());
  const view={session:{configured,authenticated,member:authenticated?{name:'成员'}:null},checkpoint:{initialized:true,conflicts:0},summary:{pending:2},running:false,automatic:true,error:null};
  const controller={status:()=>view,refresh:async()=>{calls.push('refresh');options.onChange(view);},start:async()=>{calls.push('start');await start();},tick:async()=>calls.push('tick'),run:async upload=>{calls.push(['run',upload]);view.automatic=true;options.onChange(view);},stop:async()=>{calls.push('stop');await stop();view.automatic=false;options.onChange(view);},logout:async()=>{calls.push('logout');view.session={authenticated:false,member:null};options.onChange(view);},pause:()=>{},deliver:async()=>{},conflicts:async()=>({rows:[],total:0})};
  const document={querySelector:selector=>elements.get(selector)||null,querySelectorAll:selector=>selector==='[data-cloud-idle]'?[...elements.values()].filter(n=>n.idle):[]};
  const parent={postMessage:(value,origin)=>posted.push({value,origin}),workbenchClosePending:false,workbenchUpdatePending:false};
- const context=vm.createContext({document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
+ const context=vm.createContext({document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,workbenchDiagnosticText:diagnosticText,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
  vm.runInContext(source,context);
  const ui=await context.bindWorkspaceSync({flush:async()=>{calls.push('save');await save();},receive:async()=>true,esc:String,toast:text=>messages.push(text),openDialog:(title,html)=>{dialogs.push({title,html});for(const match of html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)){const element=node();element.idle=match[0].includes('data-cloud-idle');elements.set('#'+match[1],element);}}});
  await new Promise(resolve=>setImmediate(resolve));
@@ -52,11 +52,13 @@ test('update/close protection blocks sync and sign-out controls',async()=>{
 
 
 test('cache preview is read-only; clear saves first and reports reusable index content',async()=>{
- const requests=[];const env=await harness({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>url.endsWith('preview')?{count:3,bytes:1048576}:{cleared:{count:3,bytes:1048576}}};}});
+ const requests=[];const env=await harness({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>url.endsWith('preview')?{count:5,bytes:3145728,categories:[{id:'update-backups',label:'历史更新备份',count:2,bytes:2097152}]}:{cleared:{count:5,bytes:3145728,index:{count:3},updates:{count:2,bytes:2097152}}}};}});
  await env.ui.open();assert.match(env.dialogs.at(-1).html,/每 2 小时/);await env.elements.get('#local-cache').onclick();
  assert.equal(requests.length,1);assert(requests[0].url.endsWith('/preview'));assert(!requests[0].options.method);
  assert.match(env.dialogs.at(-1).html,/历史记录、恢复草稿和原图均保留/);assert.match(env.dialogs.at(-1).html,/不会立即缩小/);
+ assert.match(env.dialogs.at(-1).html,/历史更新备份：2 项，约 2.00 MiB/);assert.match(env.dialogs.at(-1).html,/只保留最近一次可回退备份/);
  env.calls.length=0;await env.elements.get('#cache-clear').onclick();assert.deepEqual(env.calls,['save']);assert.equal(requests[1].options.method,'POST');assert.equal(requests[1].options.body,'{}');assert.match(env.elements.get('#cache-message').textContent,/3 套配置索引已清理/);
+ assert.match(env.elements.get('#cache-message').textContent,/2 个历史更新备份（2.00 MiB）/);
 });
 
 test('cache preview stays available during sync while clearing is blocked, then preserves a failed save',async()=>{
@@ -202,5 +204,18 @@ test('diagnostics export remains usable while sync runs and reports only confirm
  await button.onclick();assert.equal(calls,1);assert.match(env.messages.at(-1),/已保存/);
  assert(!env.calls.slice(before).includes('save'));assert(!env.calls.slice(before).includes('stop'));
  mode='cancelled';await button.onclick();assert.equal(env.messages.at(-1),'已取消导出');
- mode='failed';await button.onclick();assert.match(env.messages.at(-1),/未保存/);assert(!env.messages.at(-1).includes('secret'));assert.equal(button.disabled,false);
+ mode='failed';await button.onclick();assert.match(env.messages.at(-1),/尚未确认保存/);assert(!env.messages.at(-1).includes('secret'));assert.equal(button.disabled,false);
+});
+
+
+test('diagnostic text opens while export hangs without waiting for save or cloud',async()=>{
+ const pending=deferred(),sample='{"privacy":"metadata-only","events":[]}';
+ const env=await harness({diagnosticExport:()=>pending.promise,diagnosticText:()=>sample});
+ await env.ui.open();env.calls.length=0;
+ const exporting=env.elements.get('#cloud-diagnostics').onclick();
+ assert.equal(env.elements.get('#cloud-diagnostics').disabled,true);
+ env.elements.get('#cloud-diagnostic-text').onclick();
+ assert.equal(env.elements.get('#diagnostic-text').value,sample);
+ assert(!env.calls.includes('save'));assert(!env.calls.includes('stop'));
+ pending.resolve('cancelled');await exporting;
 });

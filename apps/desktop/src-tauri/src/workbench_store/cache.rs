@@ -54,10 +54,11 @@ fn index_measurements(c: &Connection) -> Result<Value> {
 fn measurements(tx: &Transaction, store: &WorkbenchStore, at: i64) -> Result<Value> {
     let index = index_measurements(tx)?;
     let images = image_cache::preview(tx,store,at)?;
+    let updates = crate::updater::retention::cache_category(&store.path, false)?;
     let mut result = json!({
-        "count":index["count"].as_i64().unwrap_or(0)+images["count"].as_i64().unwrap_or(0),
-        "bytes":index["bytes"].as_i64().unwrap_or(0)+images["bytes"].as_i64().unwrap_or(0),
-        "categories":[index,images],"byteMeasure":"cache-payload-and-files",
+        "count":index["count"].as_i64().unwrap_or(0)+images["count"].as_i64().unwrap_or(0)+updates["count"].as_i64().unwrap_or(0),
+        "bytes":index["bytes"].as_i64().unwrap_or(0)+images["bytes"].as_i64().unwrap_or(0)+updates["bytes"].as_i64().unwrap_or(0),
+        "categories":[index,images,updates],"byteMeasure":"cache-payload-and-files",
         "storageEffect":"sqlite-reusable-and-generated-files","rebuildOnDemand":true
     });
     schedule_fields(tx,&mut result)?;
@@ -122,14 +123,16 @@ fn maintain_at(store: &WorkbenchStore, input: &Value, at: i64, automatic: bool) 
     // A file cleanup error returns before the scheduling timestamp is changed;
     // any files already removed are reported by the image module's error text.
     let images = image_cache::clear(&tx,store,at)?;
+    let updates = crate::updater::retention::cache_category(&store.path, true)
+        .map_err(|error| format!("{error}；已清除 {} 张旧生成图，维护时间未更新，请重试", images["count"]))?;
     let cleanup_error = |error: String| format!("缓存清理未全部完成：{error}；已清除 {} 张生成图，维护时间未确认更新，请重试",images["count"].as_i64().unwrap_or(0));
     tx.execute("INSERT INTO workbench_cache_maintenance VALUES(1,?1,?1) ON CONFLICT(id) DO UPDATE SET last_cleared_at=excluded.last_cleared_at",[at])
         .map_err(|e| cleanup_error(e.to_string()))?;
     let mut result = measurements(&tx,store,at).map_err(&cleanup_error)?;
     result["cleared"] = json!({
-        "count":before["count"].as_i64().unwrap_or(0)+images["count"].as_i64().unwrap_or(0),
-        "bytes":before["bytes"].as_i64().unwrap_or(0)+images["bytes"].as_i64().unwrap_or(0),
-        "index":{"count":before["count"],"bytes":before["bytes"]},"images":images
+        "count":before["count"].as_i64().unwrap_or(0)+images["count"].as_i64().unwrap_or(0)+updates["count"].as_i64().unwrap_or(0),
+        "bytes":before["bytes"].as_i64().unwrap_or(0)+images["bytes"].as_i64().unwrap_or(0)+updates["bytes"].as_i64().unwrap_or(0),
+        "index":{"count":before["count"],"bytes":before["bytes"]},"images":images,"updates":updates
     });
     result["skipped"] = json!(false);
     result["reason"] = json!(if automatic {"due"} else {"manual"});
@@ -140,6 +143,40 @@ fn maintain_at(store: &WorkbenchStore, input: &Value, at: i64, automatic: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_cache_preview_and_clear_include_only_older_successful_updates() {
+        let original = fixture();
+        let root = original.path.parent().unwrap();
+        fs::create_dir(root.join("data")).unwrap();
+        fs::write(root.join("diytools-portable.json"), r#"{"mode":"portable"}"#).unwrap();
+        let store = initialize(&root.join("data/workbench.sqlite"), &root.join("source.json"), &root.join("data/assets")).unwrap();
+        let mut dirs = Vec::new();
+        for (day, phase) in [(10,"installed"),(11,"installed"),(12,"failed"),(13,"started-unconfirmed")] {
+            let dir = root.join(".updates").join(uuid::Uuid::new_v4().to_string());
+            fs::create_dir_all(dir.join("database-backup")).unwrap();
+            fs::write(dir.join("backup.exe"), b"rollback").unwrap();
+            fs::write(dir.join("database-backup/manifest.json"), r#"{"schema":1,"complete":true,"files":[]}"#).unwrap();
+            fs::write(dir.join("status.json"), json!({"phase":phase,"at":format!("2026-10-{day}T00:00:00Z")}).to_string()).unwrap();
+            dirs.push(dir);
+        }
+        let before = protected_rows(&db(&original.path).unwrap());
+        let business_before: String = db(&store.path).unwrap().query_row("SELECT document FROM workbench_state",[],|r|r.get(0)).unwrap();
+        let preview = call(&store,"GET","/api/cache/preview",None);
+        let category = preview["categories"].as_array().unwrap().iter().find(|v| v["id"] == "update-backups").unwrap();
+        assert_eq!(category["count"],1);
+        assert!(category["bytes"].as_u64().unwrap() > 8);
+        assert!(dirs[0].exists());
+        let cleared = decoded(clear(&store,&json!({})).unwrap());
+        assert_eq!(cleared["cleared"]["updates"]["count"],1);
+        assert_eq!(cleared["cleared"]["updates"]["bytes"],category["bytes"]);
+        assert!(!dirs[0].exists());
+        for dir in &dirs[1..] { assert_eq!(fs::read(dir.join("backup.exe")).unwrap(),b"rollback"); }
+        assert_eq!(protected_rows(&db(&original.path).unwrap()),before);
+        let business_after: String = db(&store.path).unwrap().query_row("SELECT document FROM workbench_state",[],|r|r.get(0)).unwrap();
+        assert_eq!(business_before,business_after);
+        assert_eq!(decoded(clear(&store,&json!({})).unwrap())["cleared"]["updates"]["count"],0);
+    }
 
     fn fixture() -> WorkbenchStore {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

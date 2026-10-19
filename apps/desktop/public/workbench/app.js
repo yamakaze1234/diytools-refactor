@@ -67,6 +67,7 @@ import {openInventoryExport} from './inventory-export.js';
 import {openCaseGallery} from './case-gallery.js';
 import {useGalleryImage,validateGallery} from './case-gallery-data.js';
 import {openPriceImport,applyPriceImport} from './price-import.js';
+import {mergePriceSaveConflict} from './price-save-merge.js';
 import {installColorPicker} from './color-picker.js';
 let listPinnedProduct=null;
 const linkCategoryDefaults=['日常主推链接','24期主机专区','竖装主机专区','无卡主机专区'];
@@ -121,7 +122,7 @@ function fitPartText(input){input.style.height='auto';input.style.height=Math.ma
 // 用短时状态提示反馈结果；复用同一节点和计时器，避免消息层堆积。
 function toast(message){const el=$('#toast');el.textContent=message;el.setAttribute('popover','manual');el.setAttribute('role','status');el.setAttribute('aria-live','polite');el.classList.remove('hidden');if(el.matches(':popover-open'))el.hidePopover();el.showPopover();clearTimeout(toast.timer);toast.timer=setTimeout(()=>{el.hidePopover();el.classList.add('hidden');},4500);}
 // 统一 JSON 请求、超时及登录失效通知；保留 HTTP 状态码供冲突恢复判断。
-async function request(url,options={}){const r=await fetch(url,{signal:AbortSignal.timeout(options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)?120000:45000),...options,headers:{'Content-Type':'application/json',...options.headers}}),j=await r.json();if(!r.ok){const e=Error(j.error||'请求失败');e.status=r.status;if(r.status===401)window.dispatchEvent(new CustomEvent('workspace-auth-error',{detail:e.message}));throw e;}return j;}
+async function request(url,options={}){try{const r=await fetch(url,{signal:AbortSignal.timeout(options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)?120000:45000),...options,headers:{'Content-Type':'application/json',...options.headers}}),j=await r.json();if(!r.ok){const e=Error(j.error||'请求失败');e.status=r.status;if(r.status===401)window.dispatchEvent(new CustomEvent('workspace-auth-error',{detail:e.message}));throw e;}return j;}catch(error){if(error?.name==='TimeoutError'&&options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)){throw Object.assign(Error('本机保存等待超时，尚未确认是否写入。当前输入已保留，请勿关闭；可查看诊断文本。'),{name:'TimeoutError'});}throw error;}}
 const lazyWorkspace=createLazyWorkspace({request});
 let fullWorkspace=false,workspaceLoad=null,activationGeneration=0,fullActionBusy=0;
 const loadedIds=()=>state.configs.map(c=>c.id);
@@ -180,12 +181,12 @@ async function loadDetail(id){
  try{return await flight;}finally{if(detailLoads.get(id)===flight)detailLoads.delete(id);}
 }
 // 为备份和全局操作构造完整快照，合并已加载草稿并检查等待期间的新输入。
-async function completeWorkspaceSnapshot(){
+async function completeWorkspaceSnapshot(merge=mergeEditorState){
  const loader=createLazyWorkspace({request}),counter=changeCounter,revision=state.revision;
  await loader.refresh();const remote=await loader.full();
  if(counter!==changeCounter||revision!==state.revision)throw Error('载入期间有新的输入，请完成编辑后重试');
  const {base,local}=fullWorkspace?{base:acceptedState,local:state}:completeWorkspaceViews(acceptedState,state,remote);
- const merged=mergeEditorState(base,local,remote);return {state:merged.state,baseState:base,remote,conflict:merged.conflict,counter};
+ const merged=merge(base,local,remote);return {...merged,baseState:base,remote,counter};
 }
 // 全局操作先等待完整数据；失败时恢复交互状态，不应用部分数据。
 async function ensureFullWorkspace(){
@@ -388,7 +389,7 @@ async function save(){
  if(batchPending){await sendBatchPending();return dirty?save():undefined;}
  if(savePromise)return savePromise;
  if(!dirty&&!ordinaryPending)return;
- savePromise=(async()=>{try{while((dirty||ordinaryPending)&&!conflict){
+ savePromise=(async()=>{let priceRetried=false;try{while((dirty||ordinaryPending)&&!conflict){
   // 请求快照和 operationId 一起保留；响应丢失后重试原请求，期间的新输入留在 state。
   const replaying=Boolean(ordinaryPending);
   const snapshot=ordinaryPending?.sent||captureSaveSnapshot(state,acceptedState);
@@ -408,7 +409,8 @@ async function save(){
   // before the request awaits. Only a retained request needs a draft comparison.
   dirty=Boolean(replaying&&(!sameEditingState(snapshot,state)||unsupportedSaveRootChanges(snapshot,state).length));$('#save-status').textContent='正在保存到本机…';
   let data;
-  if(ordinaryPending){
+  const baselineBeforeSave=acceptedState;
+  try{if(ordinaryPending){
    data=await request(fullWorkspace?'/api/configs/batch':'/api/configs/patch',{method:'POST',body:JSON.stringify(ordinaryPending.payload)});
    const saved=new Map(data.configs.map(c=>[c.id,c]));
    const remote=data.rebased?await savedReceiptState(data):{...acceptedState,configs:acceptedState.configs.map(c=>saved.get(c.id)||c),revision:data.revision,updatedAt:data.updatedAt,logs:[...(data.activityDelta||[]),...(acceptedState.logs||[])]};
@@ -417,6 +419,16 @@ async function save(){
   }else{
    data=await saveFullState(request,acceptedState,snapshot,{operator,message:changed.message});
    if(data.state)await acceptSavedState(snapshot,data.state);else acceptedState=cloneEditorState({...snapshot,revision:data.revision,updatedAt:data.updatedAt,logs:data.logs});state.revision=data.revision;state.updatedAt=data.updatedAt;state.logs=data.logs;
+  }
+  }catch(error){
+   if(error.status!==409||priceRetried||acceptedState!==baselineBeforeSave)throw error;
+   const complete=await completeWorkspaceSnapshot(mergePriceSaveConflict);
+   if(complete.conflict||!complete.priceOverrides)throw error;
+   // 仅价格重叠时，以最新版本为基线重新提交。仍由后端原子版本检查兜底；只重试一次。
+   const rebased=[history,redoHistory].map(stack=>stack.map(item=>rebaseWorkspaceHistorySnapshot(item,complete.remote)));
+   [history,redoHistory].forEach((stack,i)=>{const rows=rebased[i];stack.splice(0,stack.length,...(rows.some(row=>row.conflict)?[]:rows.map(row=>row.snapshot)));});
+   syncHistoryButtons();acceptedState=complete.remote;state=complete.state;fullWorkspace=true;
+   ordinaryPending=null;dirty=true;priceRetried=true;invalidateSaveScope(state,'price conflict retry');rememberDisplayParts();renderAll();continue;
   }
   acknowledgeSaveScope(state,acceptedState,snapshot,dirty);
   $('#save-status').textContent=dirty?'尚未保存':`已保存 ${new Date(data.updatedAt).toLocaleTimeString('zh-CN')}`;

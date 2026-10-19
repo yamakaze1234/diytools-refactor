@@ -18,6 +18,7 @@ use tauri::{Emitter, Manager};
 pub(crate) mod access;
 mod gitea;
 mod recovery;
+pub(crate) mod retention;
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const MANIFEST_NAME: &str = "diytools-refactor-windows-x86_64.json";
@@ -1189,7 +1190,10 @@ fn apply_update(plan_path: &Path) -> Result<(), String> {
             directory,
             "installed",
             "新版本已完成数据库及本机运行时初始化；更新前程序与一致性数据库备份已保留",
-        )
+        )?;
+        // 清理失败不改变安装成功状态，更不能触发业务数据库回滚。
+        retention::run(directory.parent().and_then(Path::parent).ok_or("更新目录无效")?);
+        Ok(())
     } else {
         write_status(
             directory,
@@ -1206,6 +1210,12 @@ fn apply_update(_plan_path: &Path) -> Result<(), String> {
 // 新版 setup 完成后写入进程/版本回执，普通启动没有环境参数时不写任何更新文件。
 pub(crate) fn acknowledge_startup() -> Result<(), String> {
     let Some(directory) = std::env::var_os("DIYTOOLS_UPDATE_RECEIPT") else {
+        // 普通启动重试此前因文件占用而未完成的清理，不阻塞初始化。
+        if let Ok((_, root)) = executable_root() {
+            if portable_marker(&root).is_ok() {
+                std::thread::spawn(move || retention::run(&root));
+            }
+        }
         return Ok(());
     };
     let directory = PathBuf::from(directory);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createDiagnosticLog,diagnostics,diagnosticCode,trackDiagnostic,cloudDiagnosticStage,exportDiagnostics} from '../src/diagnostics.ts';
+import {createDiagnosticLog,diagnostics,diagnosticCode,diagnosticText,trackDiagnostic,cloudDiagnosticStage,exportDiagnostics} from '../src/diagnostics.ts';
 
 test('white-list metadata drops credentials, raw errors, SQL paths and business payloads',async()=>{
  const privateText='password=never-secret token=never-token uid=never-user Server=never-server 配置=never-config';
@@ -11,6 +11,8 @@ test('white-list metadata drops credentials, raw errors, SQL paths and business 
  assert.equal(log.snapshot('bad').version,'unknown');
  assert.equal(diagnosticCode('SQLITE_BUSY '+privateText),'DATABASE_BUSY');
  assert.equal(diagnosticCode('超过 512 MiB '+privateText),'SIZE_LIMIT');
+ assert.equal(diagnosticCode({name:'TimeoutError',message:privateText}),'TIMEOUT');
+ assert.equal(diagnosticCode({name:'AbortError',message:privateText}),'CANCELLED');
 });
 test('bounded session records retain pending operation and increasing elapsed time',async()=>{
  const log=createDiagnosticLog(3);const finish=log.begin('legacy-read');
@@ -36,4 +38,18 @@ test('export requires native saved file acknowledgement and handles cancellation
  assert.equal(await exportDiagnostics(async()=>({cancelled:true}),'0.2.8'),'cancelled');
  await assert.rejects(exportDiagnostics(async()=>({ok:true,files:[]}),'0.2.8'));
  await assert.rejects(exportDiagnostics(async()=>{throw Error('native denied');},'0.2.8'));
+});
+
+test('stalled native export times out, keeps text available and reuses the pending export',async t=>{
+ t.mock.timers.enable({apis:['setTimeout']});
+ let settle,calls=0;
+ const invoke=async command=>{assert.equal(command,'workbench_export_folder');calls++;return new Promise(resolve=>{settle=resolve;});};
+ const first=exportDiagnostics(invoke);
+ const rejected=assert.rejects(first,/尚未确认/);
+ t.mock.timers.tick(30000);await rejected;
+ const text=JSON.parse(diagnosticText());assert.match(text.version,/^\d+\.\d+\.\d+$/);
+ assert(text.events.some(e=>e.stage==='diagnostic-export'&&e.phase==='running'));
+ const retry=exportDiagnostics(invoke);assert.equal(calls,1);
+ settle({ok:true,files:['diagnostics.json']});assert.equal(await retry,'saved');
+ assert.equal(calls,1);
 });
