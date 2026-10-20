@@ -180,6 +180,54 @@ test('empty first download uses current snapshot instead of replaying all histor
  assert.ok(events.some(event=>event.phase==='checkpoint'&&event.received===121&&event.page===2));
 });
 
+test('missing optional first snapshot replays retained log from original cursor and preserves concurrent edits',async()=>{
+ for(const partial of [false,true]){
+  const initial=fixture();initial.document.origin='empty-workspace';
+  if(!partial){initial.state.configs=[];initial.document.records=[];initial.document.materializedProjection=[];initial.document.cursor=0;}
+  const start=initial.document.cursor,base=fixture().document.records[0].base;
+  const h=harness({snapshot:initial,onCall(req,api){
+   if(req.action==='sync.snapshot'){
+    if(partial)api.edit(s=>s.configs[0].footer='同步期间输入');
+    return{ok:false,code:'SNAPSHOT_UNAVAILABLE'};
+   }
+   assert.equal(req.action,'sync.pull','fallback must not upload');
+   assert.equal(req.payload.cursor,start);
+   return{ok:true,headSeq:start+2,nextCursor:start+2,hasMore:false,changes:[
+    change({...copy(base),name:'云端最新'},2,start+1),
+    {type:'workspace_meta',id:'root',version:2,seq:start+2,data:copy(fixture().document.records.find(r=>r.type==='workspace_meta').base)}
+   ]};
+  }});
+  await h.engine.run({member,upload:false});
+  assert.deepEqual(h.calls.map(r=>r.action),['sync.snapshot','sync.pull']);
+  assert.equal(h.current.document.cursor,start+2);assert.equal(h.current.state.configs[0].name,'云端最新');
+  if(partial)assert.equal(h.current.state.configs[0].footer,'同步期间输入');
+  assert.deepEqual(h.current.document.outbox,[]);
+ }
+});
+
+test('required missing checkpoint stops without advancing cursor or losing local draft',async()=>{
+ const h=harness({onCall(req){
+  return{ok:false,code:req.action==='sync.pull'?'SNAPSHOT_REQUIRED':'SNAPSHOT_UNAVAILABLE'};
+ }});
+ h.edit(s=>s.configs[0].name='保留本地草稿');
+ await assert.rejects(h.engine.run({member,upload:false}),e=>e.code==='SNAPSHOT_UNAVAILABLE');
+ assert.deepEqual(h.calls.map(r=>r.action),['sync.pull','sync.snapshot']);
+ assert.equal(h.current.document.cursor,1);assert.equal(h.current.state.configs[0].name,'保留本地草稿');
+});
+
+test('first snapshot only falls back for explicit unavailable response before receiving pages',async()=>{
+ for(const mode of ['denied','database','later-page']){
+  const fresh=fixture();fresh.state.configs=[];fresh.document.records=[];fresh.document.materializedProjection=[];fresh.document.cursor=0;
+  let page=0;const h=harness({snapshot:fresh,onCall(req){
+   assert.equal(req.action,'sync.snapshot');page++;
+   if(mode==='later-page'&&page===1)return{ok:true,checkpointSeq:100,records:[change(fixture().document.records[0].base,1)],nextCursor:['configuration','c1'],hasMore:true};
+   return{ok:false,code:mode==='denied'?'UNAUTHENTICATED':mode==='database'?'DATABASE_UNAVAILABLE':'SNAPSHOT_UNAVAILABLE'};
+  }});
+  await assert.rejects(h.engine.run({member,upload:false}));
+  assert.equal(h.current.document.cursor,0);assert.equal(h.current.state.configs.length,0);assert.equal(h.commits,0);
+ }
+});
+
 test('initial snapshot interruption preserves empty cursor and retries without any upload',async()=>{
  const fresh=fixture();fresh.state.configs=[];fresh.document.records=[];fresh.document.materializedProjection=[];fresh.document.cursor=0;
  let calls=0;const h=harness({snapshot:fresh,onCall(req){assert.equal(req.action,'sync.snapshot');calls++;if(calls===1)return{ok:true,checkpointSeq:100,records:[change(fixture().document.records[0].base,1)],nextCursor:['configuration','c1'],hasMore:true};throw Error('snapshot network interrupted');}});

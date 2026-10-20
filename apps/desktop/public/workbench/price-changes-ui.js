@@ -48,8 +48,10 @@ export async function openPriceChanges(api,{revision,automatic=false}={}){
   document.querySelector('#pc-more')?.addEventListener('click',async e=>{e.target.disabled=true;try{const next=(await call('list',{offset:offset+30})).batches;if(!content.isConnected)return;offset+=30;batches.push(...next);more=next.length===30;draw();}catch(err){api.toast(err.message);e.target.disabled=false;}});
   for(const [id,set] of [['pc-metric',v=>metric=v],['pc-slot',v=>slot=v],['pc-status',v=>status=v]])document.getElementById(id).onchange=e=>{set(e.target.value);page=0;draw();};
   document.querySelector('#pc-search').oninput=e=>{search=e.target.value;page=0;const position=e.target.selectionStart;draw();const field=document.querySelector('#pc-search');field.focus();field.setSelectionRange(position,position);};
-  document.querySelectorAll('[data-band]').forEach(b=>b.onclick=()=>{band=b.dataset.band;page=0;draw();});
-  document.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;page=0;draw();});
+  // 弹窗与主编辑器都有 data-tab；事件只能绑定当前价格视图，避免覆盖主编辑器页签。
+  const root=content.closest('.price-track');
+  root.querySelectorAll('[data-band]').forEach(b=>b.onclick=()=>{band=b.dataset.band;page=0;draw();});
+  root.querySelectorAll('[data-tab]').forEach(b=>b.onclick=()=>{tab=b.dataset.tab;page=0;draw();});
   document.querySelector('#pc-export').onclick=async e=>{const button=e.currentTarget;button.disabled=true;try{const sheets=priceReportSheets(batch,{configs:current(),shopName:api.shopName});const blob=priceReportWorkbook(sheets);await api.download(blob,`价格变动_${batch.daily?batch.day+'-昨日对比':'批次'+batch.revision}.xlsx`);api.toast('已发起报表下载，包含完整配件及链接利润明细');}catch(error){api.toast('导出失败：'+error.message);}finally{button.disabled=false;}};
   document.querySelector('#pc-close').onclick=()=>document.querySelector('#dialog').close();
   document.querySelector('#pc-all')?.addEventListener('click',()=>{automatic=false;tab='links';page=0;draw();});

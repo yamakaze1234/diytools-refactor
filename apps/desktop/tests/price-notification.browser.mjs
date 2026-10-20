@@ -1,4 +1,4 @@
-/** 价格通知隔离浏览器验收：导入完成一次提示，受阻及慢请求不在后续操作补弹。 */
+/** 价格通知隔离浏览器验收：一次提示、不补弹，弹窗重绘及关闭后主编辑页签仍正常。 */
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
@@ -39,6 +39,18 @@ try{
  await page.goto(base+'/workbench/memory-fixture');await page.waitForFunction(()=>window.workbenchReady);
  await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
  await page.locator('[data-config="name"]').waitFor();
+ const mainTabs=page.locator('.main > [role="tablist"] [data-tab]');
+ const checkEditorTabs=async()=>{
+  for(const name of ['actual','addons','modules','costs','parts']){
+   const button=page.locator(`.main > [role="tablist"] [data-tab="${name}"]`);
+   await button.click();
+   assert.equal(await button.getAttribute('aria-selected'),'true',`主编辑页签 ${name} 应能切换`);
+   assert.equal(await mainTabs.evaluateAll(nodes=>nodes.filter(n=>n.classList.contains('active')).length),1);
+   assert.equal(await page.locator('#editor [data-react-editor]').getAttribute('data-react-editor'),name);
+   assert.ok((await page.locator('#editor').textContent()).trim(),`主编辑页签 ${name} 应有内容`);
+  }
+ };
+ await checkEditorTabs();
  await page.locator('.maintenance-tools > summary').click();
  // 存在历史未读，等待真实计时器并操作其他按钮也不会扫描价格记录。
  await page.waitForTimeout(2700);await page.evaluate(()=>window.memoryProbe.check());
@@ -49,7 +61,13 @@ try{
  state.revision=2;batches=[{revision:2,seen:false},...batches];
  await page.evaluate(()=>window.memoryProbe.erp({ok:true,revision:2}));await page.evaluate(()=>window.memoryProbe.check());
  await page.waitForFunction(()=>document.querySelector('#dialog-title').textContent==='本次价格变动');
+ await page.locator('#dialog-body [data-tab="links"]').click();
+ await page.locator('#dialog-body [data-tab="parts"]').click();
+ await page.locator('#pc-metric').selectOption('tax');
+ await page.locator('#dialog-body [data-band="high"]').click();
+ await page.locator('#dialog-body [data-band=""]').click();
  await page.locator('#pc-close').click();await page.waitForFunction(()=>!document.querySelector('#dialog').open);
+ await checkEditorTabs();
  await page.evaluate(()=>window.memoryProbe.check());assert.equal(await page.locator('#dialog').evaluate(n=>n.open),false);
  // 本次ERP成功但其他功能仍打开：关闭后再点击配件功能，不应留下延期通知。
  await page.evaluate(()=>window.memoryProbe.open());state.revision=3;batches=[{revision:3,seen:false},...batches];
@@ -69,15 +87,19 @@ try{
  assert.equal(await page.locator('#dialog').evaluate(n=>n.open),false);
  // 隐藏菜单里的既有手动按钮仍可调用。
  await page.locator('#price-changes-open').evaluate(n=>n.click());await page.waitForFunction(()=>document.querySelector('#dialog-title').textContent==='检查价格变化');
+ await page.locator('#dialog-body [data-tab="links"]').click();
+ await page.locator('#dialog-body [data-tab="parts"]').click();
  await page.locator('#pc-close').click();await page.evaluate(()=>window.memoryProbe.check());assert.equal(await page.locator('#dialog').evaluate(n=>n.open),false);
+ await checkEditorTabs();
  // 关闭与处理回执发生在同一轮事件中：旧DOM尚未清理时也不能重新打开弹窗。
  const staysClosed=await page.evaluate(async config=>{
   const {openPriceChanges}=await import('/workbench/price-changes-ui.js');let finish;
   const detail={revision:4,at:new Date().toISOString(),items:[{goodsId:'115213',name:'隔离配件',slots:['CPU'],before:{tax:100,erp:100},after:{tax:200,erp:200},configIds:[config.id]}],configs:[{before:config,after:config}],handled:[]};
   await openPriceChanges({openDialog:window.memoryProbe.rawOpen,configs:()=>[config],request:async path=>path.endsWith('/list')?{batches:[{revision:4}]}:path.endsWith('/detail')?detail:path.endsWith('/handle')?new Promise(resolve=>finish=resolve):{ok:true},toast(){}});
-  document.querySelector('[data-tab="links"]').click();document.querySelector('#pc-handle').click();
+  document.querySelector('#dialog-body [data-tab="links"]').click();document.querySelector('#pc-handle').click();
   document.querySelector('#dialog').close();finish({ok:true});await Promise.resolve();await Promise.resolve();
   return !document.querySelector('#dialog').open;
  },configs[0]);assert.equal(staysClosed,true);
- assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',oldUnreadIgnored:true,otherButtonsUnaffected:true,erpReceiptPopupOnce:true,blockedImportNeverReopens:true,slowQueryNeverInterrupts:true,closedReceiptNeverReopens:true,manualEntry:true,errors},null,2));
+ await checkEditorTabs();
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',oldUnreadIgnored:true,otherButtonsUnaffected:true,erpReceiptPopupOnce:true,blockedImportNeverReopens:true,slowQueryNeverInterrupts:true,closedReceiptNeverReopens:true,manualEntry:true,mainEditorTabsAfterAutoManualAndRedraw:true,errors},null,2));
 }finally{releaseList();await browser.close();}

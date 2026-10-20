@@ -214,7 +214,7 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
     }
     throw fail('本轮上传达到上限，请继续同步');
   }
-  async function checkpoint(){
+  async function checkpoint({optional=false}={}){
     for(let attempt=0;attempt<3;attempt++){
       let seq,cursor=null,rows=[],keys=new Set(),restart=false;
       for(let i=0;i<5000;i++){
@@ -222,6 +222,10 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
         const snapshot=await transact(activeMember);if(snapshot.document.outbox.length)throw fail('待确认提交不能跳过检查点');
         onProgress({phase:'checkpoint-request',page:i+1,received:rows.length,attempt:attempt+1});
         const part=await call(envelope('sync.snapshot',{cursor,limit:100,...(seq===undefined?{}:{checkpointSeq:seq})}));
+        // 首次快照只是加速路径；尚未生成检查点时从原游标重放保留日志。
+        // 已开始分页或服务端明确要求检查点时不能降级，避免跳过已归档数据。
+        if(optional&&i===0&&part?.ok===false&&part.code==='SNAPSHOT_UNAVAILABLE')return;
+        if(part?.code==='SNAPSHOT_UNAVAILABLE')throw fail('云端同步快照不可用，请联系管理员检查同步检查点；本机修改已保留','SNAPSHOT_UNAVAILABLE');
         if(part?.code==='SNAPSHOT_CHANGED'){restart=true;break;}
         if(!part?.ok||!safeInteger(part.checkpointSeq)||!Array.isArray(part.records)||typeof part.hasMore!=='boolean'||seq!==undefined&&seq!==part.checkpointSeq)throw fail(part?.message||part?.code||'云端检查点分页无效');
         seq??=part.checkpointSeq;if(seq<snapshot.document.cursor)throw fail('云端检查点版本回退');
@@ -246,7 +250,7 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
     const partialFirstDownload=doc.origin==='empty-workspace'&&doc.lastSyncedAt==null&&!doc.outbox.length
       &&doc.records.every(row=>!row.conflict&&equivalent(row.base,row.draft))
       &&equivalent(projectWorkspace(initial.state),doc.materializedProjection);
-    if(firstPass&&(pristine||partialFirstDownload))await checkpoint();
+    if(firstPass&&(pristine||partialFirstDownload))await checkpoint({optional:true});
     for(let i=0;i<5000;i++){
       boundary();
       const snapshot=await transact(activeMember),cursor=snapshot.document.cursor;
