@@ -134,6 +134,6 @@ test('an unchanged compact cloud refresh leaves undo and detail state untouched'
  const text=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
  const implementation=text.slice(text.indexOf('async function refreshCompactWorkspace('),text.indexOf('function compactChanges('));
  const history=[{configId:'c0'}];let applied=false;
- const context=vm.createContext({compactRefresh:null,fullWorkspace:false,workspaceLoad:null,savePromise:null,batchPromise:null,ordinaryPending:null,batchPending:null,conflict:false,window:{},$:()=>({open:false}),state:{revision:7},acceptedState:{},lazyWorkspace:{index:()=>({revision:7})},loadedIds:()=>[],active:null,prepareCompactSnapshot:async skip=>{assert.equal(skip,true);return null;},history,applyCompactSnapshot(){applied=true;}});
+ const context=vm.createContext({compactRefresh:null,hasDraftDialog:()=>false,fullWorkspace:false,workspaceLoad:null,savePromise:null,batchPromise:null,ordinaryPending:null,batchPending:null,conflict:false,window:{},$:()=>({open:false}),state:{revision:7},acceptedState:{},lazyWorkspace:{index:()=>({revision:7})},loadedIds:()=>[],active:null,prepareCompactSnapshot:async skip=>{assert.equal(skip,true);return null;},history,applyCompactSnapshot(){applied=true;}});
  vm.runInContext(implementation,context);assert.equal(await context.refreshCompactWorkspace(),true);assert.equal(context.history,history);assert.equal(applied,false);
 });

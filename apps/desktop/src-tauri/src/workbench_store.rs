@@ -710,6 +710,7 @@ const ORDINARY_PRESENTATION_FIELDS: &[&str] = &[
     "previousSquareLayout",
     "autoWidth",
     "theme",
+    "productTheme",
     "palette",
     "themePalettes",
     "fontFamily",
@@ -1667,7 +1668,7 @@ mod tests {
         let presentation = json!({
             "shop":"图片店铺标题", "layout":"long", "skuMode":"dedicated",
             "posterDesignVersion":1, "previousSquareLayout":{"textTransforms":{"header":{"x":12}}},
-            "autoWidth":false, "theme":"light", "palette":{"text":"#123456"},
+            "autoWidth":false, "theme":"light", "productTheme":"light", "palette":{"text":"#123456"},
             "themePalettes":{"dark":{"bg":"#000000"}}, "fontFamily":"阿里巴巴普惠体",
             "modules":[{"id":"header","type":"header","visible":true,"size":22,"text":"新图片文字"}],
             "textStyles":{"header.title":{"size":24,"text":"图片专用文字"}},

@@ -45,7 +45,7 @@ async function fixture(onPatch,count=3){
   crypto:{randomUUID},rememberDisplayParts(){},syncHistoryButtons(){},trimHistory(){},renderAll(){},pollDerivedStatus:async()=>{},scheduleImageSave(){},toast(){},
   active:'c0',pendingImages:new Set(),displayBaseline:new Map(),setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('compact save unexpectedly hydrated full workspace');},
   captureSaveSnapshot(state,base){const result=scope.captureSaveSnapshot(state,base);captures.push(scope.saveSnapshotIds(result));return result;},
-  $:id=>{if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id);}};
+  $:id=>{if(id==='#cloud-close')return null;if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id);}};
  context.loadedIds=()=>context.state.configs.map(row=>row.id);context.current=()=>context.state.configs.find(row=>row.id===context.active&&!row.deletedAt);
  vm.runInNewContext(implementation+'\nglobalThis.runSave=save;globalThis.load=loadDetail;globalThis.refresh=refreshCompactWorkspace;',context);
  await context.load('c0');

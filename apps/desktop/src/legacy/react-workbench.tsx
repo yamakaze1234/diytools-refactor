@@ -7,9 +7,11 @@ import {TemplateArea,TemplatePicker,TemplateSave} from './template-panels';
 import {AddonShell,AddonFields,AddonItems,AddonChoices,CostDialog,CostSummary} from './addon-panels';
 import type {Row} from './editor-controls';
 
-type FieldProps = { field: string; value: string; configId: string; attributes: Record<string, string>; checkpoint: () => void; edit: (field: string, value: string) => void };
-function ConfigField({field,value,attributes,checkpoint,edit}: FieldProps) {
+type FieldProps = { field: string; value: string; configId: string; attributes: Record<string, string>; inlineStyle: string|null; checkpoint: () => void; edit: (field: string, value: string) => void };
+function ConfigField({field,value,attributes,inlineStyle,checkpoint,edit}: FieldProps) {
  const input = useRef<HTMLInputElement>(null);
+ // 外部锁定/解锁可能留下 style=""；保留原始 CSS，不能把 DOM 字符串传给 React style。
+ useLayoutEffect(() => {const node=input.current;if(node){if(inlineStyle===null)node.removeAttribute('style');else node.setAttribute('style',inlineStyle);}}, [inlineStyle]);
  // 同配置重绘不触碰正在输入的值、中文组合串和光标；配置切换由 key 隔离。
  useLayoutEffect(() => { const node=input.current; if(node && node.ownerDocument.activeElement!==node && node.value!==value) node.value=value; }, [value]);
  return <input ref={input} {...attributes} data-config={field} data-react-config="true" defaultValue={value} onFocus={checkpoint} onInput={event=>edit(field,event.currentTarget.value)} />;
@@ -56,9 +58,10 @@ export function createWorkbenchReactRenderer() {
    for(const node of document.querySelectorAll<HTMLInputElement>('[data-config]')) {
     const field=node.dataset.config!;let surface=node.parentElement!;
     const attributes:Record<string,string>={};
-    for(const attribute of node.attributes)if(!['data-config','data-react-config','value'].includes(attribute.name))attributes[attribute.name==='inputmode'?'inputMode':attribute.name]=attribute.value;
+    const inlineStyle=node.getAttribute('style');
+    for(const attribute of node.attributes)if(!['data-config','data-react-config','value','style'].includes(attribute.name))attributes[attribute.name==='inputmode'?'inputMode':attribute.name==='class'?'className':attribute.name]=attribute.value;
     if(!surface.hasAttribute('data-react-field')){surface=document.createElement('span');surface.dataset.reactField=field;surface.style.display='contents';node.replaceWith(surface);}
-    flushSync(()=>rootFor(surface).render(<ConfigField key={String(config.id)} field={field} configId={String(config.id)} value={String(config[field]??'')} attributes={attributes} checkpoint={checkpoint} edit={edit}/>));
+    flushSync(()=>rootFor(surface).render(<ConfigField key={String(config.id)} field={field} configId={String(config.id)} value={String(config[field]??'')} attributes={attributes} inlineStyle={inlineStyle} checkpoint={checkpoint} edit={edit}/>));
    }
   },
   dispose(){for(const [,root] of [...roots].reverse())root.unmount();roots.clear();},

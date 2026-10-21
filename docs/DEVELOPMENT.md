@@ -41,3 +41,7 @@ pnpm build:desktop --no-bundle
 README 面向首次使用者，保留下载入口与产品简介。docs 只维护当前有效的使用、接入、架构、开发和发布说明；版本变化放在 Releases。阶段计划、会话记录、验收日志、截图和临时报告保存在仓库外，不加入源码提交或发行附件。
 
 业务库、素材、账号、集成配置、私有适配器与签名私钥只保留本机。提交前运行 `py -3 -X utf8 tools/audit-public-tree.py --root .`。
+
+本机 Agent 入口的使用与协议见 [Agent 工具入口](AGENT-TOOLS.md)。
+
+正式发行的构建顺序：先 `cargo build --release --locked --manifest-path packages/agent-cli/Cargo.toml`，再 `pnpm build:desktop --no-bundle --features agent-tools`。主EXE嵌入CLI，首次启动自动准备连接；自定义CLI路径可用 `DIYTOOLS_AGENT_CLI_PATH`，共享输出目录遵循 `CARGO_TARGET_DIR`。不含feature的普通开发构建保持关闭。

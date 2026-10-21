@@ -29,8 +29,9 @@ Run-Checked py @('-3', '-X', 'utf8', 'tools/audit-public-tree.py', '--root', '.'
 Run-Checked pnpm @('install', '--frozen-lockfile')
 $tests = @(Get-ChildItem apps/desktop/tests -Recurse -File -Filter '*.test.mjs' | ForEach-Object FullName)
 Run-Checked node (@('--test') + $tests + @('tools/package-portable-update.test.mjs'))
-Run-Checked cargo @('test', '--manifest-path', 'apps/desktop/src-tauri/Cargo.toml', '--lib')
-Run-Checked pnpm @('build:desktop', '--no-bundle')
+Run-Checked cargo @('build', '--release', '--locked', '--manifest-path', 'packages/agent-cli/Cargo.toml')
+Run-Checked cargo @('test', '--manifest-path', 'apps/desktop/src-tauri/Cargo.toml', '--features', 'agent-tools', '--lib', '--', '--test-threads=1)
+Run-Checked pnpm @('build:desktop', '--no-bundle', '--features', 'agent-tools')
 $output = Join-Path $project ("release/publish-" + $version + '-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path (Split-Path -Parent $output) -Force | Out-Null
 Run-Checked node @('tools/package-public-release.mjs', '--key', $PrivateKeyPath, '--exe', 'apps/desktop/src-tauri/target/release/desktop.exe', '--out', $output, '--notes', $NotesPath)

@@ -10,7 +10,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  const $=selector=>document.querySelector(selector),button=$('#workspace-sync'),label=$('#workspace-sync-status'),operator=$('#operator-open');
  const history=bindVersionHistory({flush,receive,openDialog,esc,toast,runMutation}),legacy=bindLegacyHistory({flush,receive,openDialog,esc,toast,runMutation});
  let available=true,phase='',timer,maintenanceTimer,lastSyncedAt=null,wasRunning=false,leaving=false,cleaning=false;
- const blocked=()=>Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending);
+ const blocked=()=>Boolean(window.workbenchAgentBusy||window.parent.workbenchClosePending||window.parent.workbenchUpdatePending);
  const localOnly=view=>view.configured===false||view.session.configured===false;
  const conflictCount=view=>Number(view.checkpoint.conflicts??view.summary?.conflicts??0);
  const pendingText=view=>typeof view.summary?.pending==='number'?`${view.summary.pending} 项`:view.checkpoint.localChangesPending?'有本机修改等待同步':'正在检查';
@@ -145,5 +145,5 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  $('#dialog').addEventListener('close',()=>{setTimeout(()=>controller.deliver().catch(showError),0);});
  window.workbenchPauseCloud=()=>controller.stop();
  window.addEventListener('unload',()=>{clearInterval(timer);clearInterval(maintenanceTimer);controller.pause();},{once:true});
- return {status:()=>controller.status(),open:guard(open)};
+ return {status:()=>controller.status(),open:guard(open),runAgent:async()=>{await controller.run(true);const view=controller.status();return {running:view.running,error:view.error||null,conflicts:Math.max(conflictCount(view),Number(view.summary?.conflicts||0)),pending:typeof view.summary?.pending==='number'?view.summary.pending:null,lastSyncedAt:view.checkpoint?.lastSyncedAt||lastSyncedAt};}};
 }

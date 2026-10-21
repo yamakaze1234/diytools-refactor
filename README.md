@@ -2,9 +2,9 @@
 
 面向 DIY 整机业务的 Windows 工作台。集中管理商品配置、配件成本与利润，批量维护配件和加购说明，制作配置清单图与 SKU 图。
 
-**Windows x64 · 当前版本 0.2.26 · 解压即用**
+**Windows x64 · 当前版本 0.2.27 · 解压即用**
 
-本次更新：修复首次同步因云端缺少快照而中断，并修复价格弹窗关闭后主编辑页签无法切换。
+本次更新：新增 AI / CLI 配置查询、预览修改、批量图片与报告导出及同步入口；升级后自动准备本机 CLI，修复编辑字段消失和同步后旧版本保存冲突，图片主题按链接保留。
 
 ## 系统架构
 
@@ -16,8 +16,8 @@
 
 | 下载入口 | 说明 |
 | --- | --- |
-| **[下载 Windows 首次使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.26/DIYTools-0.2.26-Windows-x64.zip)** | 推荐下载，完整解压后运行 `DIYTools.exe` |
-| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.26/DIYTools-0.2.26-Windows-x64.zip) | 备用下载源 |
+| **[下载 Windows 首次使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.27/DIYTools-0.2.27-Windows-x64.zip)** | 推荐下载，完整解压后运行 `DIYTools.exe` |
+| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.27/DIYTools-0.2.27-Windows-x64.zip) | 备用下载源 |
 | [版本历史 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases) / [GitHub](https://github.com/yamakaze1234/diytools-refactor/releases) | 更新内容与历史程序 |
 
 1. 下载 ZIP，完整解压到可写目录，再运行 `DIYTools.exe`；不要直接在压缩包中运行。
@@ -30,6 +30,7 @@
 
 | 功能 | 使用方式 |
 | --- | --- |
+| AI / CLI | 首次启动自动准备本机 CLI；支持查询、预览修改、图片与报告导出、任务状态和显式同步 |
 | 配置管理 | 按店铺和链接管理多套配置，维护实际配件、展示内容、价格与利润 |
 | 批量修改 | 更换配件、修改加购说明和展示名称，先预览再应用，支持本次修改单次还原 |
 | 差异确认 | 按配件分类查看输出源变化，相同描述变动成组选择 |
@@ -39,6 +40,7 @@
 
 ## 文档
 
+- [AI 与 CLI](docs/AGENT-TOOLS.md)：让本机 AI 查询、修改和导出配置。
 - [使用说明](docs/PUBLIC-USAGE.md)：首次使用、批量操作、图片、备份与更新。
 - [接入说明](docs/PUBLIC-INTEGRATIONS.md)：团队同步和可选 ERP 配置。
 - [源码开发](docs/DEVELOPMENT.md)：环境、运行、测试和构建。

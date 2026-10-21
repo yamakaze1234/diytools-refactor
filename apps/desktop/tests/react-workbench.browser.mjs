@@ -28,6 +28,22 @@ try{
   list.insertAdjacentHTML('beforeend','<section class="template-library-section">旧模板</section>');renderer.list(list,markup(true));
   const stable=row===list.querySelector('[data-id]')&&document.activeElement===row&&row.querySelector('input').checked&&!list.querySelector('.template-library-section');
   renderer.dispose();
+  // Agent 解锁会给原生控件留下 style=""；下一次输入触发重绘仍须保留五个字段。
+  document.body.insertAdjacentHTML('beforeend','<section id="styled-fields">'+['name','version','spu','skuId','shortName'].map(field=>`<label>${field}<input data-config="${field}" id="field-${field}" class="config-field" inputmode="text" placeholder="请输入" aria-label="${field}" style=""></label>`).join('')+'</section>');
+  const styledRenderer=createWorkbenchReactRenderer(),styledConfig={id:'styled-a',name:'名称',version:'原版本',spu:'100',skuId:'200',shortName:'简称'};
+  const repaint=()=>styledRenderer.fields(document,styledConfig,()=>{},(field,value)=>{styledConfig[field]=value;repaint();});
+  repaint();
+  const styledVersion=document.querySelector('[data-config="version"]');
+  styledVersion.style.setProperty('--field-marker','7');styledVersion.style.color='rgb(1, 2, 3)';
+  styledVersion.focus();styledVersion.value='A不同字段';styledVersion.dispatchEvent(new InputEvent('input',{bubbles:true}));
+  const styledFieldsSurvive=document.querySelectorAll('#styled-fields [data-config]').length===5&&document.querySelector('[data-config="version"]')===styledVersion&&styledVersion.value==='A不同字段'&&styledConfig.version==='A不同字段';
+  const styledAttributesPreserved=styledVersion.id==='field-version'&&styledVersion.className==='config-field'&&styledVersion.inputMode==='text'&&styledVersion.placeholder==='请输入'&&styledVersion.getAttribute('aria-label')==='version'&&styledVersion.style.getPropertyValue('--field-marker')==='7'&&styledVersion.style.color==='rgb(1, 2, 3)';
+  styledVersion.style.color='';styledVersion.style.removeProperty('--field-marker');
+  repaint();repaint();
+  const unlockedFieldsSurvive=document.querySelectorAll('#styled-fields [data-config]').length===5&&styledVersion.getAttribute('style')==='';
+  styledVersion.blur();styledConfig.id='styled-b';styledConfig.version='另一配置版本';repaint();
+  const styledSwitch=document.querySelector('[data-config="version"]')!==styledVersion&&document.querySelector('[data-config="version"]').value==='另一配置版本';
+  styledRenderer.dispose();
   const {mountProductSearch,destroyProductSearch}=await import('/workbench/product-search.js');
   const search=document.createElement('div');search.innerHTML='<input>';document.body.append(search);const searchInput=search.querySelector('input');let selections=0;
   const options={getRows:()=>[],inputElement:searchInput,onChange:()=>selections++};
@@ -35,8 +51,9 @@ try{
   const oneSearch=search.querySelectorAll('[data-product-results]').length===1;
   searchInput.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));destroyProductSearch(search);
   searchInput.dispatchEvent(new CompositionEvent('compositionend',{bubbles:true}));
-  return {preserved,switched,stable,changes,checkpoints,empty:!list.querySelector('[data-id]'),oneSearch,selections,destroyed:!search.querySelector('[data-product-results]')};
+  return {preserved,switched,stable,styledFieldsSurvive,styledAttributesPreserved,unlockedFieldsSurvive,styledSwitch,changes,checkpoints,empty:!list.querySelector('[data-id]'),oneSearch,selections,destroyed:!search.querySelector('[data-product-results]')};
  });
  assert.equal(result.preserved,true);assert.equal(result.switched,true);assert.equal(result.stable,true);assert.equal(result.empty,true);assert.deepEqual(result.changes,['中文未完成']);assert.equal(result.checkpoints,1);assert.deepEqual(errors,[]);assert.equal(result.oneSearch,true);assert.equal(result.selections,1);assert.equal(result.destroyed,true);
+ assert.equal(result.styledFieldsSurvive,true);assert.equal(result.styledAttributesPreserved,true);assert.equal(result.unlockedFieldsSurvive,true);assert.equal(result.styledSwitch,true);
  console.log(JSON.stringify({status:'passed',...result},null,2));
 }finally{await browser.close();}

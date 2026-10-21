@@ -18,6 +18,14 @@ async function harness({diagnosticExport,diagnosticText,save=async()=>{},stop=as
  await new Promise(resolve=>setImmediate(resolve));
  return{ui,controller,view,options,elements,calls,messages,posted,intervals,dialogs,parent,historyOptions,legacyOptions};
 }
+
+test('Agent 手动同步返回真实 pending 与冲突，未知 pending 不转换为零',async()=>{
+ const env=await harness();env.calls.length=0;
+ let result=await env.ui.runAgent();assert.deepEqual(env.calls.find(Array.isArray),['run',true]);assert.equal(result.pending,2);
+ env.view.summary={};result=await env.ui.runAgent();assert.equal(result.pending,null);
+ env.view.summary={pending:0,conflicts:1};result=await env.ui.runAgent();assert.equal(result.conflicts,1);assert.equal(result.pending,0);
+ env.view.error='synthetic error';assert.equal((await env.ui.runAgent()).error,'synthetic error');
+});
 test('startup sync is background work, 2-hour timer uses tick, panel has no manual plan controls',async()=>{
  const gate=deferred(),env=await harness({start:()=>gate.promise});assert(env.calls.includes('start'));assert.equal(env.intervals[0].ms,2*60*60*1000);
  await env.ui.open();const html=env.dialogs.at(-1).html;assert.match(html,/立即同步/);assert.doesNotMatch(html,/接入计划|云端游标|待确认请求|cloud-plan|cloud-login/);

@@ -11,6 +11,21 @@ mod migration_store;
 mod workbench_store;
 mod updater;
 mod embedded_assets;
+mod agent_commands;
+#[cfg(feature = "agent-tools")]
+mod agent_jobs;
+#[cfg(feature = "agent-tools")]
+mod agent_files;
+#[cfg(feature = "agent-tools")]
+mod agent_entry;
+#[cfg(all(windows, feature = "agent-tools"))]
+mod agent_bootstrap;
+#[cfg(feature = "agent-tools")]
+mod agent_queries;
+#[cfg(all(feature = "agent-tools", feature = "review-host"))]
+mod agent_review_host;
+#[cfg(all(feature = "agent-tools", feature = "review-host"))]
+pub use agent_review_host::run as run_agent_review_host;
 use tauri::Manager;
 
 pub use embedded_assets::run_embedded_asset_probe;
@@ -89,6 +104,26 @@ pub fn run() {
                 &folder.join("workbench-assets"),
             )
             .map_err(std::io::Error::other)?;
+            // Windows 发行版自备 CLI，旧更新器只替换主 EXE 也可直接启用。
+            #[cfg(all(windows, feature = "agent-tools"))]
+            if agent_bootstrap::enabled(std::env::var_os("DIYTOOLS_AGENT_ENABLED").as_deref()) {
+                let agent = (|| -> Result<_, std::io::Error> {
+                    let cli = agent_bootstrap::prepare(&executable_dir)?;
+                    let jobs = std::sync::Arc::new(agent_jobs::AgentJobs::new(folder.clone(), workbench.clone())
+                        .map_err(|error| std::io::Error::other(error.message))?);
+                    let entry = agent_entry::AgentEntry::start(workbench.clone(), Some(jobs.clone()))
+                        .map_err(|error| std::io::Error::other(error.message))?;
+                    if let Err(error) = agent_bootstrap::publish(&executable_dir, &cli, &std::env::current_exe()?, std::process::id()) {
+                        entry.stop();
+                        return Err(error);
+                    }
+                    Ok((jobs, entry))
+                })();
+                match agent {
+                    Ok((jobs, entry)) => { app.manage(jobs); app.manage(entry); }
+                    Err(error) => agent_bootstrap::report_failure(&executable_dir, &error),
+                }
+            }
             app.manage(workbench);
             app.manage(std::sync::Arc::new(cloud_native::CloudRuntime::new(&folder).map_err(std::io::Error::other)?));
             app.manage(asset_protocol::AssetRoot(folder.join("workbench-assets")));
@@ -104,6 +139,7 @@ pub fn run() {
             )
         })
         .invoke_handler(tauri::generate_handler![
+            agent_commands::agent_ui,
             updater::updater_check,
             updater::updater_download,
             updater::updater_install,
@@ -134,6 +170,10 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                #[cfg(feature = "agent-tools")]
+                if let Some(entry) = app.try_state::<agent_entry::AgentEntry>() {
+                    entry.stop();
+                }
                 tauri::async_runtime::block_on(async {
                     let _ = tokio::time::timeout(std::time::Duration::from_secs(6),
                         app.state::<erp_session::ErpSessionState>().shutdown()).await;
@@ -141,3 +181,12 @@ pub fn run() {
             }
         });
 }
+
+#[cfg(feature = "review-host")]
+mod cloud_review_host;
+#[cfg(feature = "review-host")]
+pub use cloud_review_host::run as run_cloud_review_host;
+#[cfg(feature = "review-host")]
+mod workbench_review_host;
+#[cfg(feature = "review-host")]
+pub use workbench_review_host::run as run_workbench_review_host;

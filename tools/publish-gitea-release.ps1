@@ -150,7 +150,10 @@ try {
         $tests = @(Get-ChildItem apps/desktop/tests -Recurse -File -Filter '*.test.mjs' | ForEach-Object FullName)
         Invoke-Checked node (@('--test') + $tests + @('tools/package-portable-update.test.mjs', 'tools/verify-gitea-package.test.mjs'))
         Invoke-Checked cargo @('test', '--manifest-path', 'apps/desktop/src-tauri/Cargo.toml', '--lib')
-        Invoke-Checked pnpm @('build:desktop', '--no-bundle')
+        # 先构建独立 CLI，再嵌入主 EXE；不能在 desktop build.rs 递归调用 Cargo。
+        Invoke-Checked cargo @('build', '--release', '--locked', '--manifest-path', 'packages/agent-cli/Cargo.toml')
+        Invoke-Checked cargo @('test', '--manifest-path', 'apps/desktop/src-tauri/Cargo.toml', '--lib', '--features', 'agent-tools')
+        Invoke-Checked pnpm @('build:desktop', '--no-bundle', '--features', 'agent-tools')
         $ArtifactsDirectory = Join-Path $source ("release/gitea-$version-" + [guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path (Split-Path -Parent $ArtifactsDirectory) -Force | Out-Null
         $targetDirectory = if ($env:CARGO_TARGET_DIR) { [IO.Path]::GetFullPath($env:CARGO_TARGET_DIR, $source) } else { Join-Path $source 'apps/desktop/src-tauri/target' }

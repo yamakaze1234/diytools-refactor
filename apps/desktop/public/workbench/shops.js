@@ -108,6 +108,32 @@ export function applyPosterTheme(configs,theme){
  return ids;
 }
 
+/** 链接主题随配置正文保存；旧配置未选定链接主题时保留各自样式。 */
+export function applyProductThemes(configs){
+ const groups=new Map(),ids=[];
+ for(const c of configs){if(c.deletedAt)continue;const key=JSON.stringify([c.shopId,c.productId||c.product||c.spu||c.id]);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(c);}
+ for(const rows of groups.values()){
+  const theme=rows.find(c=>['light','dark'].includes(c.productTheme))?.productTheme;
+  if(!theme)continue;
+  for(const c of rows){if(c.productTheme===theme&&c.theme===theme)continue;c.productTheme=theme;if(c.theme!==theme)switchShopTheme(c,theme);ids.push(c.id);}
+ }
+ return ids;
+}
+
+/** 显式切换只作用于已传入的当前链接，不再更新店铺主题。 */
+export function setProductTheme(configs,theme){
+ if(!['light','dark'].includes(theme))throw Error('未知图片主题');
+ const ids=[];
+ for(const c of configs){if(c.deletedAt)continue;const changed=c.productTheme!==theme||c.theme!==theme;c.productTheme=theme;if(c.theme!==theme)switchShopTheme(c,theme);if(changed)ids.push(c.id);}
+ return ids;
+}
+
+/** 导出使用已保存的链接主题；不修改调用方的配置与自定义配色。 */
+export function productPosterConfig(config){
+ if(!['light','dark'].includes(config.productTheme)||config.theme===config.productTheme)return config;
+ return switchShopTheme(clone(config),config.productTheme);
+}
+
 /** 为配置赋予店铺身份，是否重置外观由 resetAppearance 明确控制。 */
 export function applyShopIdentity(config,shopId,{resetAppearance=false}={}){
  const shop=shopById(shopId);config.shopId=shop.id;config.shop=shop.name;config.brandText=shop.brandText;

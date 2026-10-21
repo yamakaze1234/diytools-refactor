@@ -1,0 +1,11 @@
+[package]
+name = "diytools-agent"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+diytools-agent-core = { path = "../agent-core" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }

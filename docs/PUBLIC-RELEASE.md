@@ -42,7 +42,7 @@ pwsh -NoProfile -File tools/publish-gitea-release.ps1 `
 | `release-notes.md` | 此版本的更新说明 |
 | `diytools-refactor-windows-x86_64.json` | Ed25519 签名清单，绑定版本、下载地址、长度和 SHA-256 |
 
-便携 ZIP 只包含 `DIYTools.exe`、`diytools-portable.json` 与 `使用说明.md`。不能直接压缩现有用户安装目录作为公开包。
+便携 ZIP 只包含 `DIYTools.exe`、`diytools-portable.json` 与 `使用说明.md`。正式主 EXE 以 agent-tools 特性编译并内置先行构建的配套 CLI；首次启动/更新重启自动准备 CLI 与当前实例连接文件，旧客户端仍只下载签名主 EXE。构建顺序为 CLI → 桌面 EXE，不依赖额外启动脚本。不能直接压缩现有用户安装目录作为公开包。
 
 版本附件上传并核验成功后，才更新 `refactor-updates`。源码推送成功不等于程序已经发布；发布完成还需要确认版本 Release、附件和更新通道均可读取。
 

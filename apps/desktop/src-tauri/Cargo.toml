@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.2.26"
+version = "0.2.27"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -9,6 +9,17 @@ default-run = "desktop"
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 review-host = []
+agent-tools = ["dep:diytools-agent-core"]
+
+[[bin]]
+name = "agent-review-host"
+path = "src/bin/agent-review-host.rs"
+required-features = ["review-host", "agent-tools"]
+
+[[bin]]
+name = "cloud-review-host"
+path = "src/bin/cloud-review-host.rs"
+required-features = ["review-host"]
 
 [[bin]]
 name = "workbench-review-host"
@@ -28,13 +39,14 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+diytools-agent-core = { path = "../../../packages/agent-core", optional = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision", "preserve_order"] }
 sha2 = "0.10"
 tokio = { version = "1", features = ["process", "time", "io-util", "sync"] }
-rusqlite = { version = "0.40", features = ["bundled", "backup", "serialize"] }
+rusqlite = { version = "0.40", features = ["bundled", "backup", "serialize", "hooks"] }
 base64 = "0.23.1"
 chrono = "0.4.45"
 rfd = "0.15.4"

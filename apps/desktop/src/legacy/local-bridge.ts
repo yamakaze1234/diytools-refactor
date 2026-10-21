@@ -1,6 +1,7 @@
 import { diagnostics, diagnosticText, exportDiagnostics, trackDiagnostic, cloudDiagnosticStage } from '../diagnostics.ts';
 /** 旧页面本机桥接：将受支持的 fetch 路由映射到 Tauri IPC，素材 URL 仅在渲染时转换。 */
 import { invoke as tauriInvoke } from '@tauri-apps/api/core';
+import {installAgentBridge} from './agent-bridge.ts';
 
 /** Adapter for the legacy renderer. Business state stays in the Rust local store. */
 export type WorkbenchInvoke = <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
@@ -193,6 +194,7 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
   // Native batch export preserves the old file contract; a failed native command rejects visibly.
   // Browser preview has no pywebview bridge, so the existing browser ZIP download remains active.
   if (invoke) {
+    if (typeof targetWindow.setInterval === 'function') installAgentBridge(targetWindow, invoke);
     // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
     targetWindow.workbenchExportDiagnostics = () => exportDiagnostics(invoke);
     targetWindow.workbenchDiagnosticText = () => diagnosticText();

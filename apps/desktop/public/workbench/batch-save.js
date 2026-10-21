@@ -15,7 +15,7 @@ export function validateBatchSources(plan,catalog){
 // 这里只包括配置自身的海报内容/样式，不包括链接、店铺设置或图库记录。
 export const ordinaryPresentationFields=Object.freeze([
  'shop','layout','skuMode','posterDesignVersion','previousSquareLayout','autoWidth',
- 'theme','palette','themePalettes','fontFamily','modules','textStyles','skuTextStyles',
+ 'theme','productTheme','palette','themePalettes','fontFamily','modules','textStyles','skuTextStyles',
  'textTransforms','moduleTransforms','freeCanvasLayouts','caseImage','caseVisible',
  'caseTransforms','posterImages','showUpgrades','showWarranty','upgradeColor',
  'upgradeSize','upgradeWeight','posterFields','posterSubtitle','footer'

@@ -1,4 +1,5 @@
 import {saveConflictHtml} from './save-conflict-view.js';
+import {createAgentWorkflow} from './agent-workflow.js';
 import {openWpsExport} from './wps-export.js';
 // 批量图片任务在弹窗之外保留进度与失败项。
 import {startImageExportTask} from './image-export-tasks.js';
@@ -97,7 +98,7 @@ import {configurationHardwareSummary,configurationSummaryText,configurationSumma
 import {mountNameFormatPreview,mountNameFormatEntry,openNameFormatBatch,applyNameFormatPlan,validateNameFormatPlan} from './name-format-batch.js';
 import {ordinaryConfigs,legacyTemplateConfigs,isLegacyTemplateConfig,templateConfigLabel,migrateSavedTemplates,editableTemplateLibrary} from './template-library.js';
 import {mountTemplateArea} from './template-area.js';
-import {shops,shopById,shopPalette,shopUpgradeColor,shopServiceColor,switchShopTheme,applyPosterTheme,applyShopIdentity,normalizeWorkspaceStateAsync,settingsFor,sourcesFor,DEFAULT_ERP_SHOP_IDS} from './shops.js';
+import {shops,shopById,shopPalette,shopUpgradeColor,shopServiceColor,applyProductThemes,setProductTheme,applyShopIdentity,normalizeWorkspaceStateAsync,settingsFor,sourcesFor,DEFAULT_ERP_SHOP_IDS} from './shops.js';
 const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const moneyFormatter=new Intl.NumberFormat('zh-CN',{minimumFractionDigits:0,maximumFractionDigits:0});
@@ -225,7 +226,7 @@ function applyCompactSnapshot(result){
 let compactionFlight=null;
 async function compactWorkspace(){
  if(compactionFlight)return compactionFlight;
- const blocked=()=>!fullWorkspace||workspaceLoad||fullActionBusy||dirty||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending();
+ const blocked=()=>window.workbenchAgentBusy||!fullWorkspace||workspaceLoad||fullActionBusy||dirty||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending();
  if(blocked())return;
  const beforeState=state,beforeBase=acceptedState,selectedId=active,generation=activationGeneration,stacks=[history.slice(),redoHistory.slice()];
  const compacted=compactConfigHistory(stacks,state);if(!compacted)return;
@@ -251,12 +252,14 @@ async function savedReceiptState(receipt){
 // 恢复文件包含完整草稿及比较基线，保证恢复后仍可正确识别并发修改。
 async function recoverySnapshot(){const {state,baseState}=await completeWorkspaceSnapshot();return {state,baseState};}
 let compactRefresh=null;
+// 同步面板不暂存配置草稿，允许同步完成前回读；其他弹窗仍保护尚未提交的输入。
+const hasDraftDialog=()=>$('#dialog').open&&!$('#cloud-close');
 // 共享一次后台刷新；只在输入、保存和导航检查均通过后更新列表及安全详情。
 async function refreshCompactWorkspace(){
  // 点击和同步通知共享刷新任务；保存回执/待重试请求仍独占自己的基线。
  if(compactRefresh)return compactRefresh;
  // 弹窗可能暂存尚未写入 dirty 的价格或配件输入，按钮获得焦点也不能解除此保护。
- const blocked=()=>fullWorkspace||workspaceLoad||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending();
+ const blocked=()=>window.workbenchAgentBusy||fullWorkspace||workspaceLoad||savePromise||batchPromise||ordinaryPending||batchPending||conflict||hasDraftDialog()||window.workbenchSourceEditor?.hasPending();
  if(blocked())return false;
  compactRefresh=(async()=>{
   const beforeState=state,beforeBase=acceptedState,beforeIndex=lazyWorkspace.index(),revision=state.revision,ids=loadedIds().join('\0'),selectedId=active;
@@ -451,26 +454,26 @@ async function sendBatchPending(){
  return batchPromise;
 }
 // 把预览确认的批量更换转换成事务请求，保持展示配件和实际 BOM 一致。
-async function applyBatchChanges(plan,message){
+async function applyBatchChanges(plan,message,agentOptions=null){
  await save();
  validateBatchSources(plan,currentCatalog());
- validateReplacement(plan,available());
+ validateReplacement(plan,agentOptions?state.configs:available());
  checkpoint();
- const ids=applyReplacement(plan,available());
+ const ids=applyReplacement(plan,agentOptions?state.configs:available());
  const byId=new Map(state.configs.map(c=>[c.id,c]));
  for(const id of ids)displayBaseline.set(id,clone(byId.get(id).parts));
  const displayChanged=plan.changes.some(c=>visiblePosterInput(c.before)!==visiblePosterInput(c.after));
  changed(message,ids,false,new Map(plan.changes.map(c=>[c.id,c.before])),!displayChanged);renderAll();clearTimeout(timer);
  const sent=cloneEditorState(state),base=new Map(acceptedState.configs.map(c=>[c.id,c])),intents=new Map(plan.changes.map(c=>[c.id,c]));
- const payload={operationId:crypto.randomUUID(),baseRevision:acceptedState.revision,operator,message,
+ const payload={operationId:agentOptions?.operationId||crypto.randomUUID(),baseRevision:acceptedState.revision,operator,message,
   changes:ids.map(id=>{const intent=intents.get(id),saved=base.get(id),local=clone(intent.after),live=byId.get(id);
    if(live.shortName!==intent.before.shortName)local.shortName=live.shortName;
    if(live.emptyLinkDraft!==intent.before.emptyLinkDraft){if(Object.hasOwn(live,'emptyLinkDraft'))local.emptyLinkDraft=live.emptyLinkDraft;else delete local.emptyLinkDraft;}
    const merged=mergeEditingState({configs:[intent.before],shopSettings:{}},{configs:[local],shopSettings:{}},{configs:[saved],shopSettings:{}});
    if(merged.conflict)throw Error('配置来源已变化，请重新预览');
    return {id,base:clone(saved),after:merged.state.configs[0]};})};
- invalidateSaveScope(state,'asynchronous batch request');dirty=false;batchPending={payload,sent};
- try{await sendBatchPending();}catch(e){if(e.status===404){batchPending=null;await save();return ids;}throw e;}
+ invalidateSaveScope(state,'asynchronous batch request');dirty=false;batchPending={payload,sent,...(agentOptions?{agent:{plan:clone(plan),baseline:clone(agentOptions.baseline),counter:changeCounter}}:{})};
+ try{const receipt=await sendBatchPending();if(agentOptions)return receipt;}catch(e){if(e.status===404&&!agentOptions){batchPending=null;await save();return ids;}throw e;}
  return ids;
 }
 let imageTimer;
@@ -559,7 +562,7 @@ async function activate(id){const token=++activationGeneration;try{if(!fullWorks
 // 切换店铺主题、设置和配件目录，统一更新对应导航信息。
 function renderShop(){const shop=currentShop(),card=$('#shop-card');card.dataset.shop=shop.id;$('#shop-picker').value=shop.id;const brand=$('#shop-brand');brand.replaceChildren();if(shop.brandLogo){const logo=document.createElement('img');logo.src=globalThis.resolveWorkbenchAsset?.(shop.brandLogo.src)||shop.brandLogo.src;logo.alt=shop.brandText;logo.className='shop-brand-image';brand.append(logo);}else brand.textContent=shop.brandText;$('#shop-settings').textContent='店铺设置';$('#shop-settings').title='优惠券与默认服务承诺';document.title=`${shop.name} · DIY 配置工作台`;}
 // 重画工作台完整视图；全量归一只适用于完整工作区，避免修改未加载摘要。
-function renderAll(historyIds=null,persistNormalization=true){if(!fullWorkspace)return renderCompact();invalidateSaveScope(state,'renderAll migrations and shared presentation normalization');previewNavigation?.render();const migrated=migrateSavedTemplates(state,activeShopId);if(persistNormalization&&migrated.length)changed('将已保存模板归入主机模板',[],false,null,true);const themeIds=applyPosterTheme(ordinaryAvailable().filter(c=>!c.fixedInitialFormat),currentSettings().posterTheme);if(persistNormalization&&themeIds.length)changed('统一本店图片主题',themeIds,'asset');const viewIds=applyPosterView(ordinaryAvailable().filter(c=>!c.fixedInitialFormat),currentSettings().posterView);if(persistNormalization&&viewIds.length)changed('统一配置图视图',viewIds,'asset');if(current())normalizePosterDesign(current());rememberDisplayParts(historyIds);renderShop();const empty=!current();for(const child of document.querySelector('.main').children){if(child.classList.contains('page-heading'))continue;child.classList.toggle('hidden',child.id==='empty-state'?!empty:empty);}$('.preview-side').classList.toggle('hidden',empty);for(const id of ['delete-current','duplicate','copy-shop'])$('#'+id).disabled=empty;updateHeading();renderList();if(empty){$('#empty-state h2').textContent=ordinaryAvailable().length?'请从左侧选择需要编辑的配置':`${currentShop().name}暂无日常配置，可在左侧展开主机模板`;previewToken++;return;}renderProduct();renderConfigFields();$('#layout').value=current().layout;$('#poster-auto-width').checked=current().autoWidth===true;updateSkuControls();$('#name-format').value=current().nameFormat||'compact';$$('[data-theme]').forEach(el=>{el.classList.toggle('active',el.dataset.theme===current().theme);el.disabled=false;});renderEditor();updateSummary();schedulePreview();const record=imageRecords.get(active);$('#image-status').textContent=record?`图片已保存 · r${record.revision}`:'当前版式预览';$('#saved-image').classList.toggle('hidden',!record);if(record)$('#saved-image').href=record.url;}
+function renderAll(historyIds=null,persistNormalization=true){if(!fullWorkspace)return renderCompact();invalidateSaveScope(state,'renderAll migrations and shared presentation normalization');previewNavigation?.render();const migrated=migrateSavedTemplates(state,activeShopId);if(persistNormalization&&migrated.length)changed('将已保存模板归入主机模板',[],false,null,true);const themeIds=applyProductThemes(ordinaryAvailable());if(persistNormalization&&themeIds.length)changed('跟随链接图片主题',themeIds,'asset');const viewIds=applyPosterView(ordinaryAvailable().filter(c=>!c.fixedInitialFormat),currentSettings().posterView);if(persistNormalization&&viewIds.length)changed('统一配置图视图',viewIds,'asset');if(current())normalizePosterDesign(current());rememberDisplayParts(historyIds);renderShop();const empty=!current();for(const child of document.querySelector('.main').children){if(child.classList.contains('page-heading'))continue;child.classList.toggle('hidden',child.id==='empty-state'?!empty:empty);}$('.preview-side').classList.toggle('hidden',empty);for(const id of ['delete-current','duplicate','copy-shop'])$('#'+id).disabled=empty;updateHeading();renderList();if(empty){$('#empty-state h2').textContent=ordinaryAvailable().length?'请从左侧选择需要编辑的配置':`${currentShop().name}暂无日常配置，可在左侧展开主机模板`;previewToken++;return;}renderProduct();renderConfigFields();$('#layout').value=current().layout;$('#poster-auto-width').checked=current().autoWidth===true;updateSkuControls();$('#name-format').value=current().nameFormat||'compact';$$('[data-theme]').forEach(el=>{el.classList.toggle('active',el.dataset.theme===current().theme);el.disabled=false;});renderEditor();updateSummary();schedulePreview();const record=imageRecords.get(active);$('#image-status').textContent=record?`图片已保存 · r${record.revision}`:'当前版式预览';$('#saved-image').classList.toggle('hidden',!record);if(record)$('#saved-image').href=record.url;}
 // React 基本信息字段直接提交到现有配置，简称自动/手动和撤销语义保持不变。
 function renderConfigFields(){reactWorkbench.fields(current(),()=>checkpointConfig(),(field,value)=>{current()[field]=value;if(field==='shortName'){current().shortNameAuto=false;syncPosterShortName(current());}changed('编辑配置基本信息');});}
 // 普通切换只刷新目标配置相关区域，减少全量列表和配置处理。
@@ -888,7 +891,7 @@ function bind(){
 $('#name-generate').onclick=()=>{checkpointConfig();current().shortNameAuto=true;current().nameFormat=$('#name-format').value;syncPosterShortName(current());changed('生成简称');renderAll();};$('#ids').onclick=openIds;$('#link-parts').onclick=openLinkPartsDialog;$('#batch-style').onclick=openBatchStyle;$('#global-batch-open').onclick=openGlobalParts;$('#link-upgrades').onclick=()=>openUpgradeDescriptions(true);$('#link-display-names').onclick=()=>openUpgradeDescriptions(true,'displayName');$('#inventory-check-open').onclick=openStockCheck;$('#profit-check-open').onclick=openProfit;$('#price-changes-open').onclick=()=>showPriceChanges();$('#inventory-export-open').onclick=fullAction(()=>openInventoryExport({openDialog,esc,getConfigs:()=>state.configs.filter(config=>!isLegacyTemplateConfig(config)),shop:currentShop(),download:downloadBlob,toast}));
  $('#poster-auto-width').onchange=()=>{checkpointConfig();const c=current();c.autoWidth=$('#poster-auto-width').checked;delete c.freeCanvasLayouts?.[c.layout];delete c.textTransforms?.[c.layout];delete c.moduleTransforms?.[c.layout];posterEditor?.clear();changed('按型号适配图片宽度');};
  $('#sku-mode').onchange=()=>setPosterView({layout:current().layout,skuMode:$('#sku-mode').value});
- $('#layout').onchange=()=>setPosterView({layout:$('#layout').value,skuMode:current().skuMode||'dedicated'});$$('[data-theme]').forEach(b=>b.onclick=fullAction(()=>{checkpoint();const legacy=isLegacyTemplateConfig(current());if(!legacy)currentSettings().posterTheme=b.dataset.theme;const ids=applyPosterTheme(legacy?[current()]:ordinaryAvailable(),b.dataset.theme);changed(legacy?'修改主机模板图片主题':'统一本店图片主题',ids,'asset');$$('[data-theme]').forEach(x=>x.classList.toggle('active',x===b));if(tab==='modules')renderEditor();toast((legacy?'当前主机模板':'本店日常配置')+'已统一为'+(b.dataset.theme==='dark'?'深色':'浅色')); }));$('#export-width').onchange=()=>toast('导出宽度已调整，预览使用默认尺寸，导出使用所选宽度');
+ $('#layout').onchange=()=>setPosterView({layout:$('#layout').value,skuMode:current().skuMode||'dedicated'});$$('[data-theme]').forEach(b=>b.onclick=fullAction(()=>{checkpoint();const legacy=isLegacyTemplateConfig(current());const ids=legacy?setProductTheme([current()],b.dataset.theme):setProductTheme(currentProduct().configs,b.dataset.theme);changed(legacy?'修改主机模板图片主题':'修改链接图片主题',ids,'asset');$$('[data-theme]').forEach(x=>x.classList.toggle('active',x===b));if(tab==='modules')renderEditor();toast((legacy?'当前主机模板':'当前链接')+'已切换为'+(b.dataset.theme==='dark'?'深色':'浅色')); }));$('#export-width').onchange=()=>toast('导出宽度已调整，预览使用默认尺寸，导出使用所选宽度');
  $('#download').onclick=exportCurrent;$('#batch-export').onclick=batchExport;
  $('#backup-file').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{const incoming=JSON.parse(await file.text());if(!Array.isArray(incoming.configs)||!incoming.configs.length||incoming.configs.some(c=>!c.id||!Array.isArray(c.parts)||!Array.isArray(c.modules)))throw Error('备份格式不正确');openDialog('恢复本地备份',`<p class="hint">备份有 ${incoming.configs.length} 套配置，将替换当前原型数据。可先下载当前备份。恢复后可撤销。</p><div class="actions"><button id="restore-backup-first">备份当前数据</button><button id="restore-apply" class="primary">恢复这些配置</button></div>`);$('#restore-backup-first').onclick=backup;$('#restore-apply').onclick=async()=>{await ensureFullWorkspace();const counter=changeCounter,prepared=await prepareWorkspaceState({...incoming,revision:state.revision,caseGallery:incoming.caseGallery??state.caseGallery},baseCatalog);if(counter!==changeCounter||savePromise||batchPromise||conflict)return toast('恢复准备期间配置已有新的修改，请重新打开备份');checkpoint();state=prepared.state;catalog=prepared.catalog;if(!shops.some(shop=>shop.id===activeShopId))activeShopId='intel';active=ordinaryConfigs(available())[0]?.id||null;selected=new Set(active?[active]:[]);changed('恢复备份',state.configs.map(c=>c.id));renderAll();closeDialog();};}catch(err){toast(err.message);}e.target.value='';};
  $('#asset-button').onclick=()=>openGallery(true);$('#asset-file').onchange=async e=>{const f=e.target.files[0];if(!f)return;try{if(f.size>24*1024*1024)throw Error('素材请小于 24MB');const data=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result.split(',')[1]);reader.onerror=reject;reader.readAsDataURL(f);});const r=await request('/api/asset',{method:'POST',body:JSON.stringify({base64:data})});checkpointConfig();current().caseImage=r.url;changed('更换机箱素材');toast('机箱图已更新，保持原图比例');}catch(err){toast(err.message);}e.target.value='';};
@@ -923,7 +926,27 @@ const openGlobalParts=fullAction(openGlobalPartsFull);
 const openCosts=fullAction(openCostsFull);
 const openGallery=fullAction(openGalleryFull);
 const setPosterView=fullAction(setPosterViewFull);
-try{const [index,base,memberSession]=await Promise.all([lazyWorkspace.refresh(),request('/catalog.json'),request('/api/session')]);session=memberSession;operator=localStorage.getItem('diy-operator')||session.defaultOperator;baseCatalog=base;const initialState=await prepareWorkspaceState({...index.metadata,configs:[],revision:index.revision,updatedAt:index.updatedAt},baseCatalog);state=markPartialWorkspace(initialState.state);acceptedState=cloneEditorState(state);catalog=initialState.catalog;const remembered=localStorage.getItem('diy-active-shop');activeShopId=shops.some(shop=>shop.id===remembered)?remembered:'intel';active=null;selected.clear();productGroups(available()).forEach(p=>collapsedProducts.add(p.id));bind();renderAll();window.workbenchReady=true;installColorPicker({current,checkpoint:()=>checkpointConfig()});workspaceSyncUi=await bindWorkspaceSync({getState:()=>state,flush:save,openDialog,esc,toast,onMember:member=>{if(member){operator=member.name;$('#operator-open').textContent='成员：'+operator;$('#operator-open').disabled=false;$('#operator-open').title='账号管理：切换账号或退出登录';}else {$('#operator-open').textContent='请登录';$('#operator-open').disabled=false;}},receive:async()=>{if(!fullWorkspace)return refreshCompactWorkspace();if(dirty||savePromise||$('#dialog').open||document.activeElement?.matches('input,textarea,select'))return false;const counter=changeCounter;const next=await request('/api/state?logs=none');if(counter!==changeCounter||dirty||savePromise)return false;if(next.revision===state.revision)return;const prepared=await prepareWorkspaceState(next,baseCatalog);if(counter!==changeCounter||dirty||savePromise||$('#dialog').open||document.activeElement?.matches('input,textarea,select'))return false;state=prepared.state;acceptedState=next;catalog=prepared.catalog;if(!current())active=ordinaryConfigs(available())[0]?.id||null;selected=new Set([...selected].filter(id=>available().some(c=>c.id===id)));history=[];redoHistory=[];imageRecords.clear();syncHistoryButtons();renderAll();}});$('#save-status').textContent=state.updatedAt?'已载入本地保存':'已载入本机配置';pollDerivedStatus().catch(()=>{});}catch(e){$('#save-status').textContent=e.status===404?'需要重启工作台服务':'载入失败';if(e.status===404)$('#config-heading').textContent='请重启工作台以完成更新';$('#editor').innerHTML=`<p class="error">${esc(e.status===404?'工作台已更新，请双击 prototype 文件夹中的「重启原型.cmd」，然后刷新页面。':e.message)}</p>`;}
+try{const [index,base,memberSession]=await Promise.all([lazyWorkspace.refresh(),request('/catalog.json'),request('/api/session')]);session=memberSession;operator=localStorage.getItem('diy-operator')||session.defaultOperator;baseCatalog=base;const initialState=await prepareWorkspaceState({...index.metadata,configs:[],revision:index.revision,updatedAt:index.updatedAt},baseCatalog);state=markPartialWorkspace(initialState.state);acceptedState=cloneEditorState(state);catalog=initialState.catalog;const remembered=localStorage.getItem('diy-active-shop');activeShopId=shops.some(shop=>shop.id===remembered)?remembered:'intel';active=null;selected.clear();productGroups(available()).forEach(p=>collapsedProducts.add(p.id));bind();renderAll();window.workbenchReady=true;installColorPicker({current,checkpoint:()=>checkpointConfig()});workspaceSyncUi=await bindWorkspaceSync({getState:()=>state,flush:save,openDialog,esc,toast,onMember:member=>{if(member){operator=member.name;$('#operator-open').textContent='成员：'+operator;$('#operator-open').disabled=false;$('#operator-open').title='账号管理：切换账号或退出登录';}else {$('#operator-open').textContent='请登录';$('#operator-open').disabled=false;}},receive:async()=>{if(!fullWorkspace)return refreshCompactWorkspace();if(dirty||savePromise||hasDraftDialog()||document.activeElement?.matches('input,textarea,select'))return false;const counter=changeCounter;const next=await request('/api/state?logs=none');if(counter!==changeCounter||dirty||savePromise)return false;if(next.revision===state.revision)return;const prepared=await prepareWorkspaceState(next,baseCatalog);if(counter!==changeCounter||dirty||savePromise||hasDraftDialog()||document.activeElement?.matches('input,textarea,select'))return false;state=prepared.state;acceptedState=next;catalog=prepared.catalog;if(!current())active=ordinaryConfigs(available())[0]?.id||null;selected=new Set([...selected].filter(id=>available().some(c=>c.id===id)));history=[];redoHistory=[];imageRecords.clear();syncHistoryButtons();renderAll();}});$('#save-status').textContent=state.updatedAt?'已载入本地保存':'已载入本机配置';pollDerivedStatus().catch(()=>{});}catch(e){$('#save-status').textContent=e.status===404?'需要重启工作台服务':'载入失败';if(e.status===404)$('#config-heading').textContent='请重启工作台以完成更新';$('#editor').innerHTML=`<p class="error">${esc(e.status===404?'工作台已更新，请双击 prototype 文件夹中的「重启原型.cmd」，然后刷新页面。':e.message)}</p>`;}
+
+// Agent 与人工操作共用同一编辑器；有未保存输入时拒绝任务，不代替用户保存草稿。
+window.workbenchAgentExecute=createAgentWorkflow({
+ state:()=>state,
+ savedState:()=>acceptedState,
+ blocked:()=>!window.workbenchReady||workspaceLoad||fullActionBusy||detailLoads.size>0||dirty||savePromise||ordinaryPending||batchPromise||batchPending||conflict||Boolean($('#dialog')?.open)||Boolean(window.workbenchSourceEditor?.hasPending())||Boolean(workspaceSyncUi?.status().running)||Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending),
+ load:ensureFullWorkspace,
+ lock:blockSync=>{const roots=[document.documentElement,window.parent.document.documentElement],previous=roots.map(root=>root.inert);roots.forEach(root=>root.inert=true);window.workbenchAgentBusy=blockSync;return()=>{roots.forEach((root,i)=>root.inert=previous[i]);window.workbenchAgentBusy=false;};},
+ apply:(plan,operationId,baseline)=>applyBatchChanges(plan,'Agent 修改配置',{operationId,baseline}),
+ resumePending:job=>{
+  const pending=batchPending;
+  if(job?.method!=='changes.apply'||!pending?.agent||job.params?.operationId!==pending.payload.operationId)return null;
+  if(!window.workbenchReady||workspaceLoad||fullActionBusy||detailLoads.size>0||savePromise||ordinaryPending||batchPromise||conflict||$('#dialog')?.open||window.workbenchSourceEditor?.hasPending()||workspaceSyncUi?.status().running||window.parent.workbenchClosePending||window.parent.workbenchUpdatePending)return null;
+  // 后续输入、撤销或不同预览均不能借原 operationId 自动保存当前人工草稿。
+  if(changeCounter!==pending.agent.counter||!sameEditingState(state,pending.sent)||JSON.stringify(job.params.plan)!==JSON.stringify(pending.agent.plan))return null;
+  return async()=>{dirty=false;return {receipt:await sendBatchPending(),baseline:pending.agent.baseline};};
+ },
+ sync:()=>workspaceSyncUi.runAgent(),
+ native:(action,payload)=>window.workbenchAgentNative(action,payload)
+});
 
 // 按方图/长图和 SKU 模式更新相关控件的可见性与可用状态。
 function updateSkuControls(){const c=current(),square=c?.layout==='square',padded=square&&c.skuMode==='padded';$('#sku-mode').classList.toggle('hidden',!square);$('#sku-mode').value=c?.skuMode||'dedicated';$('#sku-mode-hint').classList.toggle('hidden',!padded);$('#poster-auto-width').disabled=square;$('.canvas-tools').classList.toggle('hidden',padded);$('.preview-quick-actions').classList.toggle('hidden',square);}

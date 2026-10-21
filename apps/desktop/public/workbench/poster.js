@@ -6,7 +6,7 @@ import {richTextLayout,fitTextScale,drawPosterText} from './poster-text.js';
 import {displayUpgrade,doubleMemoryUpgrade} from './memory-upgrade.js';
 import {wrapText,posterModules,posterParts,posterPalette,slots} from './core.js';
 import {posterShortName} from './short-name-poster.js';
-import {shopById,shopPalette,shopAddonColors,shopServiceTextColor,shopServiceColor,shopPosterOuterColor} from './shops.js';
+import {shopById,shopPalette,shopAddonColors,shopServiceTextColor,shopServiceColor,shopPosterOuterColor,productPosterConfig} from './shops.js';
 import {posterImageRegion} from './poster-images.js';
 import {normalizePosterDesign,paddedSquare} from './poster-design.js';
 import {getImage} from './image-cache.js';
@@ -21,6 +21,7 @@ function moduleEntries(c,m){return (m.type==='addons'?c.addons:m.type==='benefit
 export function defaultPosterWidth(c){return c.layout==='square'?1400:1000;}
 /** 加载字体与素材并绘制海报；interactive 模式同时提供编辑器所需的区域信息。 */
 export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=false,beforeDraw}={}){
+ c=productPosterConfig(c);
  await ensurePosterFonts();
  c=withPosterFonts(c);
  await document.fonts.ready;
