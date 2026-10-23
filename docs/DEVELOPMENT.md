@@ -45,3 +45,7 @@ README 面向首次使用者，保留下载入口与产品简介。docs 只维�
 本机 Agent 入口的使用与协议见 [Agent 工具入口](AGENT-TOOLS.md)。
 
 正式发行的构建顺序：先 `cargo build --release --locked --manifest-path packages/agent-cli/Cargo.toml`，再 `pnpm build:desktop --no-bundle --features agent-tools`。主EXE嵌入CLI，首次启动自动准备连接；自定义CLI路径可用 `DIYTOOLS_AGENT_CLI_PATH`，共享输出目录遵循 `CARGO_TARGET_DIR`。不含feature的普通开发构建保持关闭。
+
+## 内置 Excel 只读组件
+
+Windows release 构建前执行 `pwsh -File tools/build-cost-reader.ps1`，设置 `DIYTOOLS_COST_READER_PATH` 为生成的 `sandbox/cost-reader-build/dist/cost-reader.exe`。依赖通过 `services/cost-reader/uv.lock` 固定；独立组件复用 `services/erp-worker/cost_file.py`，不导入 ERP 会话或私有适配器。主 EXE 内置该组件，NAS 功能不要求另行更新 ERP worker。

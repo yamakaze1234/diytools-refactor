@@ -38,7 +38,7 @@ function Invoke-Logged([string]$Executable, [string[]]$Arguments, [string]$LogNa
 }
 # 登记锁文件及 worker 源码摘要，把可复现构建与实际输入绑定。
 function Get-SourceHashes {
-    @('services/erp-worker/main.py', 'services/erp-worker/session.py', 'services/erp-worker/sql_service.py', 'services/erp-worker/sql_credentials.py', 'services/erp-worker/pyproject.toml', 'services/erp-worker/uv.lock', 'tools/build-erp-worker.ps1') | ForEach-Object {
+    @('services/erp-worker/main.py', 'services/erp-worker/session.py', 'services/erp-worker/cost_file.py', 'services/erp-worker/sql_service.py', 'services/erp-worker/sql_credentials.py', 'services/erp-worker/pyproject.toml', 'services/erp-worker/uv.lock', 'tools/build-erp-worker.ps1') | ForEach-Object {
         $file = Join-Path $repoRoot $_
         [ordered]@{ path = $_; sha256 = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant(); bytes = (Get-Item -LiteralPath $file).Length }
     }
@@ -113,7 +113,7 @@ print(json.dumps({'python': platform.python_version(), 'machine': platform.machi
     $arguments = @('-m', 'PyInstaller', '--onefile', '--console', '--noconfirm', '--noupx', '--name', 'erp-worker',
         '--distpath', (Join-Path $runRoot 'dist'), '--workpath', (Join-Path $runRoot 'work'), '--specpath', (Join-Path $runRoot 'spec'),
         '--copy-metadata', 'python-tds', '--copy-metadata', 'pyOpenSSL', '--copy-metadata', 'cryptography', '--collect-data', 'certifi',
-        '--collect-submodules', 'pytds', '--hidden-import', 'OpenSSL', '--hidden-import', 'sql_service', '--hidden-import', 'sql_credentials',
+        '--collect-submodules', 'pytds', '--hidden-import', 'OpenSSL', '--hidden-import', 'cost_file', '--collect-submodules', 'pyxlsb', '--collect-submodules', 'openpyxl', '--hidden-import', 'sql_service', '--hidden-import', 'sql_credentials',
         (Join-Path $runRoot 'source/main.py'))
     $report['pyinstaller_arguments'] = $arguments
     Save-Report

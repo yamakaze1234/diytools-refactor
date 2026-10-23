@@ -18,7 +18,7 @@ try{
  const html=(await fs.readFile(new URL('../public/workbench/index.html',import.meta.url),'utf8')).replace('<script type="module" src="./bootstrap.js"></script>',`<script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const {createWorkbenchReactRenderer}=await import('/src/legacy/react-workbench.tsx');window.createWorkbenchReactRenderer=createWorkbenchReactRenderer;await import('/workbench/app.js');document.body.classList.remove('login-required');</script>`);
  await page.route('**/workbench/memory-fixture',r=>r.fulfill({contentType:'text/html',body:html}));
  const source=await fs.readFile(new URL('../public/workbench/app.js',import.meta.url),'utf8');
- await page.route('**/workbench/app.js',r=>r.fulfill({contentType:'text/javascript',body:source+`\nwindow.memoryProbe={undo:()=>stepHistory(history,redoHistory,'撤销'),redo:()=>stepHistory(redoHistory,history,'重做'),global:async()=>{await ensureFullWorkspace();checkpoint();state.configs=moveConfig(state.configs,'c0','c1',true);state.shopSettings.intel.coupon=10;changed('隔离全局修改',[],true);await save();},open:()=>openOverview(),close:()=>closeDialog(),save:()=>save(),info:()=>({full:fullWorkspace,details:state.configs.length,base:acceptedState.configs.length,index:lazyWorkspace.index().summaries.length,dirty,history:history.map(h=>({scope:h.historyScope,count:h.configs.length}))})};`}));
+ await page.route('**/workbench/app.js',r=>r.fulfill({contentType:'text/javascript',body:source+`\nwindow.memoryProbe={syncReceive:()=>receiveErpForPrices({}, {syncDialog:true}),backgroundRefresh:()=>refreshCompactWorkspace(),undo:()=>stepHistory(history,redoHistory,'撤销'),redo:()=>stepHistory(redoHistory,history,'重做'),global:async()=>{await ensureFullWorkspace();checkpoint();state.configs=moveConfig(state.configs,'c0','c1',true);state.shopSettings.intel.coupon=10;changed('隔离全局修改',[],true);await save();},open:()=>openOverview(),close:()=>closeDialog(),save:()=>save(),info:()=>({full:fullWorkspace,details:state.configs.length,base:acceptedState.configs.length,index:lazyWorkspace.index().summaries.length,dirty,history:history.map(h=>({scope:h.historyScope,count:h.configs.length}))})};`}));
  await page.route('**/catalog.json',r=>r.fulfill({json:[]}));
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname,payload=req.method()==='POST'?req.postDataJSON():null;requests.push({path,ids:payload?.ids});let value={};
@@ -27,6 +27,7 @@ try{
   else if(path==='/api/state'&&req.method()==='GET')value=state;
   else if(path==='/api/state'&&req.method()==='POST'){state={...state,...Object.fromEntries(['caseGallery','configs','templates','sourceCatalog','costSource','shopSettings'].map(key=>[key,structuredClone(payload[key])])),revision:state.revision+1,updatedAt:new Date().toISOString()};value={...state,state:structuredClone(state)};}
   else if(['/api/configs/patch','/api/configs/batch'].includes(path)){const saved=payload.changes.map(c=>structuredClone(c.after));state.configs=state.configs.map(c=>saved.find(s=>s.id===c.id)||c);state.revision++;value={configs:saved,revision:state.revision,updatedAt:new Date().toISOString(),activityDelta:[]};}
+  else if(path==='/api/cost-sync/settings')value=state.costSync||{mode:'cloud',path:'',sheet:'库存数据',goodsColumn:54,taxColumn:67};
   else if(path==='/api/session')value={defaultOperator:'内存隔离验收'};
   else if(path==='/api/native-cloud/status')value={configured:false,session:{configured:false,authenticated:false},checkpoint:{initialized:false}};
   else if(path==='/api/derived/status')value={images:[],running:false};
@@ -36,6 +37,15 @@ try{
  await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
  await page.locator('[data-config="name"]').waitFor();
  const before=await page.evaluate(()=>window.memoryProbe.info());assert.equal(before.details,1);
+ // 同步窗口的显式回载允许保持本窗口，后台刷新仍不能跨过草稿保护。
+ await page.click('#erp-sync');await page.locator('#cost-read').waitFor();
+ assert.equal(await page.evaluate(()=>window.memoryProbe.backgroundRefresh()),false);
+ state.costSync={mode:'nas',path:'D:/fixture.xlsx',sheet:'库存数据',goodsColumn:54,taxColumn:67};state.revision++;
+ const fullReads=requests.filter(r=>r.path==='/api/state').length;
+ assert.equal(await page.evaluate(()=>window.memoryProbe.syncReceive()),true);
+ assert.equal(await page.locator('#erp-inline-shell').isVisible(),true);assert.equal((await page.evaluate(()=>window.memoryProbe.info())).details,1);
+ assert.equal(requests.filter(r=>r.path==='/api/state').length,fullReads);await page.evaluate(()=>window.memoryProbe.close());
+
  await page.evaluate(()=>window.memoryProbe.open());const hydrated=await page.evaluate(()=>window.memoryProbe.info());assert.equal(hydrated.details,250);assert.equal(hydrated.full,true);
  await page.evaluate(()=>{window.memoryEditorNode=document.querySelector('[data-config="name"]');window.memoryProbe.close();});
  await page.waitForFunction(()=>!window.memoryProbe.info().full);

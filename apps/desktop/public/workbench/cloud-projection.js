@@ -45,8 +45,9 @@ export function projectWorkspace(state,configurationOnly=false,selected=null){
  // parts 是展示/选配数据，actualParts 是实际成本 BOM，addons 随配置保存；
  // costSource 的共享含税价进入 component，ERP 库存和本机字段经 stripLocalErp 排除。
  const records=[],scope=state.sharedCostScope||state.erpSync?.scope||'unbound',seen=new Set(),componentIds=new Set((state.costSource||[]).map(c=>c.goodsId));
- const wanted=(type,id)=>!selected||selected[type]===null||selected[type].has(id);
- const add=(type,id,data)=>{const key=recordKey(type,id);if(seen.has(key))throw Error('重复记录 ID：'+id);seen.add(key);records.push({type,id,data:stripLocalErp(data)});};
+ const independentCosts=['nas','cloud'].includes(state.costSync?.mode);
+ const wanted=(type,id)=>!(independentCosts&&type==='component')&&(!selected||selected[type]===null||selected[type].has(id));
+ const add=(type,id,data)=>{const key=recordKey(type,id);if(seen.has(key))throw Error('重复记录 ID：'+id);seen.add(key);const value=stripLocalErp(data);if(independentCosts){const clean=v=>{if(!v||typeof v!=='object')return;for(const child of Object.values(v))clean(child);if(v.taxOverride)delete v.taxOverride.base;if(typeof v.goodsId==='string'&&!isSpecialComponent(v)){delete v.tax;delete v.taxUpdatedAt;}};clean(value);}records.push({type,id,data:value});};
  // 产品分组会改变数组位置；保存 workspaceOrder 才能稳定比较并发编辑。
  for(const [index,c] of (state.configs||[]).entries()){if(!wanted('configuration',c.id))continue;const d=copy(c);d.workspaceOrder=Number.isFinite(c.workspaceOrder)?c.workspaceOrder:index;d.priceCents=cents(d.price);delete d.price;for(const k of configurationLocalFields)delete d[k];for(const field of ['parts',...(Array.isArray(d.actualParts)?['actualParts']:[])])d[field]=d[field].map((p,i)=>({...(!componentIds.has(p.goodsId)||c.deletedAt?copy(p):strip(p)),lineId:p.lineId||'line-'+hash(field==='parts'?[c.id,i,p.slot]:[c.id,field,i,p.slot]).slice(0,24)}));add('configuration',c.id,d);}
  if(configurationOnly)return records;
@@ -73,16 +74,16 @@ export function applyWorkspace(template,records){
  for(const r of groups.get('settings')||[]){const d=copy(r.draft??r.data);next.shopSettings[r.id]={...d,coupon:d.couponCents/100};delete next.shopSettings[r.id].couponCents;}
  const localRows=new Map();for(const r of [...(template.sourceCatalog||[]),...(template.configs||[]).flatMap(allConfigParts),...(template.costSource||[])])if(r.goodsId)localRows.set(r.goodsId,{...localRows.get(r.goodsId),...r});
  const components=values('component').filter(c=>!c.deletedAt),scope=components[0]?.erpScopeId;
- if(scope)next.sharedCostScope=scope;
+ if(scope&&!template.costSync)next.sharedCostScope=scope;
  const inventory=new Map((template.costSource||[]).map(r=>[r.goodsId,copy(r)]));
- for(const c of components)inventory.set(c.goodsId,{...inventory.get(c.goodsId),goodsId:c.goodsId,name:c.name,tax:c.taxCents==null?null:c.taxCents/100});
- for(const c of values('component').filter(c=>c.deletedAt))inventory.delete(c.goodsId);
- next.costSource=[...inventory.values()];
+ for(const c of (template.costSync?[]:components))inventory.set(c.goodsId,{...inventory.get(c.goodsId),goodsId:c.goodsId,name:c.name,tax:c.taxCents==null?null:c.taxCents/100});
+ for(const c of (template.costSync?[]:values('component').filter(c=>c.deletedAt)))inventory.delete(c.goodsId);
+ next.costSource=template.costSync?copy(template.costSource||[]):[...inventory.values()];
  const restore=value=>{if(!value||typeof value!=='object')return;for(const child of Object.values(value))if(child&&typeof child==='object')restore(child);if(isSpecialComponent(value)){Object.assign(value,normalizeSpecialComponent(value));return;}if(typeof value.goodsId==='string'&&('name' in value||'slot' in value)){const local=localRows.get(value.goodsId);for(const key of localErpFields){if(local&&key in local)value[key]=copy(local[key]);}value.erp=local?.erp??null;value.stockAvailable=local?.stockAvailable??null;}};
  restore(next.configs);restore(next.templates);restore(next.sourceCatalog);restore(next.costSource);
  const costs=new Map(next.costSource.map(c=>[c.goodsId,c]));
- const enrich=r=>{if(isSpecialComponent(r)){Object.assign(r,normalizeSpecialComponent(r));return;}const c=costs.get(r.goodsId);if(!c)return;for(const k of derived)if(k in c){if(k==='tax')syncConfigCost(r,copy(c[k]));else r[k]=copy(c[k]);}};
- next.sourceCatalog.forEach(enrich);next.configs.forEach(c=>{if(!c.deletedAt)allConfigParts(c).forEach(enrich);});return next;
+ const enrich=r=>{if(isSpecialComponent(r)){Object.assign(r,normalizeSpecialComponent(r));return;}const c=costs.get(r.goodsId);if(!c){if(template.costSync){const local=localRows.get(r.goodsId);syncConfigCost(r,hasConfigCost(local||{})?local.taxOverride.base??null:local?.tax??null);}return;}for(const k of derived)if(k in c){if(k==='tax')syncConfigCost(r,copy(c[k]));else r[k]=copy(c[k]);}};
+ if(template.costSync){const visit=v=>{if(!v||typeof v!=='object')return;if(typeof v.goodsId==='string')enrich(v);for(const child of Object.values(v))visit(child);};visit(next.templates);}next.sourceCatalog.forEach(enrich);next.configs.forEach(c=>{if(!c.deletedAt)allConfigParts(c).forEach(enrich);});return next;
 }
 function changedProjectionIds(before,after){
  // 先找输入中变化的记录 ID，避免每次编辑都重投影全部 ERP 行。
@@ -114,7 +115,7 @@ export function changesBetween(before,after){
  // 旧记录没有已保存的顺序；比较基线不能凭当前数组位置虚构一个远端改动。
  const legacyOrder=new Set((before.configs||[]).filter(c=>!Number.isFinite(c.workspaceOrder)).map(c=>c.id));
  for(const r of fresh){const prev=old.get(recordKey(r.type,r.id));if(!prev||!equal(prev.data,r.data))changes.push({...r,expectedDraft:prev?.data});old.delete(recordKey(r.type,r.id));}
- for(const r of old.values())if(!['erp_chunk','erp_snapshot'].includes(r.type))changes.push({...r,data:{...r.data,deletedAt:new Date().toISOString()},expectedDraft:r.data});
+ for(const r of old.values())if(!(after.costSync&&r.type==='component')&&!['erp_chunk','erp_snapshot'].includes(r.type))changes.push({...r,data:{...r.data,deletedAt:new Date().toISOString()},expectedDraft:r.data});
  for(const change of changes)if(change.type==='configuration'&&legacyOrder.has(change.id)&&change.expectedDraft)delete change.expectedDraft.workspaceOrder;
  return changes;
 }

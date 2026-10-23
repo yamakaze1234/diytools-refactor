@@ -12,7 +12,7 @@ export async function nativeCloud(action,payload={}){
 // Startup/member login connects the bundled bootstrap once and enables this
 // login's automatic cycle. Cancellation fences every asynchronous boundary.
 /** 建立单次同步任务和成员归属检查，所有启动、手动与定时同步共用这套状态。 */
-export function createCloudController({request=nativeCloud,flush,receive,isBlocked=()=>false,onChange=()=>{},onProgress=()=>{},makeEngine=createCloudEngine}){
+export function createCloudController({request=nativeCloud,flush,receive,isBlocked=()=>false,onChange=()=>{},onProgress=()=>{},makeEngine=createCloudEngine,getShopIds=()=>null}){
  let view={session:{authenticated:false},checkpoint:{initialized:false},running:false,automatic:false,error:null},flight=null,startFlight=null,logoutFlight=null,stopped=false,needsReceive=false,generation=0,verifiedOwner=null;
  const emit=()=>onChange({...view});
  const engine=makeEngine({load:()=>request('load'),commit:input=>request('commit',input),call:input=>request('call',input),
@@ -45,7 +45,7 @@ export function createCloudController({request=nativeCloud,flush,receive,isBlock
    await deliver();check(operation);
   }
   await verifyOnce(operation,expected);check(operation);checkOwner(expected);
-  const result=await engine.run({member:view.session.member,upload});
+  const result=await engine.run({member:view.session.member,upload,shopIds:getShopIds()});
   view.summary=result;needsReceive=true;await deliver();return result;
  }
  /** 同一已确认成员只做一次自动原图校验；手动校验可强制重跑。 */

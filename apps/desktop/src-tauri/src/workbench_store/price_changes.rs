@@ -77,23 +77,24 @@ fn slim(c: &Value) -> Value {
     result
 }
 fn eligible(c:&Value)->bool {c.is_object() && c["deletedAt"].as_str().unwrap_or("").is_empty() && c["emptyLinkDraft"]!=true && c["productCategory"]!="主机模板"}
-fn add(out:&mut Vec<Value>, old:&Value, new:&Value, slot:&str, config:Option<&Value>) {
+fn add(out:&mut Vec<Value>, lookup:&mut HashMap<String,usize>, old:&Value, new:&Value, slot:&str, config:Option<&Value>) {
     let id=new["goodsId"].as_str().unwrap_or("");
     if id.is_empty() || id=="0" || new["specialComponent"]==true {return;}
     let a=prices(old);let b=prices(new);if a==b {return;}
     let key=json!([id,a,b]);
-    let index=out.iter().position(|r|r["key"]==key).unwrap_or_else(||{out.push(json!({"key":key,"goodsId":id,"name":new["name"],"before":a,"after":b,"slots":[],"configIds":[]}));out.len()-1});
+    let index=*lookup.entry(key.to_string()).or_insert_with(||{out.push(json!({"key":key,"goodsId":id,"name":new["name"],"before":a,"after":b,"slots":[],"configIds":[]}));out.len()-1});
     let row=&mut out[index];
     if !slot.is_empty() && !rows(&row["slots"]).contains(&json!(slot)){row["slots"].as_array_mut().unwrap().push(json!(slot));}
     if let Some(c)=config {if !rows(&row["configIds"]).contains(&c["id"]){row["configIds"].as_array_mut().unwrap().push(c["id"].clone());}}
 }
 fn document(after:&Value, changes:&Value, input:&Value)->Option<Value> {
-    let mut items=Vec::new();let mut configs=Vec::new();
+    // 批量成本按商品及前后价格索引，避免每行重扫全部变化项。
+    let mut items=Vec::new();let mut lookup=HashMap::new();let mut configs=Vec::new();
     // 同一 ERP ID 的共用成本去重；首次入库可单独显示，不把缺价当零。
     for key in ["costSource","sourceCatalog"] {
         let field=&changes["fields"][key];
         let old:HashMap<_,_>=rows(&field["before"]).iter().filter_map(|p|Some((p["goodsId"].as_str()?,p))).collect();
-        for p in rows(&field["after"]) {if let Some(id)=p["goodsId"].as_str(){add(&mut items,old.get(id).copied().unwrap_or(&Value::Null),p,p["slot"].as_str().unwrap_or(""),None);}}
+        for p in rows(&field["after"]) {if let Some(id)=p["goodsId"].as_str(){add(&mut items,&mut lookup,old.get(id).copied().unwrap_or(&Value::Null),p,p["slot"].as_str().unwrap_or(""),None);}}
     }
     for change in rows(&changes["configs"]) {
         let (old,new)=(&change["before"],&change["after"]);
@@ -105,7 +106,7 @@ fn document(after:&Value, changes:&Value, input:&Value)->Option<Value> {
                 .or_else(||parts(old).iter().find(|v|p["slot"].as_str().is_some()&&v["slot"]==p["slot"]&&v["goodsId"]==p["goodsId"]))
                 .or_else(||parts(old).get(index));
             if let Some(o)=old_part {if o["goodsId"]==p["goodsId"]&&prices(o)!=prices(p)&&p["specialComponent"]!=true {
-                add(&mut items,o,p,p["slot"].as_str().unwrap_or(""),Some(new));affected=true;
+                add(&mut items,&mut lookup,o,p,p["slot"].as_str().unwrap_or(""),Some(new));affected=true;
             }}
         }
         if affected {configs.push(json!({"before":slim(old),"after":slim(new)}));}

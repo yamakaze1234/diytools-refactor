@@ -1,3 +1,4 @@
+import {shops} from './shops.js';
 /** 数据与同步弹窗：展示成员状态、同步进度、冲突处理、本机缓存和历史入口。 */
 import {bindVersionHistory} from './version-history-ui.js';
 import {bindLegacyHistory} from './legacy-history-ui.js';
@@ -27,11 +28,16 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   const pending=$('#cloud-pending');if(pending)pending.textContent=pendingText(view);
   const recent=$('#cloud-recent');if(recent)recent.textContent=recentText(view);
   for(const node of document.querySelectorAll('[data-cloud-idle]'))node.disabled=view.running||leaving||cleaning;
+  const autoNote=$('#cloud-auto-note');if(autoNote)autoNote.textContent=view.automatic?'每 2 小时自动同步':'自动同步已暂停';
   const pause=$('#cloud-pause');if(pause){pause.textContent=view.automatic?'暂停同步':'继续同步';pause.disabled=leaving;}
   const conflicts=$('#cloud-conflicts');if(conflicts)conflicts.hidden=!conflictCount(view);
   const logout=$('#cloud-logout');if(logout)logout.disabled=leaving;
  }
- const controller=createCloudController({flush,receive,isBlocked:()=>blocked()||cleaning,onChange:render,makeEngine:createCloudWorker,onProgress:progress=>{
+ const selectionKey='diy-cloud-selected-shops';
+ let selectedShops=[];
+ try{const saved=JSON.parse(localStorage.getItem(selectionKey));if(Array.isArray(saved))selectedShops=saved.filter(id=>shops.some(shop=>shop.id===id));}catch{}
+ if(!selectedShops.length)selectedShops=[localStorage.getItem('diy-active-shop')||'intel'].filter(id=>shops.some(shop=>shop.id===id));
+ const controller=createCloudController({getShopIds:()=>[...selectedShops],flush,receive,isBlocked:()=>blocked()||cleaning,onChange:render,makeEngine:createCloudWorker,onProgress:progress=>{
   // 只展示服务端已确认的数量和当前批次，未知总量时不拼凑百分比。
   const count=Math.max(0,Number(progress.count)||0),completed=Math.max(0,Number(progress.completed)||0);
   phase=progress.phase==='upload'?`正在上传修改：本批 ${count} 项，已处理 ${completed} 项…`
@@ -119,12 +125,24 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  async function open(){
   // 先显示已知状态，避免打开面板也排队等待上传或一次额外的保存。
   const view=controller.status(),member=view.session.member;
-  openDialog('数据与同步',`<p>配置先保存在本机，登录后每 2 小时自动同步；本机缓存每 3 天自动清理。</p>${localOnly(view)?'<p>云同步未配置，当前使用本机保存。</p>':!available?'<p>请在 Windows 工作台中使用同步。</p>':!view.session.authenticated?'<p>登录已失效，当前输入仍保留。</p><button id="cloud-logout" class="primary">保存并重新登录</button>':`<p>成员：${esc(member?.name||'成员')}</p><p>最近同步：<span id="cloud-recent"></span></p><p>待同步：<span id="cloud-pending"></span></p><div class="actions"><button id="cloud-sync-now" class="primary" data-cloud-idle>立即同步</button><button id="cloud-pause">${view.automatic?'暂停同步':'继续同步'}</button><button id="cloud-conflicts" data-cloud-idle ${conflictCount(view)?'':'hidden'}>处理冲突</button><button id="cloud-logout">退出登录</button></div>`}<p id="cloud-message" class="error" role="status"></p><p class="hint">同步在后台进行，可关闭此窗口继续编辑，也可查看历史和缓存；还原、清理需等本轮同步完成。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-diagnostics">导出诊断日志</button><button id="cloud-diagnostic-text">查看诊断文本</button><button id="cloud-close">关闭</button></div>`);
+  openDialog('数据与同步',`<section class="cloud-panel"><p class="cloud-intro">选择需要同步的店铺，配置先保存在本机。</p>${localOnly(view)?'<p>云同步未配置，当前使用本机保存。</p>':!available?'<p>请在 Windows 工作台中使用同步。</p>':!view.session.authenticated?'<p>登录已失效，当前输入仍保留。</p><button id="cloud-logout" class="primary">保存并重新登录</button>':`
+   <fieldset class="cloud-shops"><legend>同步店铺 <span id="cloud-shop-count" class="cloud-selection-count" aria-live="polite">已选 ${selectedShops.length} 家</span></legend>
+    <p class="cloud-section-note" id="cloud-selection-help">可多选，手动与自动同步使用同一选择。</p>
+    <div class="cloud-shop-grid">${shops.map(shop=>`<label class="cloud-shop-card"><input type="checkbox" data-cloud-shop="${shop.id}" data-cloud-idle aria-describedby="cloud-selection-help" ${selectedShops.includes(shop.id)?'checked':''}><span class="cloud-shop-copy"><strong>${esc(shop.shortName)}</strong><span>${esc(shop.name)}</span></span><span class="cloud-shop-state" aria-hidden="true"></span></label>`).join('')}</div>
+   </fieldset>
+   <p class="cloud-shared-note">公用配件成本和图库随同步更新。</p>
+   <div class="cloud-status-grid"><div><span>最近同步</span><strong id="cloud-recent"></strong></div><div><span>待同步</span><strong id="cloud-pending"></strong></div><div><span>当前成员</span><strong>${esc(member?.name||'成员')}</strong></div></div>
+   <div class="cloud-main-actions"><div class="actions"><button id="cloud-sync-now" class="primary" data-cloud-idle>立即同步</button><button id="cloud-pause">${view.automatic?'暂停同步':'继续同步'}</button><button id="cloud-conflicts" data-cloud-idle ${conflictCount(view)?'':'hidden'}>处理冲突</button></div><span id="cloud-auto-note" class="cloud-auto-note">${view.automatic?'每 2 小时自动同步':'自动同步已暂停'}</span></div>`}
+   <p id="cloud-message" class="error" role="status"></p>
+   <p class="cloud-background-note">同步在后台进行，可关闭此窗口继续编辑。</p>
+   <details class="cloud-tools"><summary>历史、缓存与诊断</summary><p class="hint">本机缓存每 3 天自动清理；还原和清理需等待本轮同步完成。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-diagnostics">导出诊断日志</button><button id="cloud-diagnostic-text">查看诊断文本</button></div></details>
+   <div class="cloud-footer">${!localOnly(view)&&available&&view.session.authenticated?'<button id="cloud-logout" class="cloud-signout">退出登录</button>':'<span></span>'}<button id="cloud-close">关闭</button></div></section>`);
   $('#local-cache').onclick=guard(openCache);$('#offline-history').onclick=history.open;$('#offline-restore').onclick=history.restore;$('#offline-legacy-history').onclick=legacy.open;$('#cloud-close').onclick=close;
   // 诊断导出独立于同步/保存互斥，下载卡住时仍可点击；取消不显示成功。
   $('#cloud-diagnostic-text').onclick=()=>{const text=window.workbenchDiagnosticText?.();if(!text){toast('诊断文本需要桌面程序');return;}openDialog('诊断文本','<p>可全选复制以下信息。不含账号与配置内容，无需等待本机保存或导出完成。</p><textarea id="diagnostic-text" aria-label="诊断文本" readonly rows="14" style="width:100%;box-sizing:border-box"></textarea>');const field=$('#diagnostic-text');field.value=text;field.focus();field.select();};
   $('#cloud-diagnostics').onclick=async()=>{const button=$('#cloud-diagnostics');button.disabled=true;try{if(!window.workbenchExportDiagnostics)throw Error('诊断导出需要桌面程序');const result=await window.workbenchExportDiagnostics();toast(result==='saved'?'诊断日志已保存，不含账号与配置内容':'已取消导出');}catch{toast('诊断文件尚未确认保存；未弹出目录窗口时，可点击查看诊断文本并复制');}finally{if($('#cloud-diagnostics')===button)button.disabled=false;}};
   if($('#cloud-logout'))$('#cloud-logout').onclick=guard(leave);
+  for(const input of document.querySelectorAll('[data-cloud-shop]'))input.onchange=()=>{const ids=[...document.querySelectorAll('[data-cloud-shop]:checked')].map(node=>node.dataset.cloudShop);if(!ids.length){input.checked=true;toast('请至少选择一个店铺');return;}localStorage.setItem(selectionKey,JSON.stringify(ids));selectedShops=ids;const pending=$('#cloud-pending');if(pending)pending.textContent='同步时检查';const count=$('#cloud-shop-count');if(count)count.textContent=`已选 ${ids.length} 家`;};
   if($('#cloud-sync-now'))$('#cloud-sync-now').onclick=guard(async()=>{const result=await controller.run(true);toast(result?.conflicts?`本轮同步结束，仍有 ${result.conflicts} 项冲突待处理`:'本轮同步完成');});
   if($('#cloud-conflicts'))$('#cloud-conflicts').onclick=guard(showConflicts);
   if($('#cloud-pause'))$('#cloud-pause').onclick=guard(async()=>{if(controller.status().automatic)await controller.stop();else await controller.run(true);});

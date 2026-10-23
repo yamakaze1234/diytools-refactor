@@ -637,7 +637,9 @@ impl CloudTransport {
     }
 
     fn business(&self, request: &Value, access: &str) -> Result<Value, HttpError> {
-        if request["action"] == "records.commits" {
+        if request["action"] == "costs.page" {
+            self.post("/v1/rdb/rest/rpc/wa_cost_prices", &json!({"request":request}), Some(access))
+        } else if request["action"] == "records.commits" {
             self.post(
                 "/v1/rdb/rest/rpc/wa_commit_history",
                 &json!({"request":request}),
@@ -831,7 +833,7 @@ fn validate_request(request: Value) -> Result<Value, String> {
             | "sync.snapshot"
             | "sync.receipt"
             | "records.history"
-            | "records.commits"
+            | "records.commits" | "costs.page"
     ) {
         return Err("不允许此云端请求动作".into());
     }
@@ -874,7 +876,7 @@ fn safe_to_replay(request: &Value) -> bool {
     };
     match request["action"].as_str().unwrap_or_default() {
         "session.get" | "sync.bootstrap" | "sync.pull" | "sync.snapshot" | "sync.receipt"
-        | "records.history" | "records.commits" => true,
+        | "records.history" | "records.commits" | "costs.page" => true,
         "sync.push" => has_id(&request["payload"]),
         "sync.pushBatch" => request["payload"]["requests"]
             .as_array()

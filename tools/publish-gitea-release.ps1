@@ -149,6 +149,8 @@ try {
         Invoke-Checked pnpm @('install', '--frozen-lockfile')
         $tests = @(Get-ChildItem apps/desktop/tests -Recurse -File -Filter '*.test.mjs' | ForEach-Object FullName)
         Invoke-Checked node (@('--test') + $tests + @('tools/package-portable-update.test.mjs', 'tools/verify-gitea-package.test.mjs'))
+        Invoke-Checked pwsh @('-NoProfile','-File','tools/build-cost-reader.ps1')
+        $env:DIYTOOLS_COST_READER_PATH = (Resolve-Path 'sandbox/cost-reader-build/dist/cost-reader.exe').Path
         Invoke-Checked cargo @('test', '--manifest-path', 'apps/desktop/src-tauri/Cargo.toml', '--lib')
         # 先构建独立 CLI，再嵌入主 EXE；不能在 desktop build.rs 递归调用 Cargo。
         Invoke-Checked cargo @('build', '--release', '--locked', '--manifest-path', 'packages/agent-cli/Cargo.toml')

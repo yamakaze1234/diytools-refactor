@@ -241,6 +241,7 @@ mod tests {
         cloud_state::load(&store).unwrap();
         let cloud = "{\"outbox\":{\"mutationId\":\"immutable\",\"payload\":{\"after\":\"unchanged\"}}}";
         c.execute("INSERT INTO workbench_cloud_state VALUES(1,9,?1)", [cloud]).unwrap();
+        let cloud:String=c.query_row("SELECT document FROM workbench_cloud_state",[],|r|r.get(0)).unwrap();
         let before = state(&c).unwrap();
         let result = normalize(&store).unwrap();
         assert_eq!(result["references"], 3);

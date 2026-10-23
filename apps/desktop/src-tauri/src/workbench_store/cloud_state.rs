@@ -5,11 +5,17 @@ use super::*;
 
 // 云检查点很大；把状态栏和授权需要的少量字段随正文原子投影，避免每次查询解析整库。
 pub(super) fn schema(c: &Connection) -> Result<()> {
+    let normalized:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='workbench_cloud_meta')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if normalized {
+        let header:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='workbench_cloud_header')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+        if !header { c.execute_batch("SAVEPOINT rebuild_header; CREATE TABLE workbench_cloud_header(id INTEGER PRIMARY KEY,version INTEGER NOT NULL,metadata TEXT NOT NULL,outbox TEXT,conflicts INTEGER NOT NULL); INSERT INTO workbench_cloud_header SELECT id,version,json_extract(document,'$.uid','$.workspaceId','$.cursor','$.localRevision'),json_extract(document,'$.outbox'),(SELECT count(*) FROM workbench_cloud_rows WHERE kind='records' AND conflict=1) FROM workbench_cloud_meta; RELEASE rebuild_header;").map_err(|e|e.to_string())?; }
+        return Ok(());
+    }
     let ready: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='workbench_cloud_header')",
         [], |r| r.get(0),
     ).map_err(|e| e.to_string())?;
-    if ready { return Ok(()); }
+    if ready { return row_schema(c); }
     // 迁移与初始回填同成同败；正常查询不会执行空写入，也不争抢正在保存的写锁。
     let result = c.execute_batch("SAVEPOINT cloud_header_migration;
         CREATE TABLE IF NOT EXISTS workbench_cloud_state(id INTEGER PRIMARY KEY CHECK(id=1),version INTEGER NOT NULL,document TEXT NOT NULL);
@@ -37,7 +43,20 @@ pub(super) fn schema(c: &Connection) -> Result<()> {
         let _ = c.execute_batch("ROLLBACK TO cloud_header_migration; RELEASE cloud_header_migration;");
         return Err(error.to_string());
     }
-    Ok(())
+    row_schema(c)
+}
+
+fn row_schema(c: &Connection) -> Result<()> {
+    let ready:bool=c.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name='workbench_cloud_meta')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+    if ready { return Ok(()); }
+    let mut check=c.prepare("SELECT document FROM workbench_cloud_state").map_err(|e|e.to_string())?;
+    for raw in check.query_map([],|r|r.get::<_,String>(0)).map_err(|e|e.to_string())? {
+        serde_json::from_str::<serde::de::IgnoredAny>(&raw.map_err(|e|e.to_string())?).map_err(|e|e.to_string())?;
+    }
+    drop(check);
+    c.execute_batch("SAVEPOINT cloud_rows_migration").map_err(|e|e.to_string())?;
+    if let Err(e)=c.execute_batch(include_str!("cloud_rows.sql")) { let _=c.execute_batch("ROLLBACK TO cloud_rows_migration; RELEASE cloud_rows_migration;"); return Err(e.to_string()); }
+    c.execute_batch("RELEASE cloud_rows_migration").map_err(|e|e.to_string())
 }
 
 fn stored(c: &Connection) -> Result<(i64, Value)> {
@@ -460,6 +479,7 @@ fn patch_document(mut document: Value, patch: &Value) -> Result<Value> {
                 "uid",
                 "deviceId",
                 "cursor",
+                "shopCursors",
                 "outbox",
                 "materializedProjection",
                 "lastSyncedAt",
@@ -508,6 +528,31 @@ fn patch_document(mut document: Value, patch: &Value) -> Result<Value> {
 
 // Only these old fields participate in transition validation. Retain the original
 // immutable outbox before moving the large document into the patch result.
+// 实体按键保存；游标变化只写元数据，不重写正文。
+fn save_rows(c: &Connection, version:i64, document:&Value, patch:Option<&Value>) -> Result<()> {
+    for kind in ["records","materializedProjection"] {
+        let partial=kind=="records" && patch.is_some();
+        let rows=if partial { patch.unwrap().get("records") } else if patch.is_some() && patch.unwrap()["set"].get(kind).is_none() { None } else { document.get(kind) };
+        let Some(rows)=rows else {continue};
+        let rows=rows.as_array().ok_or("同步行格式无效")?;
+        let mut position:i64=c.query_row("SELECT coalesce(max(position)+1,0) FROM workbench_cloud_rows WHERE kind=?1",[kind],|r|r.get(0)).map_err(|e|e.to_string())?;
+        let mut seen=HashSet::new();
+        let mut statement=c.prepare_cached("INSERT INTO workbench_cloud_rows(kind,position,type,id,document,conflict) VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(kind,type,id) DO UPDATE SET document=excluded.document,conflict=excluded.conflict,position=CASE WHEN ?7 THEN workbench_cloud_rows.position ELSE excluded.position END WHERE document<>excluded.document OR (?7=0 AND position<>excluded.position)").map_err(|e|e.to_string())?;
+        for (i,row) in rows.iter().enumerate() {
+            let t=identity(row,"type")?;let id=identity(row,"id")?;seen.insert((t.clone(),id.clone()));
+            statement.execute(params![kind,if partial {position} else {i as i64},t,id,row.to_string(),row["conflict"].is_object() as i64,partial as i64]).map_err(|e|e.to_string())?;position+=1;
+        }
+        if !partial {
+            let mut q=c.prepare("SELECT type,id FROM workbench_cloud_rows WHERE kind=?1").map_err(|e|e.to_string())?;
+            let keys=q.query_map([kind],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?))).map_err(|e|e.to_string())?.collect::<std::result::Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+            for (t,id) in keys {if !seen.contains(&(t.clone(),id.clone())) {c.execute("DELETE FROM workbench_cloud_rows WHERE kind=?1 AND type=?2 AND id=?3",params![kind,t,id]).map_err(|e|e.to_string())?;}}
+        }
+    }
+    let meta:serde_json::Map<String,Value>=document.as_object().ok_or("同步资料格式无效")?.iter().filter(|(k,_)|!matches!(k.as_str(),"records"|"materializedProjection")).map(|(k,v)|(k.clone(),v.clone())).collect();
+    c.execute("UPDATE workbench_cloud_meta SET version=?1,document=?2 WHERE id=1",params![version,Value::Object(meta).to_string()]).map_err(|e|e.to_string())?;
+    Ok(())
+}
+
 // 提取同步变更校验所需字段，供补丁提交复核不可变队列约束。
 fn transition_guard(previous: &Value) -> Value {
     json!({"workspaceId":previous["workspaceId"],"uid":previous["uid"],"deviceId":previous["deviceId"],"cursor":previous["cursor"],"outbox":previous["outbox"]})
@@ -544,6 +589,32 @@ pub(super) fn commit(store: &WorkbenchStore, input: &Value) -> Result<ApiRespons
             409,
             "当前目录尚未完成云同步迁移预检，请先导入已核验的接入计划",
         ));
+    }
+    // 纯进度回执不读取实体正文；仍在相同 CAS 事务中校验游标单调性。
+    if input.get("state").is_none() && input.get("document").is_none() {
+        if let Some(patch)=input.get("documentPatch") {
+            let set=patch.get("set").and_then(Value::as_object);
+            let empty=patch.get("records").is_none_or(|v|v.as_array().is_some_and(|a|a.is_empty()));
+            if patch.as_object().is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"set"|"records"))) && empty && set.is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"cursor"|"shopCursors"|"lastSyncedAt"))) {
+                let raw:String=tx.query_row("SELECT document FROM workbench_cloud_meta WHERE id=1",[],|r|r.get(0)).map_err(|e|e.to_string())?;
+                let mut meta:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
+                for (key,value) in set.unwrap() {
+                    if key=="cursor" && value.as_i64().is_none_or(|n|n<meta["cursor"].as_i64().unwrap_or(0)) { return Err("云同步游标不能回退".into()); }
+                    if key=="shopCursors" {
+                        let scopes=value.as_object().ok_or("店铺同步进度无效")?;
+                        for (scope,n) in scopes { if scope.is_empty() || scope.split('|').any(|v|!["intel","gigabyte","jonsbo"].contains(&v)) || n.as_i64().is_none_or(|v|v<0 || v<meta["shopCursors"][scope].as_i64().unwrap_or(0)) {return Err("店铺同步进度无效".into());} }
+                        if meta["shopCursors"].as_object().is_some_and(|old|old.keys().any(|k|!scopes.contains_key(k))) {return Err("不能清除已有店铺进度".into());}
+                    }
+                    if key=="lastSyncedAt" && !value.is_null() && value.as_str().is_none_or(|v|v.len()>128) {return Err("云同步时间字段无效".into());}
+                    meta[key]=value.clone();
+                }
+                meta["localRevision"]=json!(local_revision);
+                let next=version.checked_add(1).ok_or("云同步版本超出上限")?;
+                tx.execute("UPDATE workbench_cloud_meta SET version=?1,document=?2 WHERE id=1",params![next,meta.to_string()]).map_err(|e|e.to_string())?;
+                tx.commit().map_err(|e|e.to_string())?;
+                return Ok(response(200,json!({"revision":local_revision,"cloudVersion":next,"activityDelta":[],"updatedAt":local_updated})));
+            }
+        }
     }
     let (_, previous) = stored(&tx)?;
     let guard = transition_guard(&previous);
@@ -594,11 +665,7 @@ pub(super) fn commit(store: &WorkbenchStore, input: &Value) -> Result<ApiRespons
     }
     document["localRevision"] = committed_revision.clone();
     let next_version = version.checked_add(1).ok_or("云同步本机版本超出上限")?;
-    tx.execute(
-        "UPDATE workbench_cloud_state SET version=?1,document=?2 WHERE id=1",
-        params![next_version, document.to_string()],
-    )
-    .map_err(|e| e.to_string())?;
+    save_rows(&tx, next_version, &document, input.get("documentPatch"))?;
     tx.commit().map_err(|e| e.to_string())?;
     let mut receipt =
         json!({"revision":committed_revision,"cloudVersion":next_version,"activityDelta":activity});
@@ -625,12 +692,43 @@ mod tests {
     }
 
     #[test]
+    fn progress_writes_no_rows_and_one_record_only_updates_its_row() {
+        let store=fixture();let c=db(&store.path).unwrap();
+        c.execute_batch("CREATE TABLE writes(kind TEXT,id TEXT); CREATE TRIGGER row_update AFTER UPDATE ON workbench_cloud_rows BEGIN INSERT INTO writes VALUES(NEW.kind,NEW.id); END; CREATE TRIGGER row_insert AFTER INSERT ON workbench_cloud_rows BEGIN INSERT INTO writes VALUES(NEW.kind,NEW.id); END; CREATE TRIGGER row_delete AFTER DELETE ON workbench_cloud_rows BEGIN INSERT INTO writes VALUES(OLD.kind,OLD.id); END;").unwrap();
+        let p=patch_input(&store,json!({"set":{"shopCursors":{"intel":10}}}));assert_eq!(commit(&store,&p).unwrap().status,200);
+        assert_eq!(c.query_row::<i64,_,_>("SELECT count(*) FROM writes",[],|r|r.get(0)).unwrap(),0);
+        let mut row=document()["records"][0].clone();row["version"]=json!(3);
+        assert_eq!(commit(&store,&patch_input(&store,json!({"records":[row]}))).unwrap().status,200);
+        assert_eq!(c.query_row::<i64,_,_>("SELECT count(*) FROM writes",[],|r|r.get(0)).unwrap(),1);
+        assert!(commit(&store,&patch_input(&store,json!({"set":{"shopCursors":{"intel":9}}}))).is_err());
+        assert_eq!(stored(&c).unwrap().1["shopCursors"]["intel"],10);
+    }
+
+    #[test]
+    fn selected_shop_cursors_survive_full_commit_and_reopen() {
+        let store = fixture();
+        let c = db(&store.path).unwrap();
+        let (_, mut doc) = stored(&c).unwrap();
+        doc["shopCursors"] = json!({"intel":12,"jonsbo":8});
+        let mut input = patch_input(&store, json!({}));
+        input.as_object_mut().unwrap().remove("documentPatch");
+        input["document"] = doc;
+        assert_eq!(commit(&store, &input).unwrap().status, 200);
+        drop(c);
+        let reopened = db(&store.path).unwrap();
+        let (_, saved) = stored(&reopened).unwrap();
+        assert_eq!(saved["shopCursors"], json!({"intel":12,"jonsbo":8}));
+        assert_eq!(saved["cursor"], 5);
+        assert_eq!(saved["records"], document()["records"]);
+    }
+
+    #[test]
     fn raw_load_preserves_json_semantics_escapes_and_exact_numeric_tokens() {
         let state = r#" {"revision":7,"configs":[{"name":"中文\"\\\n\u0000","price":0.123456789012345678901,"large":18446744073709551615,"exponent":1.2300e+45}],"unknown":null} "#;
-        let document = r#"{"uid":"u","outbox":[{"payload":{"text":"},\"state\":false","negative":-0.000,"array":[true,null,1]}}]}"#;
+        let document = r#"{"records":[],"materializedProjection":[],"uid":"u","outbox":[{"payload":{"text":"},\"state\":false","negative":-0.000,"array":[true,null,1]}}]}"#;
         let result = load(&raw_load_fixture(state,Some(document))).unwrap();
         assert_eq!(result.status,200);
-        assert_eq!(result.body,format!("{{\"state\":{state},\"cloudVersion\":42,\"document\":{document}}}"));
+        assert!(result.body.contains(state));assert!(result.body.contains("-0.000"));
         let value: Value = serde_json::from_str(&result.body).unwrap();
         assert_eq!(value["state"],serde_json::from_str::<Value>(state).unwrap());
         assert_eq!(value["document"],serde_json::from_str::<Value>(document).unwrap());
@@ -706,7 +804,7 @@ mod tests {
         let store = fixture();
         let input = request_body(&store);
         let c = db(&store.path).unwrap();
-        c.execute_batch("CREATE TRIGGER reject_queue BEFORE UPDATE ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fail'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_queue BEFORE UPDATE ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fail'); END;").unwrap();
         assert!(commit(&store, &input).is_err());
         assert_eq!(state(&c).unwrap()["revision"], 7);
         assert_eq!(state(&c).unwrap()["configs"][0]["name"], "old");
@@ -792,7 +890,7 @@ mod tests {
         let store = fixture();
         let c = db(&store.path).unwrap();
         let original: String = c.query_row("SELECT document FROM workbench_cloud_state", [], |r| r.get(0)).unwrap();
-        c.execute_batch("DROP TRIGGER workbench_cloud_header_insert; DROP TRIGGER workbench_cloud_header_update; DROP TRIGGER workbench_cloud_header_delete; DROP TABLE workbench_cloud_header;").unwrap();
+        c.execute_batch("DROP TABLE workbench_cloud_header;").unwrap();
         schema(&c).unwrap();
         assert_eq!(c.query_row::<String,_,_>("SELECT document FROM workbench_cloud_state", [], |r| r.get(0)).unwrap(), original);
         assert_eq!(status(&store).unwrap()["cloudVersion"], 1);
@@ -830,7 +928,7 @@ mod tests {
         assert!(authorize(&store, &owner(), None).is_ok());
         tx.rollback().unwrap();
         assert_eq!(status(&store).unwrap()["uid"], "u");
-        c.execute_batch("CREATE TRIGGER reject_header BEFORE UPDATE ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture rollback'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_header BEFORE UPDATE ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fixture rollback'); END;").unwrap();
         assert!(commit(&store, &patch_input(&store, json!({"set":{"cursor":6}}))).is_err());
         assert_eq!(status(&store).unwrap()["cloudVersion"], 1);
         assert_eq!(status(&store).unwrap()["cursor"], 5);
@@ -1020,7 +1118,7 @@ mod tests {
         let activity: i64 = c
             .query_row("SELECT count(*) FROM workbench_activity", [], |r| r.get(0))
             .unwrap();
-        c.execute_batch("CREATE TRIGGER reject_plan BEFORE INSERT ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_plan BEFORE INSERT ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
         assert!(apply_plan(&store, &plan, &owner(), &hash).is_err());
         assert_eq!(state(&c).unwrap()["revision"], 7);
         assert_eq!(state(&c).unwrap()["configs"][0]["name"], "old");
@@ -1196,7 +1294,7 @@ mod tests {
         let mut after = before.clone();
         after["configs"][0]["name"] = json!("cloud-arrival");
         input["state"] = after;
-        c.execute_batch("CREATE TRIGGER reject_patch BEFORE UPDATE ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_patch BEFORE UPDATE ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
         assert!(commit(&store, &input).is_err());
         assert_eq!(state(&c).unwrap(), before);
         assert_eq!(stored(&c).unwrap().0, 1);

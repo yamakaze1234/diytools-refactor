@@ -36,5 +36,13 @@ fn main() {
         fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("diytools-agent.exe"), bytes)
             .expect("Cannot stage embedded Agent CLI");
     }
+    println!("cargo:rerun-if-env-changed=DIYTOOLS_COST_READER_PATH");
+    let bytes=if let Some(path)=env::var_os("DIYTOOLS_COST_READER_PATH") {
+        println!("cargo:rerun-if-changed={}",PathBuf::from(&path).display());
+        let bytes=fs::read(path).expect("Cannot read public Excel reader");assert!(bytes.starts_with(b"MZ"),"Invalid Excel reader executable");bytes
+    } else {
+        assert!(env::var("PROFILE").as_deref()!=Ok("release") || env::var("CARGO_CFG_TARGET_OS").as_deref()!=Ok("windows"),"Build tools/build-cost-reader.ps1 first and set DIYTOOLS_COST_READER_PATH");Vec::new()
+    };
+    fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("cost-reader.exe"),bytes).expect("Cannot embed Excel reader");
     tauri_build::build()
 }

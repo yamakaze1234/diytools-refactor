@@ -24,6 +24,7 @@ pub struct SessionInput {
 #[derive(Default)]
 pub struct ErpSessionState {
     worker: Mutex<Option<Worker>>,
+    cost_worker: Mutex<Option<Worker>>,
     vault: std::sync::OnceLock<std::path::PathBuf>,
 }
 
@@ -36,13 +37,13 @@ struct Worker {
 
 impl Worker {
     // 启动常驻 worker 并建立独立管道；凭据文件位置仅由宿主初始化传入。
-    fn spawn(vault: Option<&std::path::PathBuf>) -> Result<Self, String> {
+    fn spawn(vault: Option<&std::path::PathBuf>, cost: bool) -> Result<Self, String> {
         let data_dir = vault
             .and_then(|path| path.parent())
             .ok_or("ERP_RUNTIME_UNAVAILABLE: 本机数据目录尚未配置")?;
-        let mut command = erp_runtime::command(data_dir)?;
+        let mut command = if cost {erp_runtime::cost_command(data_dir)?} else {erp_runtime::command(data_dir)?};
         command.env_remove("DIYTOOLS_SQL_VAULT");
-        if let Some(vault) = vault {
+        if let Some(vault) = vault.filter(|_|!cost) {
             command.env("DIYTOOLS_SQL_VAULT", vault);
         }
         let mut child = command
@@ -91,7 +92,7 @@ impl ErpSessionState {
     // SQL 入口只开放读取和本机凭据管理，拒绝辅助程序的其他动作。
     pub(crate) async fn sql_request(&self, input: Value) -> Result<Value, String> {
         let input: SessionInput = serde_json::from_value(input).map_err(|_| "SQL 请求字段无效")?;
-        if !["sql_read", "sql_credentials_load", "sql_credentials_clear"]
+        if !["sql_cost_file", "sql_read", "sql_credentials_load", "sql_credentials_clear"]
             .contains(&input.action.as_str())
         {
             return Err("不支持此 SQL 操作".into());
@@ -112,7 +113,8 @@ impl ErpSessionState {
 
     // 先关闭管道让 Python 正常收尾，超时后依靠进程保护回收后代。
     pub async fn shutdown(&self) {
-        let mut state = self.worker.lock().await;
+        for slot in [&self.worker,&self.cost_worker] {
+        let mut state = slot.lock().await;
         if let Some(worker) = state.take() {
             // EOF lets Python close the connection and the bootloader reclaim its files.
             let Worker {
@@ -126,6 +128,7 @@ impl ErpSessionState {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), _child.wait()).await;
             drop(_guard);
         }
+        }
     }
     // 串行发送带唯一编号的请求；超时、协议错误或管道失败都丢弃旧 worker。
     async fn request(&self, input: SessionInput) -> Result<Value, String> {
@@ -134,6 +137,7 @@ impl ErpSessionState {
             "connect",
             "query_goods",
             "disconnect",
+            "sql_cost_file",
             "sql_read",
             "sql_credentials_load",
             "sql_credentials_clear",
@@ -143,7 +147,7 @@ impl ErpSessionState {
             return Err("不支持此 ERP 操作".into());
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let maximum = if input.action == "sql_read" {
+        let maximum = if matches!(input.action.as_str(), "sql_read" | "sql_cost_file") {
             32 * 1024 * 1024
         } else {
             2 * 1024 * 1024
@@ -172,12 +176,11 @@ impl ErpSessionState {
             return Err("ERP 请求超过 64 KiB 限制".into());
         }
         // 已有请求占用 worker 时立即返回忙碌提示，不能把两条响应交错读入同一管道。
-        let mut state = self
-            .worker
+        let mut state = (if input.action=="sql_cost_file" {&self.cost_worker} else {&self.worker})
             .try_lock()
             .map_err(|_| "ERP 正在处理请求，请稍后重试")?;
         if state.is_none() {
-            *state = Some(Worker::spawn(self.vault.get())?);
+            *state = Some(Worker::spawn(self.vault.get(),input.action=="sql_cost_file")?);
         }
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(75),

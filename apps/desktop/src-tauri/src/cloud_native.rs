@@ -591,6 +591,31 @@ fn dispatch_bound(
             workbench_store::cloud_checkpoint_authorize(store, &owner, Some(&payload))?;
             runtime.transport.call(payload)?
         }
+        "costsPreview" => {
+            let owner=member(runtime)?;
+            workbench_store::cloud_checkpoint_authorize(store,&owner,None)?;
+            let settings=workbench_store::cost_sync::settings(store)?;
+            if settings["mode"]!="cloud"{return Err("当前使用本地 NAS 成本，不接收云端成本".into());}
+            let started=std::time::Instant::now();let mut cursor=String::new();let mut checkpoint=Value::Null;let mut rows=Vec::new();let mut complete=false;let mut pages=0;
+            for _ in 0..100 {
+                if runtime.epoch.load(Ordering::SeqCst)!=epoch||started.elapsed().as_secs()>90{return Err("成本读取已取消或超时，未应用任何价格".into());}
+                let page=runtime.transport.call(json!({"protocolVersion":2,"action":"costs.page","payload":{"cursor":cursor,"checkpoint":checkpoint,"limit":1000}}))?;
+                if page["ok"]!=true{return Err(page["message"].as_str().unwrap_or("云端成本读取失败，请重新读取").into());}
+                if page["workspaceId"]!=owner["workspaceId"]{return Err("成本来源工作区不匹配".into());}
+                if page["checkpoint"].as_str().is_none_or(|s|s.len()!=32||!s.chars().all(|c|c.is_ascii_hexdigit())){return Err("成本版本标识无效".into());}
+                if checkpoint.is_null(){checkpoint=page["checkpoint"].clone();}else if checkpoint!=page["checkpoint"]{return Err("云端成本已变化，请重新读取".into());}
+                let next=page["nextCursor"].as_str().ok_or("成本分页游标无效")?;
+                let batch=page["rows"].as_array().filter(|r|r.len()<=1000).ok_or("成本分页格式无效")?;
+                if !batch.is_empty()&&next<=cursor.as_str(){return Err("成本分页未推进".into());}
+                rows.extend(batch.iter().cloned());pages+=1;
+                if page["hasMore"]==false{complete=true;break;}
+                if page["hasMore"]!=true||batch.is_empty(){return Err("成本分页不完整".into());}cursor=next.to_owned();
+            }
+            if !complete{return Err("成本目录超过分页上限，未应用任何价格".into());}
+            if runtime.epoch.load(Ordering::SeqCst)!=epoch{return Err("登录已变化，成本读取已取消".into());}
+            let mut result=workbench_store::cost_sync::preview(store,Value::Array(rows),&settings)?;
+            result["pages"]=pages.into();result["elapsedMs"]=(started.elapsed().as_millis() as u64).into();result
+        }
         "assetsEnsure" => ensure_assets(runtime, store, &payload, true)?,
         "assetsDownload" => ensure_assets(runtime, store, &payload, false)?,
         "planPreview" => {
@@ -784,7 +809,7 @@ mod tests {
         }).is_err());
         assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
         let c = Connection::open(&store.path).unwrap();
-        c.execute_batch("CREATE TRIGGER reject_empty_binding BEFORE INSERT ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_empty_binding BEFORE INSERT ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
         assert!(connect_seed(&store, &owner, || Ok(())).is_err());
         assert_eq!(workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"], false);
         c.execute_batch("DROP TRIGGER reject_empty_binding").unwrap();
@@ -932,7 +957,7 @@ mod tests {
                 .exists()
         );
         let c = Connection::open(&store.path).unwrap();
-        c.execute_batch("CREATE TRIGGER reject_auto_connect BEFORE INSERT ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_auto_connect BEFORE INSERT ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fixture failure'); END;").unwrap();
         assert!(connect_seed(&store, &owner, || Ok(())).is_err());
         assert_eq!(
             workbench_store::cloud_checkpoint_status(&store).unwrap()["initialized"],

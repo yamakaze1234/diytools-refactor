@@ -19,6 +19,7 @@ type Result<T> = std::result::Result<T, String>;
 mod export_session;
 #[path = "workbench_store/sql_sync.rs"]
 mod sql_sync;
+pub(crate) mod cost_sync;
 #[path = "workbench_store/legacy_history.rs"]
 mod legacy_history;
 #[path = "workbench_store/profit.rs"]
@@ -1220,6 +1221,15 @@ pub fn request(
         None => json!({}),
     };
     profile_finish!(parse_timer, "request_json_parse");
+    if path.starts_with("/api/cost-sync/") {
+        let result=match (method,path){
+            ("GET","/api/cost-sync/settings")=>cost_sync::settings(store),
+            ("POST","/api/cost-sync/settings")=>cost_sync::save_settings(store,&input),
+            ("POST","/api/cost-sync/apply")=>cost_sync::apply(store,input["id"].as_str().unwrap_or("")),
+            _=>Err("不支持此成本操作".into())
+        };
+        return Ok(match result{Ok(v)=>response(200,v),Err(e)=>failure(400,&e)});
+    }
     let endpoint = path.split('?').next().unwrap_or(path);
     if method == "POST" && endpoint.starts_with("/api/price-changes/") {
         return price_changes::request(store, endpoint.trim_start_matches("/api/price-changes/"), &input).or_else(|error| Ok(failure(400, &error)));

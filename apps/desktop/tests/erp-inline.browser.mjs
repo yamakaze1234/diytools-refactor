@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {readFile,mkdir} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+let settings={mode:'cloud',path:'',sheet:'库存数据',goodsColumn:54,taxColumn:67},calls=[],fail=false,cancelPick=false;
+const server=createServer(async(req,res)=>{try{
+ if(req.url==='/'){res.setHeader('content-type','text/html');res.end(`<meta charset="UTF-8"><button id="erp-sync">ERP 同步</button><span id="erp-last"></span><dialog id="dialog"></dialog><script type="module">import {bindErpSync} from '/workbench/erp-ui.js';window.messages=[];window.received=[];window.paused=0;window.workbenchPauseCloud=async()=>paused++;const ui=bindErpSync({context:()=>received.length,operator:()=>"fixture",flush:async()=>{},hasPending:()=>false,receive:async v=>received.push(v),toast:m=>messages.push(m),openDialog:(title,html)=>{const d=document.querySelector('dialog');d.innerHTML='<div class="dialog-title"><h2>'+title+'</h2></div><div id="dialog-body">'+html+'</div>';if(!d.open)d.showModal();}},()=>{document.querySelector('dialog').close();window.sqlOpened=true;});window.ready=true;</script>`);return;}
+ if(req.url.startsWith('/api/')){let body='';for await(const b of req)body+=b;const input=body?JSON.parse(body):null;calls.push({path:req.url,input});res.setHeader('content-type','application/json');if(req.url==='/api/erp-sync/status'){res.end('{}');return;}if(req.url.endsWith('/credentials')){res.end(JSON.stringify({saved:true,settings:{server:'fixture',port:1433,database:'fixture',user:'reader',encrypt:true,trustServerCertificate:false},password:'fixture-only'}));return;}if(req.url==='/api/sql-sync/preview'){res.end(JSON.stringify({id:'erp-1',source:{server:'fixture',port:1433,database:'fixture'},total:1,matched:1,unmatched:0,unknown:0,changes:[{goodsId:'1',name:'fixture',before:1,after:2}]}));return;}if(req.url.endsWith('/cost-file')){res.end(JSON.stringify(cancelPick?{cancelled:true}:{path:'D:/SynologyDrive/主机成本表V2.xlsb'}));return;}if(req.url.endsWith('/settings')){if(input)settings=input;res.end(JSON.stringify(settings));return;}if(fail){res.statusCode=400;res.end(JSON.stringify({error:'云端成本已变化，请重新读取'}));return;}res.end(JSON.stringify(req.url.endsWith('/apply')?{ok:true,revision:9}:{id:'preview-1',total:12800,matched:2,changed:1,elapsedMs:900,examples:[{goodsId:'123',before:100,after:200,overridePreserved:true}],invalidCount:1,invalid:[{goods_id:'96480',reason:'含税成本无有效缓存值'}]}));return;}
+ res.setHeader('content-type','text/javascript');res.end(await readFile(new URL('../public'+req.url,import.meta.url)));
+ }catch(e){res.statusCode=500;res.end(String(e));}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({channel:'msedge',headless:true});
+try{
+ const page=await browser.newPage({viewport:{width:1160,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}/`);await page.waitForFunction(()=>window.ready);
+ for(const file of ['style.css','workbench-ui.css','workbench-simple.css','desktop-layout.css','ui-polish.css'])await page.addStyleTag({content:await readFile(new URL('../public/workbench/'+file,import.meta.url),'utf8')});
+ await page.click('#erp-sync');await page.locator('#cost-read').waitFor();await page.waitForFunction(()=>!document.querySelector('#sql-read').disabled);
+ assert.deepEqual(await page.locator('.erp-sync-heading h3').allTextContents(),['ERP 库存同步','核算成本更新']);assert.equal(await page.locator('#cost-open-sql').count(),0);
+ await page.locator('[value="nas"]').check();await page.click('#cost-choose-file');await page.waitForFunction(()=>document.querySelector('#cost-file-path').value.includes('.xlsb'));
+ await page.click('#sql-read');await page.locator('#sql-apply').waitFor({state:'visible'});assert.equal(await page.locator('#cost-read').isVisible(),true);assert.equal(await page.locator('#cost-file-path').inputValue(),'D:/SynologyDrive/主机成本表V2.xlsb');
+ await page.click('#sql-apply');await page.waitForFunction(()=>document.querySelector('#sql-apply-message').textContent.includes('ERP 库存与成本已更新'));assert.equal(await page.locator('#dialog').isVisible(),true);
+ await page.click('#cost-read');await page.locator('#cost-apply').waitFor({state:'visible'});await page.click('#cost-apply');await page.waitForFunction(()=>document.querySelector('#cost-sync-message').textContent.includes('已保存到本机'));assert.equal(await page.locator('#sql-preview-refresh').isVisible(),true);
+ await page.click('#sql-preview-refresh');await page.waitForFunction(()=>!document.querySelector('#sql-read').disabled);assert.equal(await page.locator('#cost-file-path').inputValue(),'D:/SynologyDrive/主机成本表V2.xlsb');
+ if(process.env.UI_CAPTURE)await page.locator('#dialog').screenshot({path:process.env.UI_CAPTURE+'-desktop.png'});
+ await page.setViewportSize({width:480,height:950});assert.equal(await page.evaluate(()=>document.querySelector('#dialog').scrollWidth<=document.querySelector('#dialog').clientWidth),true);assert.deepEqual(errors,[]);
+ if(process.env.UI_CAPTURE)await page.locator('#dialog').screenshot({path:process.env.UI_CAPTURE+'-inline.png'});
+ console.log(JSON.stringify({status:'passed',inlineErpAndCost:true,settingsPreservedAcrossErpPreview:true,applyWithoutNavigation:true,narrowLayout:true,pageErrors:errors}));
+}finally{await browser.close();await new Promise(r=>server.close(r));}

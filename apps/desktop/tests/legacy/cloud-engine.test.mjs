@@ -376,3 +376,87 @@ test('database error after server commit replays receipts without duplicate chan
  const batches=h.calls.filter(r=>r.action==='sync.pushBatch').map(r=>r.payload.requests);
  assert.deepEqual(batches.slice(2).flat(),batches[0]);
 });
+
+
+test('shop selection isolates upload and preserves other drafts across restart',async()=>{
+ const snapshot=fixture();const other={...copy(snapshot.state.configs[0]),id:'c2',shopId:'jonsbo'};
+ snapshot.state.configs.push(other);const projected=projectWorkspace(snapshot.state);
+ snapshot.document.materializedProjection=projected;
+ snapshot.document.records.push({type:'configuration',id:'c2',base:copy(projected[1].data),draft:copy(projected[1].data),version:1,conflict:null});
+ const h=harness({snapshot});h.edit(s=>s.configs.forEach(c=>c.name='本机新名'));
+ await h.engine.run({member,shopIds:['intel']});
+ assert.deepEqual(h.calls.filter(c=>c.action==='sync.pushBatch').flatMap(c=>c.payload.requests.map(r=>r.payload.entityId)),['c1']);
+ assert.equal(h.current.document.cursor,1);
+ assert.equal(h.current.document.records.find(r=>r.id==='c2').base.name,'旧名');
+ assert.equal(h.current.state.configs.find(r=>r.id==='c2').name,'本机新名');
+ const resumed=harness({snapshot:h.current});await resumed.engine.run({member,shopIds:['jonsbo']});
+ assert.deepEqual(resumed.calls.filter(c=>c.action==='sync.pushBatch').flatMap(c=>c.payload.requests.map(r=>r.payload.entityId)),['c2']);
+});
+
+test('unselected downloads and images wait until that shop is selected',async()=>{
+ const remote={...copy(fixture().document.records[0].base),id:'c2',shopId:'jonsbo',name:'乔思伯云端',image:'/uploads/'+'a'.repeat(64)+'.png'};
+ const rows=[{type:'configuration',id:'c2',version:1,seq:2,data:remote}];
+ const downloaded=[];
+ const h=harness({downloadAssets:async({urls})=>downloaded.push(...urls),onCall:req=>req.action==='sync.pull'?{ok:true,headSeq:2,nextCursor:2,hasMore:false,changes:req.payload.cursor<2?rows:[]}:undefined});
+ await h.engine.run({member,upload:false,shopIds:['intel']});
+ assert.equal(h.current.state.configs.some(c=>c.id==='c2'),false);
+ assert.equal(h.current.document.cursor,1);assert.equal(h.current.document.shopCursors.intel,2);assert.equal(downloaded.length,0);
+ await h.engine.run({member,upload:false,shopIds:['jonsbo']});
+ assert.equal(h.current.state.configs.find(c=>c.id==='c2').name,'乔思伯云端');
+ assert.equal(h.current.document.shopCursors.jonsbo,2);assert.deepEqual(downloaded,[remote.image]);
+});
+
+test('empty or unknown shop selection never contacts cloud',async()=>{
+ const h=harness();await assert.rejects(h.engine.run({member,shopIds:[]}));await assert.rejects(h.engine.run({member,shopIds:['unknown']}));assert.equal(h.calls.length,0);
+});
+
+
+test('scoped failed image download preserves progress and retries without skipping',async()=>{
+ const data={...copy(fixture().document.records[0].base),name:'新名',image:'/uploads/'+'b'.repeat(64)+'.png'};
+ let failed=true;
+ const h=harness({downloadAssets:async()=>{if(failed)throw Error('模拟网络失败');},onCall:req=>req.action==='sync.pull'?{ok:true,headSeq:2,nextCursor:2,hasMore:false,changes:req.payload.cursor<2?[change(data)]:[]}:undefined});
+ await assert.rejects(h.engine.run({member,upload:false,shopIds:['intel']}),/模拟网络失败/);
+ assert.equal(h.current.document.shopCursors,undefined);assert.equal(h.current.state.configs[0].name,'旧名');
+ failed=false;await h.engine.run({member,upload:false,shopIds:['intel']});
+ assert.equal(h.current.document.shopCursors.intel,2);assert.equal(h.current.state.configs[0].name,'新名');
+});
+
+test('unselected uncertain request stays unchanged and is never transmitted',async()=>{
+ const snapshot=fixture();snapshot.state.configs[0].shopId='jonsbo';
+ const data=projectWorkspace(snapshot.state)[0].data;
+ Object.assign(snapshot.document.records[0],{base:copy(data),draft:{...copy(data),name:'待确认'}});
+ snapshot.state.configs[0].name='待确认';snapshot.document.materializedProjection=projectWorkspace(snapshot.state);
+ const req={protocolVersion:2,action:'sync.push',requestId:crypto.randomUUID(),payload:{mutationId:crypto.randomUUID(),deviceId:'d1',entityType:'configuration',entityId:'c1',baseVersion:1,after:copy(snapshot.document.records[0].draft)}};
+ snapshot.document.outbox=[req];const h=harness({snapshot});await h.engine.run({member,shopIds:['intel']});
+ assert.deepEqual(h.current.document.outbox,[req]);assert.equal(h.calls.some(r=>['sync.pushBatch','sync.receipt'].includes(r.action)),false);
+});
+for(const mode of ['nas','cloud'])test(mode+' cost update stays local while cloud configuration changes still merge',async()=>{
+ const snapshot=fixture();snapshot.state.costSource=[{goodsId:'123',name:'CPU',tax:500}];snapshot.state.configs[0].parts=[{goodsId:'123',name:'CPU',slot:'CPU',qty:1,tax:500,lineId:'p'}];
+ const projection=projectWorkspace(snapshot.state);snapshot.document.materializedProjection=copy(projection);snapshot.document.records=[...projection.map(r=>({type:r.type,id:r.id,version:1,base:copy(r.data),draft:copy(r.data),conflict:null})),snapshot.document.records.find(r=>r.type==='workspace_meta')];
+ snapshot.state.costSync={mode};snapshot.state.costSource[0].tax=950;snapshot.state.configs[0].parts[0].tax=950;snapshot.state.revision++;
+ const remoteConfig=copy(projection.find(r=>r.type==='configuration').data);remoteConfig.name='云端改名';const remoteCost=copy(projection.find(r=>r.type==='component'));
+ const h=harness({snapshot,onCall(req){if(req.action==='sync.pull')return {ok:true,headSeq:3,nextCursor:3,hasMore:false,changes:[{...remoteCost,version:2,seq:2,data:{...remoteCost.data,taxCents:88800}},change(remoteConfig,2,3)].filter(row=>row.seq>req.payload.cursor)};}});
+ await h.engine.run({member});assert.equal(h.current.state.configs[0].name,'云端改名');assert.equal(h.current.state.configs[0].parts[0].tax,950);assert.equal(h.current.state.costSource[0].tax,950);assert.equal(h.calls.some(r=>r.action==='sync.pushBatch'),false);
+});
+
+test('server scoped pages skip foreign sequences only with matching scope receipt',async()=>{
+ const h=harness({onCall:req=>{if(req.action==='sync.pull'){
+  assert.deepEqual(req.payload.shopIds,['intel']);
+  return {ok:true,shopIds:['intel'],headSeq:1000,nextCursor:1000,hasMore:false,changes:[]};
+ }}});
+ await h.engine.run({member,upload:false,shopIds:['intel']});
+ assert.equal(h.current.document.shopCursors.intel,1000);assert.equal(h.current.document.cursor,1);
+ const bad=harness({onCall:req=>req.action==='sync.pull'?{ok:true,shopIds:['jonsbo'],headSeq:1000,nextCursor:1000,hasMore:false,changes:[]}:undefined});
+ await assert.rejects(bad.engine.run({member,upload:false,shopIds:['intel']}),/游标/);
+ assert.equal(bad.current.document.shopCursors,undefined);
+});
+
+test('combining already synced shops reuses each shops durable progress',async()=>{
+ const snapshot=fixture();snapshot.document.shopCursors={intel:100,'gigabyte|jonsbo':80};
+ const h=harness({snapshot,onCall:req=>{if(req.action==='sync.pull'){
+  assert.equal(req.payload.cursor,80);return {ok:true,shopIds:['intel','jonsbo'],headSeq:100,nextCursor:100,hasMore:false,changes:[]};
+ }}});
+ await h.engine.run({member,upload:false,shopIds:['jonsbo','intel']});
+ assert.equal(h.current.document.shopCursors.intel,100);assert.equal(h.current.document.shopCursors.jonsbo,100);
+ assert.equal(h.current.document.shopCursors['gigabyte|jonsbo'],80);
+});

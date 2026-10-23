@@ -255,11 +255,11 @@ let compactRefresh=null;
 // 同步面板不暂存配置草稿，允许同步完成前回读；其他弹窗仍保护尚未提交的输入。
 const hasDraftDialog=()=>$('#dialog').open&&!$('#cloud-close');
 // 共享一次后台刷新；只在输入、保存和导航检查均通过后更新列表及安全详情。
-async function refreshCompactWorkspace(){
+async function refreshCompactWorkspace(syncDialog=false){
  // 点击和同步通知共享刷新任务；保存回执/待重试请求仍独占自己的基线。
  if(compactRefresh)return compactRefresh;
  // 弹窗可能暂存尚未写入 dirty 的价格或配件输入，按钮获得焦点也不能解除此保护。
- const blocked=()=>window.workbenchAgentBusy||fullWorkspace||workspaceLoad||savePromise||batchPromise||ordinaryPending||batchPending||conflict||hasDraftDialog()||window.workbenchSourceEditor?.hasPending();
+ const blocked=()=>window.workbenchAgentBusy||fullWorkspace||workspaceLoad||savePromise||batchPromise||ordinaryPending||batchPending||conflict||(hasDraftDialog()&&!(syncDialog&&$('#erp-inline-shell')))||window.workbenchSourceEditor?.hasPending();
  if(blocked())return false;
  compactRefresh=(async()=>{
   const beforeState=state,beforeBase=acceptedState,beforeIndex=lazyWorkspace.index(),revision=state.revision,ids=loadedIds().join('\0'),selectedId=active;
@@ -270,7 +270,7 @@ async function refreshCompactWorkspace(){
   // 公共字段的本地草稿由完整保存协议负责，不能在安装远端摘要时被替换。
   if(dirty&&!sameWorkspaceMetadata(beforeBase,state))return false;
   const plan=planCompactRefresh({base:beforeBase.configs,local:state.configs,normalizedBase,remote:result.raw,prepared:result.configs,
-   metadataChanged:!sameWorkspaceMetadata(beforeIndex.metadata,result.index.metadata),dirty,active,editing:Boolean(document.activeElement?.matches('input,textarea,select,[contenteditable="true"]'))});
+   metadataChanged:!sameWorkspaceMetadata(beforeIndex.metadata,result.index.metadata),dirty,active,editing:!syncDialog&&Boolean(document.activeElement?.matches('input,textarea,select,[contenteditable="true"]'))});
   if(!plan)return false;
   const remote={...result.index.metadata,configs:result.raw,revision:result.index.revision,updatedAt:result.index.updatedAt};
   // 撤销记录同步调整基线，不能把其他人的新值在下一次撤销时恢复成旧值。
@@ -796,8 +796,8 @@ async function checkPriceChanges(){
   await showPriceChanges({revision:batch.revision,automatic:true,isCurrent:()=>priceInteraction===interaction});
  }catch(error){console.warn('价格变化记录读取失败',error.message);}finally{priceChecking=false;}
 }
-async function receiveErpForPrices(result){
- try{const accepted=await receiveErp(result);if(accepted===false)priceNotifications.length=0;return accepted;}
+async function receiveErpForPrices(result,options){
+ try{const accepted=await receiveErp(result,options);if(accepted===false)priceNotifications.length=0;return accepted;}
  catch(error){priceNotifications.length=0;throw error;}
 }
 function openProfitFull(){openProfitCheck({openDialog,request,save,shopId:()=>activeShopId,configs:ordinaryAvailable,selected:chosen,esc,toast,locate:id=>{const target=ordinaryAvailable().find(c=>c.id===id);if(!target)return toast('配置已删除或不在当前店铺');closeDialog();$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;activate(id);$('#locate-editing')?.click();switchTab('costs');}});}
@@ -818,7 +818,7 @@ function openLinkPartsDialogFull(){
   },
   exportImages:async(scope,kind,status,{signal})=>{
    exportJobs++;clearTimeout(imageTimer);
-   try{return await exportBatchImages({download:downloadBlob,renderImage:(c,width)=>imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}))},scope.productIds,status,{imageKind:kind,signal,snapshots:scope.snapshots,deduplicateNames:true});}
+   try{return await exportBatchImages({download:downloadBlob,renderImage:(c,width)=>imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}))},scope.productIds,status,{imageKind:kind,signal,snapshots:scope.snapshots,configIds:scope.exportConfigIds,deduplicateNames:true});}
    finally{exportJobs--;scheduleImageSave();}
   }
  });
@@ -828,10 +828,10 @@ function openGlobalPartsFull(){openGlobalBatch({openUpgrades:()=>openUpgradeDesc
 // 维护三店共用核算价，确认后重算相关数据并保存。
 function openCostsFull(){openCostEditor({openDialog,getRows:()=>selectableComponents(state.costSource),lastErp:()=>state.erpSync?.updatedAt,apply:async entries=>{await save();const beforeRevision=acceptedState.revision;checkpoint();const ids=applyManualCosts(state,entries);catalog=sourceCatalog(state.sourceCatalog);changed(`人工更新 ${entries.length} 条三店共用核算价`,[]);renderAll();await save();queuePriceChanges({source:'cost-source',after:beforeRevision,revision:acceptedState.revision});await checkPriceChanges();return ids.length;}});}
 // 接收已经提交的 ERP 数据；先尝试安全刷新，不在回调里重复保存。
-async function receiveErp(result){
+async function receiveErp(result,{syncDialog=false}={}){
  if(result?.ok===true)queuePriceChanges({source:'erp',after:result.revision-1,revision:result.revision});
  // 按需工作区先尝试安全更新；只有确实涉及当前草稿时才转入显式比较。
- if(!fullWorkspace&&!conflict){if(await refreshCompactWorkspace())return true;if(!window.workbenchHasPendingChanges())return false;}
+ if(!fullWorkspace&&!conflict){if(await refreshCompactWorkspace(syncDialog))return true;if(!window.workbenchHasPendingChanges())return false;}
  const blocked=()=>window.workbenchHasPendingChanges()||conflict;
  if(blocked()){conflict=true;openConflict('ERP 数据已同步。此页有未保存修改，请先备份草稿，再重新载入。');return false;}
  const counter=changeCounter,next=await request('/api/state?logs=none');
@@ -879,7 +879,7 @@ function bind(){
  mountNameFormatEntry(openNameFormats);
  $('#operator-open').textContent='操作人：'+operator;$('#operator-open').onclick=()=>workspaceSyncUi?.open();$('#shop-settings').onclick=openShopSettings;
  $('#shop-picker').onchange=async()=>{const next=$('#shop-picker').value;if(next===activeShopId)return;const previous=activeShopId;try{await save();posterEditor?.clear();activeShopId=next;templateSectionOpen=false;localStorage.setItem('diy-active-shop',next);active=fullWorkspace?(ordinaryConfigs(available())[0]?.id||null):null;selected=new Set(active?[active]:[]);collapsedProducts.clear();if(!fullWorkspace)productGroups(available()).forEach(p=>collapsedProducts.add(p.id));listPinnedProduct=null;$('#search').value='';$('#link-category-filter').value='';renderAll();}catch(e){activeShopId=previous;$('#shop-picker').value=previous;toast(e.message);}};
- bindErpSync({openDialog,toast,operator:()=>operator,flush:save,receive:receiveErpForPrices,afterApply:checkPriceChanges,context:()=>JSON.stringify([state.revision,changeCounter,activeShopId,active,tab]),hasPending:()=>window.workbenchHasPendingChanges()||conflict});
+ bindErpSync({openDialog,toast,operator:()=>operator,flush:save,receive:result=>receiveErpForPrices(result,{syncDialog:true}),afterApply:checkPriceChanges,context:()=>JSON.stringify([state.revision,changeCounter,activeShopId,active,tab]),hasPending:()=>window.workbenchHasPendingChanges()||conflict});
  if($('#product-sync-open'))$('#product-sync-open').onclick=fullAction(()=>openStandardProduct({openDialog,closeDialog,toast,esc,product:currentProduct,shop:currentShop,state:()=>state,request,flush:save,download:downloadBlob,apply:async(plan,p)=>{if(currentProduct()?.id!==p.id||activeShopId!==p.shopId)throw Error('当前链接已变化，请重新打开商品同步');const result=applyStandardProduct(plan,state,p);checkpoint();state=result.next;rememberDisplayParts();changed(`导入标准商品：更新 ${plan.updated} 套，新增 ${plan.added} 套`,result.ids);renderAll();await save();}}));
  $$('[data-config]').forEach(input=>{input.onfocus=()=>checkpointConfig();input.oninput=()=>{current()[input.dataset.config]=input.value;if(input.dataset.config==='shortName'){current().shortNameAuto=false;syncPosterShortName(current());}changed('编辑配置基本信息');};});
  $$('[data-tab]').forEach(b=>b.onclick=()=>switchTab(b.dataset.tab));$('#search').oninput=()=>{renderList();};$('#link-category-filter').onchange=()=>{renderList();$('#config-list').scrollTop=0;};document.querySelector('.list-actions-menu').addEventListener('click',e=>{if(e.target.closest('button'))document.querySelector('.list-actions-menu').open=false;});document.addEventListener('pointerdown',e=>{const menu=document.querySelector('.list-actions-menu');if(!menu.contains(e.target))menu.open=false;});document.addEventListener('keydown',e=>{if(e.key==='Escape')document.querySelector('.list-actions-menu').open=false;});$('#collapse-all-links').onclick=()=>{productGroups(available()).forEach(g=>collapsedProducts.add(g.id));listPinnedProduct=null;renderList();$('#config-list').scrollTop=0;};$('#select-all').onchange=()=>{listedConfigs().forEach(c=>$('#select-all').checked?selected.add(c.id):selected.delete(c.id));renderList();};

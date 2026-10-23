@@ -108,3 +108,27 @@ test('部分图片失败仍交付成功图片与失败清单，全部失败不�
 });
 
  test('同名配置导出统一使用链接内序号避免冲突',()=>{const rows=[config('1'),{...config('2'),name:'配置1'}];assert.equal(exportEntries(rows,['a']).length,4);const entries=exportEntries(rows,['a'],'both',{deduplicateNames:true});assert.equal(entries.length,4);assert.equal(new Set(entries.map(e=>e.name)).size,4);assert.equal(entries.filter(e=>e.name.endsWith('/2_配置1.png')).length,2);assert.deepEqual(entries.filter(e=>e.config.id==='2').map(e=>e.config.layout),['long','square']);});
+
+test('默认仅导出变动配置，切换全部与三种图种保留原序号且不重复保存',async()=>{
+ const configs=[config('1'),config('2'),config('3','b')];
+ const plan=batch([configs[1]]);let saves=0;const deliveries=[];
+ const session=createLinkPartsExportSession({getConfigs:()=>configs,apply:async p=>{saves++;applyReplacement(p,configs);},exportImages:async(scope,kind)=>{
+  const entries=exportEntries(scope.snapshots,scope.productIds,kind,{configIds:scope.exportConfigIds});
+  deliveries.push(entries);
+ }});
+ await session.save(plan);
+ configs[1].parts[0].name='后续编辑';
+ for(const range of ['changed','all'])for(const kind of ['long','square','both']){
+  await session.export(kind,()=>{},range);
+  const entries=deliveries.at(-1);
+  assert.equal(entries.length,(range==='changed'?1:2)*(kind==='both'?2:1));
+  assert.ok(entries.every(e=>e.config.productId==='a'));
+  const changed=entries.filter(e=>e.config.id==='2');
+  assert.ok(changed.every(e=>e.name.endsWith('/2_配置2.png')&&e.config.parts[0].name==='新CPU'));
+  if(range==='changed')assert.ok(entries.every(e=>e.config.id==='2'));
+ }
+ await session.export('both',()=>{});
+ assert.equal(deliveries.at(-1).length,2);
+ await assert.rejects(session.export('both',()=>{},'invalid'),/导出范围/);
+ assert.equal(saves,1);assert.deepEqual(session.scope().exportConfigIds,['1','2']);
+});

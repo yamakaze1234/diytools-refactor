@@ -17,23 +17,23 @@ export function bindSqlSync(api){
   if(retained){showPreview(retained.plan,retained.stamp);return;}
   if(reading){api.openDialog('ERP同步 · 后台读取', '<p id="sql-read-wait" role="status">正在后台读取公司 SQL，关闭后仍会保留预览结果。稍后重新打开即可继续。</p>');return;}
   const token=++generation;let busy=false,formEdited=false,settings={server:'',port:1433,database:'',user:'',encrypt:true,trustServerCertificate:false};
-  api.openDialog('ERP同步 · 公司数据库',`<p class="hint">按 goods_id 精确匹配公司大库的分库可销数。先读取差异，再确认应用。同时读取“库存成本”作为单件 ERP 成本，保留人工核算价；ERP 成本与可销数仅保存在本机。勾选后在本机加密保存连接信息，仅当前 Windows 用户使用，不上传云端。当前为独立测试版。</p><form id="sql-connection-form"><div class="form-grid">${[['server','服务器'],['port','端口'],['database','数据库'],['user','只读账号']].map(([key,label])=>`<label class="field">${label}<input id="sql-${key}" name="${key}" value="${esc(settings[key])}" required ${key==='port'?'type="number" min="1" max="65535"':'autocomplete="off"'}></label>`).join('')}<label class="field">密码<input id="sql-password" type="password" autocomplete="off" required></label></div><label><input id="sql-encrypt" type="checkbox" checked> 加密连接</label> <label><input id="sql-trust" type="checkbox"> 信任服务器证书（公司自签证书时使用）</label><label style="display:block;margin-top:10px"><input id="sql-remember" type="checkbox" checked> 在本机加密保存并自动填入</label><button id="sql-forget" type="button">清除本机保存的连接</button><p id="sql-message" role="status" class="hint"></p><div class="actions"><button type="button" id="sql-cancel">取消</button><button type="submit" class="primary" id="sql-read" disabled>读取并预览</button></div></form>`);
+  api.openDialog('ERP同步 · 公司数据库',`<p class="hint">只读公司大库，先预览差异，再更新本机 ERP 成本与可销数。</p><form id="sql-connection-form"><details id="sql-connection-details" open><summary>连接设置</summary><div class="form-grid">${[['server','服务器'],['port','端口'],['database','数据库'],['user','只读账号']].map(([key,label])=>`<label class="field">${label}<input id="sql-${key}" name="${key}" value="${esc(settings[key])}" required ${key==='port'?'type="number" min="1" max="65535"':'autocomplete="off"'}></label>`).join('')}<label class="field">密码<input id="sql-password" type="password" autocomplete="off" required></label></div><label><input id="sql-encrypt" type="checkbox" checked> 加密连接</label> <label><input id="sql-trust" type="checkbox"> 信任服务器证书（公司自签证书时使用）</label><label style="display:block;margin-top:10px"><input id="sql-remember" type="checkbox" checked> 在本机加密保存并自动填入</label><button id="sql-forget" type="button">清除本机保存的连接</button></details><p id="sql-message" role="status" class="hint"></p><div class="actions"><button type="button" id="sql-cancel">取消</button><button type="submit" class="primary" id="sql-read" disabled>读取并预览</button></div></form>`);
   const form=document.querySelector('#sql-connection-form'),message=form.querySelector('#sql-message');if(readError)message.textContent=readError;
   const live=()=>token===generation&&dialog.open&&form.isConnected;
   const lock=locked=>{busy=locked;form.querySelectorAll('input,button').forEach(input=>{if(input.id!=='sql-cancel')input.disabled=locked;});};
   form.addEventListener('input',()=>{formEdited=true;});
-  request('credentials').then(saved=>{if(!live()||formEdited||busy)return;if(saved.saved){settings=saved.settings;for(const key of ['server','port','database','user'])form.querySelector('#sql-'+key).value=settings[key];form.querySelector('#sql-encrypt').checked=settings.encrypt;form.querySelector('#sql-trust').checked=settings.trustServerCertificate;form.querySelector('#sql-password').value=saved.password||'';message.textContent='已从本机加密存储填入连接信息';}}).catch(error=>{if(live())message.textContent=error.message;}).finally(()=>{if(live()&&!busy)form.querySelector('#sql-read').disabled=false;});
-  form.querySelector('#sql-forget').onclick=async()=>{if(busy)return;formEdited=true;lock(true);try{await request('credentials/clear',{});if(!live())return;for(const key of ['server','database','user','password'])form.querySelector('#sql-'+key).value='';form.querySelector('#sql-remember').checked=false;message.textContent='已清除本机保存的连接';}catch(error){if(live())message.textContent=error.message;}finally{if(live())lock(false);}};
+  request('credentials').then(saved=>{if(!live()||formEdited||busy)return;if(saved.saved){settings=saved.settings;for(const key of ['server','port','database','user'])form.querySelector('#sql-'+key).value=settings[key];form.querySelector('#sql-encrypt').checked=settings.encrypt;form.querySelector('#sql-trust').checked=settings.trustServerCertificate;form.querySelector('#sql-password').value=saved.password||'';message.textContent='已从本机加密存储填入连接信息';const details=form.querySelector('#sql-connection-details');if(api.inline&&details)details.open=false;}}).catch(error=>{if(live())message.textContent=error.message;}).finally(()=>{if(live()&&!busy)form.querySelector('#sql-read').disabled=false;});
+  form.querySelector('#sql-forget').onclick=async()=>{if(busy||api.canStart?.()===false)return;formEdited=true;api.busy?.(true);lock(true);try{await request('credentials/clear',{});if(!live())return;for(const key of ['server','database','user','password'])form.querySelector('#sql-'+key).value='';form.querySelector('#sql-remember').checked=false;message.textContent='已清除本机保存的连接';const details=form.querySelector('#sql-connection-details');if(details)details.open=true;}catch(error){if(live())message.textContent=error.message;}finally{if(live())lock(false);api.busy?.(false);}};
   form.querySelector('#sql-cancel').onclick=()=>dialog.close();
   form.onsubmit=async event=>{
-   event.preventDefault();if(busy||!live())return;formEdited=true;lock(true);message.textContent='正在保存本机配置…';
+   event.preventDefault();if(busy||!live()||api.canStart?.()===false)return;formEdited=true;api.busy?.(true);lock(true);message.textContent='正在保存本机配置…';
    let password=form.querySelector('#sql-password').value;form.querySelector('#sql-password').value='';
    settings={...Object.fromEntries(['server','port','database','user'].map(k=>[k,form.querySelector('#sql-'+k).value])),encrypt:form.querySelector('#sql-encrypt').checked,trustServerCertificate:form.querySelector('#sql-trust').checked};
-   try{await api.flush();if(!live())return;const stamp=context();if(!unchanged(stamp))throw Error('本页仍有未保存修改，请先保存后重试。');message.textContent='正在连接 SQL 并读取 ERP 成本与库存，最多等待 90 秒…';reading=true;readError='';const result=await request('preview',{settings,password,remember:form.querySelector('#sql-remember').checked,operator:api.operator()});
+   try{await globalThis.window?.workbenchPauseCloud?.();await api.flush();if(!live())return;const stamp=context();if(!unchanged(stamp))throw Error('本页仍有未保存修改，请先保存后重试。');message.textContent='正在连接 SQL 并读取 ERP 成本与库存，最多等待 90 秒…';reading=true;readError='';const result=await request('preview',{settings,password,remember:form.querySelector('#sql-remember').checked,operator:api.operator()});
     // 不因关闭或后续编辑丢失结果；确认应用时仍要求原始版本与有效期一致。
     retained={plan:result,stamp,createdAt:Date.now(),page:0};password='';
     if(live()||dialog.open&&dialog.querySelector('#sql-read-wait'))showPreview(result,stamp);
-   }catch(error){readError=error.name==='TimeoutError'?'SQL 读取超时，尚未应用数据，请重新读取。':error.message;const wait=dialog.querySelector('#sql-read-wait');if(wait)wait.textContent=readError;if(live()){form.querySelector('#sql-password').value=password;message.textContent=error.name==='TimeoutError'?'SQL 读取超时，尚未应用数据。请检查当前电脑的网络和 SQL 连接设置后重试。':error.message;lock(false);}}finally{password='';reading=false;}
+   }catch(error){readError=error.name==='TimeoutError'?'SQL 读取超时，尚未应用数据，请重新读取。':error.message;const wait=dialog.querySelector('#sql-read-wait');if(wait)wait.textContent=readError;if(live()){form.querySelector('#sql-password').value=password;message.textContent=error.name==='TimeoutError'?'SQL 读取超时，尚未应用数据。请检查当前电脑的网络和 SQL 连接设置后重试。':error.message;lock(false);}}finally{password='';reading=false;api.busy?.(false);}
   };
  }
  function showPreview(plan,stamp){
@@ -47,17 +47,17 @@ export function bindSqlSync(api){
   if(!valid()){button.disabled=true;message.textContent='预览已过期或配置已变化，可以继续查看，应用前请重新读取。';}
   cancel.onclick=()=>{if(!busy)dialog.close();};
   button.onclick=async()=>{
-   if(busy||!live())return;
+   if(busy||!live()||api.canStart?.()===false)return;
    if(!valid()){message.textContent='预览已过期或配置已变化，请重新读取预览。';button.disabled=true;return;}
-   busy=true;button.disabled=true;cancel.disabled=true;refresh.disabled=true;lockClose(true);message.textContent='正在确认应用到本机…';
-   try{await api.flush();if(!live())return;if(!valid())throw Error('预览已过期或配置已变化，请重新读取预览。');const result=await request('apply',{id:plan.id});retained=null;if(!live())return;
+   busy=true;api.busy?.(true);button.disabled=true;cancel.disabled=true;refresh.disabled=true;lockClose(true);message.textContent='正在确认应用到本机…';
+   try{await globalThis.window?.workbenchPauseCloud?.();await api.flush();if(!live())return;if(!valid())throw Error('预览已过期或配置已变化，请重新读取预览。');const result=await request('apply',{id:plan.id});retained=null;if(!live())return;
     // 按需回载要求弹窗关闭；在同一应用期间锁住页面输入，避免新编辑与回载相撞。
     const wasInert=document.body.inert;document.body.inert=true;
-    try{dialog.close();if(await api.receive(result)===false)return;}finally{document.body.inert=wasInert;}
+    try{if(!api.inline)dialog.close();if(await api.receive(result)===false)return;if(api.inline){button.hidden=true;message.textContent="ERP 库存与成本已更新，可继续操作下方核算成本。";}}finally{document.body.inert=wasInert;}
     api.toast(`本机 ERP 成本与库存已更新：${plan.changes.length} 处变化，ERP 成本取自 SQL 库存成本；人工核算价保留，结果仅保存在本机。`);
     // 配置回载及输入解锁已完成，再尝试本次价格提示；不让明细读取占用回载锁。
     await api.afterApply?.(result);
-   }catch(error){if(live()){message.textContent=error.message;button.disabled=!valid();}else api.toast(error.message);}finally{busy=false;lockClose(false);if(live()){cancel.disabled=false;refresh.disabled=false;}}
+   }catch(error){if(live()){message.textContent=error.message;button.disabled=!valid();}else api.toast(error.message);}finally{busy=false;lockClose(false);api.busy?.(false);if(live()){cancel.disabled=false;refresh.disabled=false;}}
   };
  }
  return{setup,preview:setup};

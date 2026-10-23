@@ -1109,7 +1109,7 @@ mod tests {
         let (store, source) = fixture();
         let p = prepare(&store, &source, &owner(), || Ok(())).unwrap();
         let c = db(&store.path).unwrap();
-        c.execute_batch("CREATE TRIGGER reject_migration BEFORE INSERT ON workbench_cloud_state BEGIN SELECT RAISE(ABORT,'fixture-error'); END;").unwrap();
+        c.execute_batch("CREATE TRIGGER reject_migration BEFORE INSERT ON workbench_cloud_meta BEGIN SELECT RAISE(ABORT,'fixture-error'); END;").unwrap();
         assert!(apply(&store, &p, &payload(&p), &owner(), || Ok(())).is_err());
         assert_eq!(state(&c).unwrap(), factory());
         assert_eq!(logs(&c).unwrap(), json!([]));

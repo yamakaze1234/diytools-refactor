@@ -1,0 +1,146 @@
+/* 工作台界面层：不改变海报样式、业务字段或三栏拖动逻辑。 */
+:root{--ui-ink:#203047;--ui-muted:#64748b;--ui-line:#dce3ec;--ui-blue:#2457d6;--ui-soft:#edf3ff;--desktop-toolbar-height:56px}
+body{color:var(--ui-ink);background:#f4f6fa;font-family:"Microsoft YaHei UI","Microsoft YaHei",sans-serif}
+.topbar{height:var(--desktop-toolbar-height);min-height:var(--desktop-toolbar-height);padding:10px 20px;border-bottom:1px solid var(--ui-line);box-shadow:0 2px 8px #20304704}
+.topbar .brand{font-size:16px;font-weight:750;letter-spacing:.2px;white-space:nowrap}
+.topbar .brand span{font-size:14px;font-weight:500;margin-left:9px;color:var(--ui-muted)}
+.topbar .top-right{gap:10px}
+.topbar button{min-height:34px;border-radius:7px;padding:6px 13px;font-size:12px}
+.topbar #save{padding-inline:20px;font-weight:700;background:var(--ui-blue);border-color:var(--ui-blue)}
+.topbar #save-status{font-size:12px;max-width:180px}
+.ui-preview .topbar .prototype{display:inline-flex;background:#fff7e8;color:#815316;border:1px solid #ead6af;border-radius:5px;padding:4px 8px;font-size:12px;white-space:nowrap}
+.sidebar{background:#fff;border-right-color:var(--ui-line);padding:16px 12px 12px}
+.sidebar .shop{gap:10px;margin-bottom:14px}
+.sidebar .shop-brand{border-radius:9px;min-width:46px;padding:10px 7px;font-size:18px}
+.sidebar .shop-picker-label,.sidebar .shop-heading{font-size:12px}
+.sidebar #shop-picker{font-size:12px;min-height:34px;border-color:var(--ui-line)}
+.sidebar #workspace-tools>summary{background:#f5f7fa;border-color:var(--ui-line);color:#40516a;padding:9px 11px;border-radius:7px;font-size:12px}
+.sidebar-list-heading{margin:16px 0 10px;gap:6px}
+.sidebar .side-title{font-size:13px;letter-spacing:.3px}
+.sidebar #count{font-size:12px;color:var(--ui-muted);margin-top:4px}
+.sidebar #new-product{background:#fff;color:var(--ui-blue);border:1px solid #cbd8f5;border-radius:6px}
+.sidebar #search,.sidebar #link-category-filter{min-height:35px;border-color:var(--ui-line);border-radius:7px;font-size:12px}
+.sidebar #search{background:#f7f9fc;margin-top:6px}
+.sidebar .selection-tools{font-size:12px;color:var(--ui-muted);padding-block:7px}
+.sidebar .product-group:not([data-link-colored]){border-color:var(--ui-line);border-radius:8px;box-shadow:none;margin-bottom:8px}
+.sidebar .product-group:not([data-link-colored]) .product-select-row{background:#f8fafc;border-radius:8px}
+.sidebar .product-select-row strong{font-size:12px;line-height:1.6}
+.sidebar .config-item{margin:3px 4px;padding:10px 8px;border-radius:6px;min-height:60px;transition:background-color .15s}
+.sidebar .config-item strong{font-size:12px;line-height:1.65;font-weight:600}
+.sidebar .config-item small{font-size:12px;line-height:1.6;color:var(--ui-muted)}
+.sidebar .config-item.active{background:var(--ui-soft);box-shadow:inset 3px 0 0 var(--ui-blue);border-color:#c9d9ff}
+.sidebar .config-item.active strong{color:#1944ad}
+.main .page-heading{margin-bottom:14px;align-items:center}
+.main .page-heading h1{font-size:21px;line-height:1.5;letter-spacing:-.3px;margin:5px 0 0;color:#172b46}
+.main .breadcrumb{font-size:12px;color:var(--ui-muted)}
+.main .panel{border-color:var(--ui-line);border-radius:9px;box-shadow:none}
+.main button,.preview-side button{border-radius:6px;font-size:12px;min-height:32px}
+.main .product-panel{padding:12px 14px;background:#fff;margin-bottom:10px}
+.main .product-panel button.primary{background:var(--ui-soft);border-color:#d3dfff;color:#2453b8}
+.main .maintenance-tools{margin:10px 0}
+.main .maintenance-tools>summary,.main .identity-extra>summary{background:#f7f9fc;border-color:var(--ui-line);color:#455a77;border-radius:6px;padding:8px 10px;font-size:12px}
+.main .identity{padding:12px 14px;gap:10px 14px;margin-bottom:12px;align-items:start}
+.main .identity>label{position:relative;gap:6px;font-size:12px;color:#53647a;align-content:start}
+.main .identity>label input{height:35px;min-height:35px;padding:7px 10px;font-size:13px;border-color:var(--ui-line);border-radius:6px}
+.main .identity>label>button{position:absolute;top:-4px;right:0;min-height:24px;padding:2px 0;font-size:12px;background:transparent;border-color:transparent;color:var(--ui-blue);text-align:left}
+.main .identity-extra{margin-top:0}
+.main .cost-summary{padding:12px 16px;gap:8px 16px;border:1px solid var(--ui-line);border-radius:9px;background:#fff;margin-bottom:14px}
+.main .cost-summary .cost-more{padding-top:8px;margin-top:0}
+.main .cost-summary .cost-detail-grid{gap:8px 16px}
+.main .cost-summary .cost-detail-grid strong{font-size:17px;line-height:1.5}
+.main .cost-summary #installment-label{font-size:12px}
+.main .cost-summary #coupon-open{min-height:0;padding:0;line-height:1.5}
+.main .cost-summary strong{font-family:"Segoe UI","Microsoft YaHei",sans-serif;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+.main .cost-summary small{font-size:12px;color:var(--ui-muted);margin-bottom:5px}
+.main .cost-summary .arrival-field input{font-family:"Segoe UI",sans-serif;font-size:20px;height:33px;padding:3px 8px;border-color:#b9cdf5;border-radius:6px}
+.main .cost-summary .installment-field{padding-top:9px;margin-top:0;font-size:12px}
+.main>.tabs{gap:2px;padding:4px;background:#e9edf4;border:1px solid #e0e5ee;border-radius:8px;margin-bottom:12px;position:sticky;top:0;z-index:3}
+.main>.tabs button{padding:9px 8px;min-height:36px;background:transparent;color:#58677d;border:0;border-radius:5px;font-size:12px;white-space:nowrap}
+.main>.tabs button.active{background:#fff;color:#184cbf;box-shadow:0 1px 4px #20304715;font-weight:700}
+.main .editor{padding:14px;border-radius:9px}
+.main .editor>.hint,.main .editor [data-react-editor]>.hint{font-size:12px;line-height:1.8;color:var(--ui-muted);margin-top:0}
+.main .part-row{padding:12px 0;border-color:#e9edf3}
+.main .part-row .part-pick{background:#f0f5ff;color:#2353b5;border-color:#d1def8;font-size:12px;border-radius:6px}
+.main .part-row textarea{border-color:var(--ui-line);border-radius:6px;font-size:13px;line-height:1.6}
+.main .part-label{font-size:12px;font-weight:700;color:#425670}
+.main .part-head{font-size:12px;color:var(--ui-muted)}
+.preview-side:not(.preview-expanded){background:#f8fafc;border-left-color:var(--ui-line);gap:12px}
+.preview-side:not(.preview-expanded) .preview-head h2{font-size:14px;color:#263b56}
+.preview-side #image-status{font-size:12px;margin-top:6px}
+.preview-side .preview-quick-actions{font-size:12px;gap:10px}
+.preview-side .image-settings>summary{background:#fff;border-color:var(--ui-line);color:#425670;border-radius:6px;font-size:12px;padding:9px 11px}
+.preview-side .canvas-tools>summary{background:#fff;color:#425670;border:1px solid var(--ui-line);border-radius:6px;font-size:12px}
+.preview-side:not(.preview-expanded) #preview-scroll{background:#e9edf3;border-color:#e0e5ee;border-radius:9px;padding:10px}
+.preview-side .preview-bottom{border-top:1px solid var(--ui-line);padding-top:12px}
+.preview-side .preview-bottom small,.preview-side #dimensions{font-size:12px;line-height:1.7;color:var(--ui-muted)}
+.preview-side #download{background:var(--ui-blue);border-color:var(--ui-blue);min-height:38px;font-weight:700}
+.preview-side #batch-export{min-height:38px}
+button:focus-visible,summary:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,[role=button]:focus-visible{outline:2px solid #2457d6;outline-offset:2px}
+@media(min-width:1181px){.workspace>.main{padding:20px}.workspace>.sidebar{padding-top:16px}.workspace>.preview-side:not(.preview-expanded){padding:18px 14px}}
+@media(max-width:1180px){.topbar .brand{display:none}.ui-preview .topbar .prototype{margin-right:auto}.topbar .top-right{width:auto}.main>.tabs{top:56px}}
+@media(max-width:720px){:root{--desktop-toolbar-height:100px}.topbar{height:auto;min-height:100px;flex-wrap:wrap;padding:8px 10px;gap:6px}.ui-preview .topbar .prototype{width:100%;justify-content:center}.topbar .top-right{width:100%;justify-content:space-between;gap:5px}.topbar button{padding:6px 8px}.topbar #save-status{max-width:85px}.main>.tabs{top:100px;overflow-x:auto;justify-content:flex-start}.main>.tabs button{flex:0 0 auto}.main .page-heading{flex-wrap:wrap;gap:8px}.main .page-heading h1{font-size:18px}.main .identity{grid-template-columns:1fr}.main .cost-summary{padding:12px;gap:12px}.main .cost-summary strong{font-size:18px}}
+@media(prefers-reduced-motion:reduce){.sidebar .config-item{transition:none}}
+
+/* 云同步：店铺为主选择，状态与维护工具按操作频率分层。 */
+.cloud-panel{--sync-accent:#2355df;--sync-ink:#182b49;--sync-muted:#66758c;color:var(--sync-ink);font-family:"Segoe UI","Microsoft YaHei",sans-serif}
+.cloud-panel .cloud-intro{margin:0 0 24px;color:var(--sync-muted);font-size:14px;line-height:1.6}
+.cloud-panel .cloud-shops{border:0;padding:0;margin:0;min-width:0}
+.cloud-shops legend{padding:0;font-size:16px;font-weight:650;color:var(--sync-ink)}
+.cloud-selection-count{display:inline-block;margin-left:10px;padding:3px 9px;border-radius:6px;background:#edf2ff;color:#2355df;font-size:12px;font-weight:500;vertical-align:middle}
+.cloud-panel .cloud-section-note{font-size:12px;color:var(--sync-muted);margin:8px 0 14px;line-height:1.6}
+.cloud-shop-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.cloud-panel .cloud-shop-card{position:relative;display:flex;align-items:flex-start;gap:10px;padding:18px 12px 38px;border:1px solid #dbe3ef;border-radius:10px;background:#fff;cursor:pointer;min-width:0;transition:border-color .15s,background .15s}
+.cloud-shop-card:hover{border-color:#98afe9;background:#f8faff}
+.cloud-shop-card:has(input:checked){border-color:var(--sync-accent);background:#f1f5ff;box-shadow:inset 0 0 0 1px var(--sync-accent)}
+.cloud-shop-card:has(input:focus-visible){outline:3px solid #9bb6ff;outline-offset:3px}
+.cloud-shop-card:has(input:disabled){cursor:wait;opacity:.7}
+.cloud-panel .cloud-shop-card input{appearance:auto;width:17px;height:17px;min-height:0;padding:0;margin:2px 0 0;flex:0 0 17px;accent-color:var(--sync-accent)}
+.cloud-shop-copy{display:flex;flex-direction:column;gap:6px;min-width:0}
+.cloud-shop-copy strong{font-size:15px;font-weight:650;line-height:1.4}
+.cloud-shop-copy>span{font-size:11px;color:var(--sync-muted);line-height:1.5;overflow-wrap:anywhere}
+.cloud-shop-state{position:absolute;left:39px;bottom:14px;font-size:11px;color:var(--sync-muted)}
+.cloud-shop-state:after{content:"未选择"}
+.cloud-shop-card:has(input:checked) .cloud-shop-state{color:var(--sync-accent)}
+.cloud-shop-card:has(input:checked) .cloud-shop-state:after{content:"已选择"}
+.cloud-panel .cloud-shared-note{font-size:12px;line-height:1.6;color:var(--sync-muted);margin:12px 0 22px}
+.cloud-status-grid{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:16px;padding:17px 18px;background:#f6f8fb;border-radius:8px}
+.cloud-status-grid>div{display:flex;flex-direction:column;gap:8px;min-width:0}
+.cloud-status-grid span{font-size:12px;color:var(--sync-muted)}
+.cloud-status-grid strong{font-size:13px;font-weight:600;overflow-wrap:anywhere;line-height:1.5}
+.cloud-main-actions{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:22px}
+.cloud-panel .cloud-main-actions .actions{margin:0;gap:8px}
+.cloud-panel #cloud-sync-now{padding:10px 24px;font-weight:600;background:var(--sync-accent);border-color:var(--sync-accent);color:#fff}
+.cloud-auto-note{font-size:12px;color:var(--sync-muted)}
+.cloud-panel #cloud-message:empty{display:none}
+.cloud-panel .cloud-background-note{font-size:12px;line-height:1.6;margin:12px 0 20px;color:var(--sync-muted)}
+.cloud-tools{border-top:1px solid #e5eaf2;padding-top:16px}
+.cloud-tools summary{cursor:pointer;font-size:13px;font-weight:600;padding:4px 0;color:#50627c}
+.cloud-tools .actions{flex-wrap:wrap;gap:8px}
+.cloud-footer{display:flex;justify-content:space-between;align-items:center;margin-top:20px;padding-top:14px;border-top:1px solid #e5eaf2}
+.cloud-panel .cloud-signout{background:transparent;border-color:transparent;color:var(--sync-muted);padding-left:0}
+@media(max-width:620px){.cloud-shop-grid{grid-template-columns:1fr}.cloud-panel .cloud-shop-card{padding:14px 12px;align-items:center}.cloud-shop-copy{gap:3px}.cloud-shop-state{position:static;margin-left:auto;white-space:nowrap}.cloud-status-grid{grid-template-columns:1fr 1fr;gap:14px}.cloud-main-actions{align-items:flex-start;flex-direction:column}}
+@media(prefers-reduced-motion:reduce){.cloud-panel .cloud-shop-card{transition:none}}
+
+.cost-view-tabs{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+.cost-mode-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:20px}
+.cost-mode-grid .cloud-shop-card{padding:18px 16px 38px}
+.cost-sync-panel .field{margin-top:12px}
+.cost-preview-scroll{max-height:240px;overflow:auto;margin-top:12px}
+.cost-preview-scroll table{width:100%;border-collapse:collapse;font-size:12px}
+.cost-preview-scroll th,.cost-preview-scroll td{padding:8px;border-bottom:1px solid #e5eaf2;text-align:left}
+.cost-preview-scroll th{position:sticky;top:0;background:#f6f8fb}
+@media(max-width:620px){.cost-mode-grid{grid-template-columns:1fr}.cost-view-tabs{align-items:flex-start;flex-direction:column}}
+
+/* 同一同步窗口：库存和核算成本各自在本区预览、确认。 */
+.erp-sync-stack{display:grid;gap:28px;min-width:0}
+.erp-sync-stack>section+section{border-top:1px solid #dce4ee;padding-top:24px}
+.erp-sync-heading h3{margin:0;font-size:18px;color:#24334b}
+.erp-sync-heading p{margin:7px 0 14px;font-size:12px;color:#62748b}
+.erp-sync-block{border:0;padding:0;margin:0;min-width:0}
+.erp-sync-block:disabled{opacity:.75}
+.erp-sync-stack .cost-sync-panel{padding:0}
+.erp-sync-stack .cost-mode-grid .cloud-shop-card{padding:14px 14px 32px}
+.erp-sync-stack #sql-cancel,.erp-sync-stack #sql-preview-cancel,.erp-sync-stack #cost-close{display:none}
+.erp-sync-stack .sql-diff-scroll{max-height:220px}
+.erp-sync-stack .form-grid{display:grid;gap:12px;grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:620px){.erp-sync-stack .form-grid{display:grid;gap:12px;grid-template-columns:1fr 1fr}}

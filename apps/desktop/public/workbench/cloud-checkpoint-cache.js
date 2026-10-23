@@ -35,7 +35,7 @@ export function createCloudCheckpointCache(request,{patch=false}={}){
 /** 比较同步快照前后内容，只返回变化的部分。 */
 function checkpointPatch(before,after){
  if(!Array.isArray(before.records)||!Array.isArray(after.records))return null;
- const permitted=new Set(['format','workspaceId','uid','deviceId','cursor','outbox','materializedProjection','lastSyncedAt']),set={};
+ const permitted=new Set(['format','workspaceId','uid','deviceId','cursor','shopCursors','outbox','materializedProjection','lastSyncedAt']),set={};
  for(const key of new Set([...Object.keys(before),...Object.keys(after)])){
   if(before[key]===after[key])continue;
   if(key==='records'||key==='localRevision')continue;

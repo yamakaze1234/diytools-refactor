@@ -38,13 +38,13 @@ export const LOCAL_WORKBENCH_ROUTES = [
 
 const installations = new WeakMap<object, Promise<void>>();
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
-const CLOUD_ACTIONS = new Set(['login', 'logout', 'resume', 'status', 'connect', 'load', 'commit', 'call', 'assetsEnsure', 'assetsDownload', 'assetsCancel', 'planPreview', 'planApply']);
+const CLOUD_ACTIONS = new Set(['login', 'logout', 'resume', 'status', 'connect', 'load', 'commit', 'call', 'assetsEnsure', 'assetsDownload', 'assetsCancel', 'costsPreview', 'planPreview', 'planApply']);
 
 /** Only the company SQL read/preview/confirmed-apply contract is enabled. */
 /** 只放行已实现的公司 SQL 只读查询、预览和确认应用路由。 */
 export function isSqlSyncRoute(path: string, method: string): boolean {
   return (method === 'GET' && ['/api/sql-sync/credentials', '/api/erp-sync/status'].includes(path)) ||
-    (method === 'POST' && ['/api/sql-sync/credentials/clear', '/api/sql-sync/preview', '/api/sql-sync/apply'].includes(path));
+    (method === 'POST' && ['/api/sql-sync/cost-file', '/api/sql-sync/cost-preview', '/api/sql-sync/credentials/clear', '/api/sql-sync/preview', '/api/sql-sync/apply'].includes(path));
 }
 
 function errorResponse(message: string, status = 503): Response {

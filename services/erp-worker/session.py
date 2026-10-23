@@ -331,6 +331,12 @@ class Session:
                 self.disconnect()
             raise WorkerError("INVALID_DOMAIN", "ERP 地址与本机配置不一致")
         action = request.get("action")
+        if action == "sql_cost_file":
+            from cost_file import read_costs
+            try:
+                return read_costs(request.get("settings", {}))
+            except (ValueError, OSError, KeyError) as error:
+                raise WorkerError("COST_FILE_ERROR", "成本表读取失败：" + str(error)) from None
         if action in {"sql_read", "sql_credentials_load", "sql_credentials_clear"}:
             return self.handle_sql(request)
         if action == "status":

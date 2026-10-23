@@ -47,6 +47,7 @@ function validateRequest(req,doc){
 function validateDocument(doc,member){
   if(!doc||doc.format!==1||typeof doc.workspaceId!=='string'||!doc.workspaceId||typeof doc.uid!=='string'||!doc.uid||typeof doc.deviceId!=='string'||!doc.deviceId||!safeInteger(doc.cursor)||!Array.isArray(doc.records)||!Array.isArray(doc.outbox)||!Array.isArray(doc.materializedProjection))throw fail('云端同步资料未初始化或格式无效');
   if(member&&(doc.workspaceId!==member.workspaceId||doc.uid!==member.uid))throw fail('当前成员与本机云端资料不一致','OWNER_MISMATCH');
+  if(doc.shopCursors&&Object.values(doc.shopCursors).some(v=>!safeInteger(v)))throw fail('店铺同步进度无效');
   const seen=new Set();for(const r of doc.records){validateCloudRecord(r.type,r.id,r.draft);if(r.base!==null)validateCloudRecord(r.type,r.id,r.base);if(!safeInteger(r.version)||r.version===0&&r.base!==null||r.version>0&&r.base===null)throw fail('云端记录基线版本无效');const key=recordKey(r.type,r.id);if(seen.has(key))throw fail('云端同步资料含重复记录');seen.add(key);if(r.conflict){const remote=validateRemote(r.conflict.remote);if(remote.type!==r.type||remote.id!==r.id||!Array.isArray(r.conflict.fields))throw fail('云端冲突版本无效');}}
   const mutations=new Set(),entities=new Set();for(const req of doc.outbox){validateRequest(req,doc);const p=req.payload,key=recordKey(p.entityType,p.entityId);if(mutations.has(p.mutationId)||entities.has(key))throw fail('云端队列含重复提交');mutations.add(p.mutationId);entities.add(key);}
   const projected=new Set();for(const r of doc.materializedProjection){validateCloudRecord(r.type,r.id,r.data);const key=recordKey(r.type,r.id);if(projected.has(key))throw fail('云端物化基线含重复记录');projected.add(key);}
@@ -57,7 +58,7 @@ function aligned(snapshot,at){
   for(const key of new Set([...baseline.keys(),...current.keys()])){
     const before=baseline.get(key)?.data,fresh=current.get(key),old=records.get(key);
     if(equivalent(before,fresh?.data))continue;
-    const type=fresh?.type??baseline.get(key).type,id=fresh?.id??baseline.get(key).id;
+    const type=fresh?.type??baseline.get(key).type;if(state.costSync&&type==='component')continue;const id=fresh?.id??baseline.get(key).id;
     const data=fresh?.data??{...copy(before),deletedAt:at};
     const merged=old?mergeWorkspaceEdit(type,before??null,data,old.draft,costIds):{value:data,fields:[]};
     if(merged.fields.length)throw fail('本机同步基线字段已变化，请比较后重试：'+merged.fields.join('、'),'LOCAL_BASE_CONFLICT');
@@ -87,10 +88,11 @@ function receive(doc,input){
   replaceRow(doc,old,row);
 }
 /** 检查分页序号连续性与游标边界，任何缺页都不能被当作同步完成。 */
-function validatePage(page,cursor,head){
+function validatePage(page,cursor,head,shops){
+  const scoped=shops&&equal(page?.shopIds,shops);
   if(!page?.ok||!safeInteger(page.headSeq)||page.headSeq<cursor||head!==undefined&&page.headSeq!==head||!safeInteger(page.nextCursor)||!Array.isArray(page.changes)||typeof page.hasMore!=='boolean')throw fail(page?.message||page?.code||'同步分页格式无效');
-  let last=cursor;for(const row of page.changes){if(row.seq!==last+1||row.seq>page.headSeq)throw fail('云端同步序号不连续');validateRemote(row);last=row.seq;}
-  if(page.nextCursor!==last||page.hasMore&&!page.changes.length||page.hasMore!==(last<page.headSeq))throw fail('云端同步游标不完整');
+  let last=cursor;for(const row of page.changes){if(!safeInteger(row.seq)||row.seq<=last||!scoped&&row.seq!==last+1||row.seq>page.headSeq)throw fail('云端同步序号不连续');validateRemote(row);last=row.seq;}
+  if((scoped?(page.nextCursor<last||page.nextCursor>page.headSeq||page.hasMore&&page.nextCursor!==last):page.nextCursor!==last)||page.hasMore&&!page.changes.length||page.hasMore!==(page.nextCursor<page.headSeq))throw fail('云端同步游标不完整');
 }
 /** 按 mutationId 核验批量回执，确认成功的提交才从持久队列移除。 */
 function acknowledge(doc,requests,results){
@@ -124,11 +126,17 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
   let running=null,lastError=null,lastSyncedAt=null,activeMember=null,stopRequested=false,activeUpload=false,verifiedVersion=null,alignedRevision=null,alignedVersion=null;
   // 原图 URL 由内容 SHA 定址；同轮已成功校验的结果可复用，下一轮必须重新确认。
   const uploadedAssets=new Set(),downloadedAssets=new Set();
-  let uploadedRecords=0,uploadBatchLimit=50;
+  let uploadedRecords=0,uploadBatchLimit=50,activeShops=null,scopeKey=null,independentCosts=false;
+  // 各范围独立保存日志位置；未选店铺不推进，日后选中仍能补齐。
+  const shopCursor=(doc,shop)=>Math.max(doc.cursor,...Object.entries(doc.shopCursors??{}).filter(([key])=>key.split('|').includes(shop)).map(([,value])=>value));
+  const cursorOf=doc=>activeShops?Math.min(...activeShops.map(shop=>shopCursor(doc,shop))):doc.cursor;
+  const setCursor=(doc,value)=>{if(activeShops){doc.shopCursors={...doc.shopCursors};for(const shop of activeShops)doc.shopCursors[shop]=Math.max(shopCursor(doc,shop),value);}else doc.cursor=value;};
+  const selected=row=>{if(independentCosts&&(row.type??row.payload?.entityType)==='component')return false;if(!activeShops)return true;const data=row.data??row.draft??row.payload?.after;const type=row.type??row.payload?.entityType;const id=row.id??row.payload?.entityId;const shop=type==='settings'?id:data?.shopId;return !shop||activeShops.includes(shop);};
+  const queued=doc=>doc.outbox.filter(selected);
   const boundary=()=>{if(stopRequested)throw fail('同步已暂停，本机修改和待确认提交已保留','SYNC_STOPPED');};
   // load supplies a detached native snapshot. cloudVersion guards all document
   // writes, so repeated reads of that version need no full record revalidation.
-  const read=async member=>{const value=await load();if(!value.state||!safeInteger(value.state.revision)||!safeInteger(value.cloudVersion))throw fail('本机同步快照格式无效');if(!value.document)throw fail('云端同步资料未初始化或格式无效');if(member&&(value.document.workspaceId!==member.workspaceId||value.document.uid!==member.uid))throw fail('当前成员与本机云端资料不一致','OWNER_MISMATCH');if(verifiedVersion!==value.cloudVersion){validateDocument(value.document,member);verifiedVersion=value.cloudVersion;}return {...value};};
+  const read=async member=>{const value=await load();independentCosts=Boolean(value.state?.costSync);if(!value.state||!safeInteger(value.state.revision)||!safeInteger(value.cloudVersion))throw fail('本机同步快照格式无效');if(!value.document)throw fail('云端同步资料未初始化或格式无效');if(member&&(value.document.workspaceId!==member.workspaceId||value.document.uid!==member.uid))throw fail('当前成员与本机云端资料不一致','OWNER_MISMATCH');if(verifiedVersion!==value.cloudVersion){validateDocument(value.document,member);verifiedVersion=value.cloudVersion;}return {...value};};
   /** 以本机 revision 和 cloudVersion 双重基线提交；并发写入发生时重新读取并重试。 */
   async function transact(member,change,at=new Date().toISOString()){
     for(let attempt=0;attempt<8;attempt++){
@@ -170,24 +178,24 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
     for(let i=0;i<1000;i++){
       boundary();
       let snapshot=await transact(activeMember);
-      if(!snapshot.document.outbox.length){
+      if(!queued(snapshot.document).length){
         if(uncertainOnly)return;
-        const pending=snapshot.document.records.filter(r=>!r.conflict&&!equivalent(r.base,r.draft)).sort((a,b)=>(a.type==='workspace_meta')-(b.type==='workspace_meta'));
+        const pending=snapshot.document.records.filter(r=>selected(r)&&!r.conflict&&!equivalent(r.base,r.draft)).sort((a,b)=>(a.type==='workspace_meta')-(b.type==='workspace_meta'));
         if(!pending.length)return;
         if(pending[0].type==='workspace_meta'&&snapshot.document.records.some(r=>r.conflict))return;
         // 先固定本批的持久请求，再只校验该批图片；失败时保留同一 mutationId，不能阻塞于后续批次的图片。
         snapshot=await transact(activeMember,doc=>{
-          if(doc.outbox.length)return;
-          const rows=doc.records.filter(r=>!r.conflict&&!equivalent(r.base,r.draft)).sort((a,b)=>(a.type==='workspace_meta')-(b.type==='workspace_meta'));let bytes=0;
+          if(queued(doc).length)return;
+          const rows=doc.records.filter(r=>selected(r)&&!r.conflict&&!equivalent(r.base,r.draft)).sort((a,b)=>(a.type==='workspace_meta')-(b.type==='workspace_meta'));let bytes=0;
           for(const row of rows){if(row.type==='workspace_meta'&&doc.records.some(r=>r.conflict))continue;
             const req=envelope('sync.push',{mutationId:crypto.randomUUID(),deviceId:doc.deviceId,entityType:row.type,entityId:row.id,baseVersion:row.version,after:copy(row.draft)}),size=new TextEncoder().encode(JSON.stringify(req)).length;
-            if(doc.outbox.length&&(doc.outbox.length>=50||bytes+size>210000))break;doc.outbox.push(req);bytes+=size;
+            if(queued(doc).length&&(queued(doc).length>=50||bytes+size>210000))break;doc.outbox.push(req);bytes+=size;
           }
         });
-        if(!snapshot.document.outbox.length)continue;
+        if(!queued(snapshot.document).length)continue;
       }
       boundary();
-      const requests=[];let requestBytes=0;for(const req of snapshot.document.outbox){const size=new TextEncoder().encode(JSON.stringify(req)).length;if(requests.length&&(requests.length>=uploadBatchLimit||requestBytes+size>210000))break;requests.push(copy(req));requestBytes+=size;}await ensureAssets(snapshot,requests);
+      const requests=[];let requestBytes=0;for(const req of queued(snapshot.document)){const size=new TextEncoder().encode(JSON.stringify(req)).length;if(requests.length&&(requests.length>=uploadBatchLimit||requestBytes+size>210000))break;requests.push(copy(req));requestBytes+=size;}await ensureAssets(snapshot,requests);
       boundary();
       onProgress({phase:'upload',count:requests.length,completed:uploadedRecords});
       const response=await call(envelope('sync.pushBatch',{requests}));
@@ -219,21 +227,21 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
       let seq,cursor=null,rows=[],keys=new Set(),restart=false;
       for(let i=0;i<5000;i++){
         boundary();
-        const snapshot=await transact(activeMember);if(snapshot.document.outbox.length)throw fail('待确认提交不能跳过检查点');
+        const snapshot=await transact(activeMember);if(queued(snapshot.document).length)throw fail('待确认提交不能跳过检查点');
         onProgress({phase:'checkpoint-request',page:i+1,received:rows.length,attempt:attempt+1});
-        const part=await call(envelope('sync.snapshot',{cursor,limit:100,...(seq===undefined?{}:{checkpointSeq:seq})}));
+        const part=await call(envelope('sync.snapshot',{cursor,limit:100,...(activeShops?{shopIds:activeShops}:{}),...(seq===undefined?{}:{checkpointSeq:seq})}));
         // 首次快照只是加速路径；尚未生成检查点时从原游标重放保留日志。
         // 已开始分页或服务端明确要求检查点时不能降级，避免跳过已归档数据。
         if(optional&&i===0&&part?.ok===false&&part.code==='SNAPSHOT_UNAVAILABLE')return;
         if(part?.code==='SNAPSHOT_UNAVAILABLE')throw fail('云端同步快照不可用，请联系管理员检查同步检查点；本机修改已保留','SNAPSHOT_UNAVAILABLE');
         if(part?.code==='SNAPSHOT_CHANGED'){restart=true;break;}
         if(!part?.ok||!safeInteger(part.checkpointSeq)||!Array.isArray(part.records)||typeof part.hasMore!=='boolean'||seq!==undefined&&seq!==part.checkpointSeq)throw fail(part?.message||part?.code||'云端检查点分页无效');
-        seq??=part.checkpointSeq;if(seq<snapshot.document.cursor)throw fail('云端检查点版本回退');
+        seq??=part.checkpointSeq;if(seq<cursorOf(snapshot.document))throw fail('云端检查点版本回退');
         let previous=cursor;
         for(const input of part.records){const row=validateRemote(input),key=[row.type,row.id];if(typeof row.type!=='string'||typeof row.id!=='string'||previous&&(row.type<previous[0]||row.type===previous[0]&&row.id<=previous[1])||keys.has(recordKey(row.type,row.id)))throw fail('云端检查点记录重复或顺序无效');keys.add(recordKey(row.type,row.id));previous=key;rows.push(copy(row));}
         if(part.hasMore&&(!part.records.length||!Array.isArray(part.nextCursor)||part.nextCursor.length!==2)||part.records.length&&!equal(part.nextCursor,previous)||!part.records.length&&!equal(part.nextCursor,cursor))throw fail('云端检查点游标无效');
         cursor=part.nextCursor;onProgress({phase:'checkpoint',page:i+1,received:rows.length});
-        if(!part.hasMore){await ensureDownloads(snapshot,rows);boundary();onProgress({phase:'checkpoint-commit',received:rows.length});await transact(activeMember,doc=>{if(doc.outbox.length)throw fail('待确认提交不能接收检查点');if(seq<doc.cursor)throw fail('云端检查点版本回退');for(const row of rows)receive(doc,row);doc.cursor=seq;});return;}
+        if(!part.hasMore){await ensureDownloads(snapshot,rows.filter(selected));boundary();onProgress({phase:'checkpoint-commit',received:rows.length});await transact(activeMember,doc=>{if(queued(doc).length)throw fail('待确认提交不能接收检查点');if(seq<cursorOf(doc))throw fail('云端检查点版本回退');for(const row of rows.filter(selected))receive(doc,row);setCursor(doc,seq);});return;}
       }
       if(!restart)throw fail('云端检查点分页达到上限');
     }
@@ -244,29 +252,29 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
     // 空目录直接读取当前实体快照，避免从序号 0 重放多年修改并逐页重建整库。
     // 离线草稿或待确认请求仍走原合并路径；快照完整校验后才原子落盘。
     const initial=await transact(activeMember),doc=initial.document;
-    const pristine=doc.cursor===0&&!doc.records.length&&!doc.outbox.length&&!doc.materializedProjection.length;
+    const pristine=doc.cursor===0&&!doc.records.length&&!queued(doc).length&&!doc.materializedProjection.length;
     // 旧客户端可能已拉了一部分历史。仅首次空目录接入、从未完成同步、无草稿或冲突时
     // 转为快照续接；迁移库与已完成同步的客户端不改变增量策略。
-    const partialFirstDownload=doc.origin==='empty-workspace'&&doc.lastSyncedAt==null&&!doc.outbox.length
+    const partialFirstDownload=doc.origin==='empty-workspace'&&doc.lastSyncedAt==null&&!queued(doc).length
       &&doc.records.every(row=>!row.conflict&&equivalent(row.base,row.draft))
       &&equivalent(projectWorkspace(initial.state),doc.materializedProjection);
     if(firstPass&&(pristine||partialFirstDownload))await checkpoint({optional:true});
     for(let i=0;i<5000;i++){
       boundary();
-      const snapshot=await transact(activeMember),cursor=snapshot.document.cursor;
+      const snapshot=await transact(activeMember),cursor=cursorOf(snapshot.document);
       onProgress({phase:'download-request',page:i+1,received,cursor});
-      const page=await call(envelope('sync.pull',{cursor,limit:100,...(head===undefined?{}:{headSeq:head})}));
+      const page=await call(envelope('sync.pull',{cursor,limit:100,...(activeShops?{shopIds:activeShops}:{}),...(head===undefined?{}:{headSeq:head})}));
       if(page?.code==='SNAPSHOT_REQUIRED'){await checkpoint();head=undefined;continue;}
-      validatePage(page,cursor,head);head??=page.headSeq;
-      await ensureDownloads(snapshot,page.changes);
-      await transact(activeMember,doc=>{if(doc.cursor!==cursor){if(doc.cursor>=page.nextCursor)return;throw fail('请求期间同步游标已变化');}for(const row of page.changes)receive(doc,row);doc.cursor=page.nextCursor;});
+      validatePage(page,cursor,head,activeShops);head??=page.headSeq;
+      await ensureDownloads(snapshot,page.changes.filter(selected));
+      await transact(activeMember,doc=>{if(cursorOf(doc)!==cursor){if(cursorOf(doc)>=page.nextCursor)return;throw fail('请求期间同步游标已变化');}for(const row of page.changes.filter(selected))receive(doc,row);setCursor(doc,page.nextCursor);});
       received+=page.changes.length;onProgress({phase:'download',page:i+1,received,cursor:page.nextCursor,total:head});if(!page.hasMore)return;
     }
     throw fail('本轮同步分页达到上限');
   }
   async function receiptsOnly(){
     for(let i=0;i<1000;i++){
-      boundary();const snapshot=await transact(activeMember),req=snapshot.document.outbox[0];if(!req)return;
+      boundary();const snapshot=await transact(activeMember),req=queued(snapshot.document)[0];if(!req)return;
       const response=await call(envelope('sync.receipt',{mutationId:req.payload.mutationId}));
       const preview={...snapshot.document,records:[...snapshot.document.records],outbox:[...snapshot.document.outbox]},errors=acknowledge(preview,[req],[response]);
       if(errors.length)throw errors[0];
@@ -275,12 +283,16 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
     }
     throw fail('待确认回执较多，请继续读取');
   }
-  const summarize=(snapshot,{includeConflicts=false}={})=>{const doc=snapshot.document;return {workspaceId:doc.workspaceId,uid:doc.uid,deviceId:doc.deviceId,cursor:doc.cursor,pending:doc.records.filter(r=>!equivalent(r.base,r.draft)).length,localChanges:alignedRevision===snapshot.state.revision&&alignedVersion===snapshot.cloudVersion?false:!equivalent(projectWorkspace(snapshot.state),doc.materializedProjection),uncertain:doc.outbox.length,conflicts:doc.records.filter(r=>r.conflict).length,...(includeConflicts?{conflictRecords:copy(doc.records.filter(r=>r.conflict))}:{}),running:!!running,stopRequested,lastError,lastSyncedAt:lastSyncedAt??doc.lastSyncedAt??null};};
+  const summarize=(snapshot,{includeConflicts=false}={})=>{const doc=snapshot.document;return {workspaceId:doc.workspaceId,uid:doc.uid,deviceId:doc.deviceId,cursor:doc.cursor,pending:doc.records.filter(r=>selected(r)&&!equivalent(r.base,r.draft)).length,localChanges:alignedRevision===snapshot.state.revision&&alignedVersion===snapshot.cloudVersion?false:!equivalent(projectWorkspace(snapshot.state),doc.materializedProjection),uncertain:queued(doc).length,conflicts:doc.records.filter(r=>r.conflict).length,...(includeConflicts?{conflictRecords:copy(doc.records.filter(r=>r.conflict))}:{}),running:!!running,stopRequested,lastError,lastSyncedAt:lastSyncedAt??doc.lastSyncedAt??null};};
   const status=async options=>summarize(await read(activeMember),options);
-  const run=({member,upload:allowUpload=true})=>{
+  const run=({member,upload:allowUpload=true,shopIds=null})=>{
+    if(shopIds!==null&&(!Array.isArray(shopIds)||!shopIds.length||shopIds.some(id=>!['intel','gigabyte','jonsbo'].includes(id))))return Promise.reject(fail('请至少选择一个有效店铺'));
+    const nextShops=shopIds===null?null:[...new Set(shopIds)].sort();
+    if(running&&!equal(nextShops,activeShops))return Promise.reject(fail('请先等待当前店铺同步结束'));
     if(running){if(member?.uid!==activeMember?.uid||member?.workspaceId!==activeMember?.workspaceId)return Promise.reject(fail('另一成员同步尚未结束'));if(activeUpload!==allowUpload)return Promise.reject(fail('另一同步模式正在运行，请先暂停'));return running;}
+    activeShops=nextShops;scopeKey=nextShops?.join('|')??null;
     uploadedAssets.clear();downloadedAssets.clear();uploadedRecords=0;
-    activeMember=copy(member);activeUpload=allowUpload;stopRequested=false;running=(async()=>{try{if(!member?.uid||!member?.workspaceId)throw fail('请先登录有效成员');await transact(activeMember);boundary();if(allowUpload)await upload(true);else await receiptsOnly();await pull(true);if(allowUpload){await upload(false);await pull();}boundary();await transact(activeMember,doc=>{doc.lastSyncedAt=new Date().toISOString();});lastError=null;lastSyncedAt=new Date().toISOString();return {...await status(),running:false};}catch(error){lastError=error.message;throw error;}finally{running=null;}})();return running;
+    activeMember=copy(member);activeUpload=allowUpload;stopRequested=false;running=(async()=>{try{if(!member?.uid||!member?.workspaceId)throw fail('请先登录有效成员');independentCosts=Boolean((await read(activeMember)).state.costSync);await transact(activeMember);boundary();if(allowUpload)await upload(true);else await receiptsOnly();await pull(true);if(allowUpload){await upload(false);await pull();}boundary();await transact(activeMember,doc=>{doc.lastSyncedAt=new Date().toISOString();});lastError=null;lastSyncedAt=new Date().toISOString();return {...await status(),running:false};}catch(error){lastError=error.message;throw error;}finally{running=null;}})();return running;
   };
   // 比较页的快照保留在 Worker；短令牌避免把整份配置再次往返传输。
   const conflictPreviews=new Map();

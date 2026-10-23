@@ -1,0 +1,27 @@
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {readFile,mkdir} from 'node:fs/promises';
+import {createRequire} from 'node:module';
+const {chromium}=createRequire(import.meta.url)(process.env.PLAYWRIGHT_MODULE||'playwright');
+let settings={mode:'cloud',path:'',sheet:'库存数据',goodsColumn:54,taxColumn:67},calls=[],fail=false,cancelPick=false;
+const server=createServer(async(req,res)=>{try{
+ if(req.url==='/'){res.setHeader('content-type','text/html');res.end(`<meta charset="UTF-8"><button id="open">ERP 同步</button><dialog id="dialog"></dialog><script type="module">import {bindCostSync} from '/workbench/cost-sync-ui.js';window.messages=[];window.received=[];window.paused=0;window.workbenchPauseCloud=async()=>paused++;const ui=bindCostSync({flush:async()=>{},hasPending:()=>false,receive:async v=>received.push(v),toast:m=>messages.push(m),openDialog:(title,html)=>{const d=document.querySelector('dialog');d.innerHTML='<div class="dialog-title"><h2>'+title+'</h2></div><div id="dialog-body">'+html+'</div>';if(!d.open)d.showModal();}},()=>{document.querySelector('dialog').close();window.sqlOpened=true;});document.querySelector('#open').onclick=ui.setup;window.ready=true;</script>`);return;}
+ if(req.url.startsWith('/api/')){let body='';for await(const b of req)body+=b;const input=body?JSON.parse(body):null;calls.push({path:req.url,input});res.setHeader('content-type','application/json');if(req.url.endsWith('/cost-file')){res.end(JSON.stringify(cancelPick?{cancelled:true}:{path:'D:/SynologyDrive/主机成本表V2.xlsb'}));return;}if(req.url.endsWith('/settings')){if(input)settings=input;res.end(JSON.stringify(settings));return;}if(fail){res.statusCode=400;res.end(JSON.stringify({error:'云端成本已变化，请重新读取'}));return;}res.end(JSON.stringify(req.url.endsWith('/apply')?{ok:true,revision:9}:{id:'preview-1',total:12800,matched:2,changed:1,elapsedMs:900,examples:[{goodsId:'123',before:100,after:200,overridePreserved:true}],invalidCount:1,invalid:[{goods_id:'96480',reason:'含税成本无有效缓存值'}]}));return;}
+ res.setHeader('content-type','text/javascript');res.end(await readFile(new URL('../public'+req.url,import.meta.url)));
+ }catch(e){res.statusCode=500;res.end(String(e));}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));const browser=await chromium.launch({channel:'msedge',headless:true});
+try{
+ const page=await browser.newPage({viewport:{width:1160,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(`http://127.0.0.1:${server.address().port}/`);await page.waitForFunction(()=>window.ready);
+ for(const file of ['style.css','workbench-ui.css','workbench-simple.css','desktop-layout.css','ui-polish.css'])await page.addStyleTag({content:await readFile(new URL('../public/workbench/'+file,import.meta.url),'utf8')});
+ await page.click('#open');await page.locator('[value="nas"]').check();await page.click('#cost-choose-file');await page.waitForFunction(()=>document.querySelector('#cost-file-path').value.includes('.xlsb'));assert.equal(await page.locator('#cost-goods-column').inputValue(),'BB');assert.equal(await page.locator('#cost-tax-column').inputValue(),'BO');await page.locator('#cost-goods-column').fill('bb');await page.click('#cost-read');await page.locator('#cost-apply').waitFor({state:'visible'});assert.equal(calls.at(-1).path,'/api/sql-sync/cost-preview');assert.equal(settings.goodsColumn,54);assert.match(await page.locator('#cost-sync-message').innerText(),/无效成本/);
+ if(process.env.UI_CAPTURE)await page.locator('#dialog').screenshot({path:process.env.UI_CAPTURE+'-nas.png'});
+ cancelPick=true;await page.click('#cost-choose-file');await page.waitForFunction(()=>!document.querySelector('#cost-choose-file').disabled);assert.equal(await page.locator('#cost-file-path').inputValue(),'D:/SynologyDrive/主机成本表V2.xlsb');assert.equal(await page.locator('#cost-apply').isVisible(),true);
+ await page.click('#cost-apply');await page.waitForFunction(()=>messages.length>0);assert.deepEqual(calls.at(-1),{path:'/api/cost-sync/apply',input:{id:'preview-1'}});
+ const callCount=calls.length;await page.locator('#cost-tax-column').fill('XFE');await page.click('#cost-read');await page.waitForFunction(()=>document.querySelector('#cost-sync-message').textContent.includes('A 至 XFD'));assert.equal(calls.length,callCount);
+ await page.locator('[value="cloud"]').check();assert.equal(await page.locator('#cost-local-fields').isVisible(),false);await page.click('#cost-read');await page.locator('#cost-apply').waitFor({state:'visible'});assert.equal(calls.at(-1).path,'/api/native-cloud/costsPreview');
+ if(process.env.UI_CAPTURE)await page.locator('#dialog').screenshot({path:process.env.UI_CAPTURE+'-cloud.png'});
+ fail=true;await page.click('#cost-read');await page.waitForFunction(()=>document.querySelector('#cost-sync-message').textContent.includes('已变化'));assert.equal(await page.locator('#cost-apply').isVisible(),false);
+ await page.setViewportSize({width:480,height:950});assert.equal(await page.evaluate(()=>document.querySelector('#dialog').scrollWidth<=document.querySelector('#dialog').clientWidth),true);
+ assert.equal(await page.locator('#cost-open-sql').count(),0);await page.click('#cost-close');assert.deepEqual(errors,[]);
+ console.log(JSON.stringify({status:'passed',nasPreview:true,cloudPreview:true,applyIdOnly:true,staleError:true,noJumpEntry:true,narrowLayout:true,pageErrors:errors}));
+}finally{await browser.close();await new Promise(r=>server.close(r));}

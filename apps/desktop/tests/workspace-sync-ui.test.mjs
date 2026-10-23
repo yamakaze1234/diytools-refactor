@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {shops} from '../public/workbench/shops.js';
 const source=readFileSync(new URL('../public/workbench/workspace-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function bindWorkspaceSync','async function bindWorkspaceSync');
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};}
 async function harness({diagnosticExport,diagnosticText,save=async()=>{},stop=async()=>{},start=async()=>{},authenticated=true,configured=true,maintenance=async()=>({skipped:true}),fetcher=async()=>{throw Error('unexpected fetch');}}={}){
@@ -12,7 +13,7 @@ async function harness({diagnosticExport,diagnosticText,save=async()=>{},stop=as
  const controller={status:()=>view,refresh:async()=>{calls.push('refresh');options.onChange(view);},start:async()=>{calls.push('start');await start();},tick:async()=>calls.push('tick'),run:async upload=>{calls.push(['run',upload]);view.automatic=true;options.onChange(view);},stop:async()=>{calls.push('stop');await stop();view.automatic=false;options.onChange(view);},logout:async()=>{calls.push('logout');view.session={authenticated:false,member:null};options.onChange(view);},pause:()=>{},deliver:async()=>{},conflicts:async()=>({rows:[],total:0})};
  const document={querySelector:selector=>elements.get(selector)||null,querySelectorAll:selector=>selector==='[data-cloud-idle]'?[...elements.values()].filter(n=>n.idle):[]};
  const parent={postMessage:(value,origin)=>posted.push({value,origin}),workbenchClosePending:false,workbenchUpdatePending:false};
- const context=vm.createContext({document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,workbenchDiagnosticText:diagnosticText,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
+ const context=vm.createContext({shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,workbenchDiagnosticText:diagnosticText,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
  vm.runInContext(source,context);
  const ui=await context.bindWorkspaceSync({flush:async()=>{calls.push('save');await save();},receive:async()=>true,esc:String,toast:text=>messages.push(text),openDialog:(title,html)=>{dialogs.push({title,html});for(const match of html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)){const element=node();element.idle=match[0].includes('data-cloud-idle');elements.set('#'+match[1],element);}}});
  await new Promise(resolve=>setImmediate(resolve));
@@ -151,7 +152,7 @@ function historyHarness(kind,{fetcher,save=async()=>{}}={}){
   }
   return{ok:true,json:async()=>result};
  };
- const context=vm.createContext({document,fetch});vm.runInContext(code,context);
+ const context=vm.createContext({shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch});vm.runInContext(code,context);
  const ui=context[binding]({flush:async()=>{calls.push('save');await save();},receive:async()=>calls.push('receive'),openDialog,esc:String,toast:message=>messages.push(message),runMutation:async operation=>{calls.push('mutation');if(running)throw Error('同步正在后台进行');return operation();}});
  return{ui,elements,document,dialog,requests,calls,messages,dialogs,setRunning:value=>{running=value;}};
 }

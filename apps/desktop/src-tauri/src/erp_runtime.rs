@@ -124,3 +124,22 @@ impl ProcessGuard {
         }
     }
 }
+
+// 公开 Excel 读取器随主程序交付，按内容摘要独立安装，不替换私有 ERP worker。
+pub fn cost_command(data_dir: &Path) -> Result<Command,String> {
+    use sha2::{Digest,Sha256};use std::{fs,io::Write};
+    const READER:&[u8]=include_bytes!(concat!(env!("OUT_DIR"),"/cost-reader.exe"));
+    if READER.is_empty(){return Err("请先构建内置 Excel 读取器".into());}
+    let hash=format!("{:x}",Sha256::digest(READER));let dir=data_dir.join("runtime");fs::create_dir_all(&dir).map_err(|_|"无法准备 Excel 读取目录")?;
+    let path=dir.join(format!("cost-reader-{hash}.exe"));
+    if !path.exists(){
+        let temporary=dir.join(format!("cost-reader-{}.tmp",uuid::Uuid::new_v4()));
+        let mut f=fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|_|"无法写入 Excel 读取器")?;
+        f.write_all(READER).and_then(|_|f.sync_all()).map_err(|_|"Excel 读取器写入失败")?;drop(f);
+        fs::rename(&temporary,&path).map_err(|_|"无法安装 Excel 读取器")?;
+    }
+    if format!("{:x}",Sha256::digest(fs::read(&path).map_err(|_|"无法校验 Excel 读取器")?))!=hash {return Err("Excel 读取器校验失败，请重新安装程序".into());}
+    let mut command=Command::new(path);command.current_dir(dir).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)] command.creation_flags(0x08000004);
+    Ok(command)
+}
