@@ -1253,6 +1253,8 @@ pub fn request(
         }),
         ("GET", "/api/activity") => activity::request(store, path),
         ("GET", "/api/cache/preview") => cache::preview(store),
+        ("POST", "/api/cache/shops/preview") => cloud_state::shop_cleanup::preview(store, &input),
+        ("POST", "/api/cache/shops/clear") => cloud_state::shop_cleanup::clear(store, &input),
         ("POST", "/api/cache/clear") => cache::clear(store, &input),
         ("POST", "/api/cache/maintain") => cache::maintain(store, &input),
         ("GET", "/api/workspace/index") => lazy_workspace::index(store),

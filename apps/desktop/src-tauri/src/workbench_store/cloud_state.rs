@@ -2,6 +2,8 @@
 //! Atomic local checkpoint for the cloud controller. No network or credentials.
 //! A local edit and a sync acknowledgement compete on both state and queue versions.
 use super::*;
+#[path = "cloud_state/shop_cleanup.rs"]
+pub(super) mod shop_cleanup;
 
 // 云检查点很大；把状态栏和授权需要的少量字段随正文原子投影，避免每次查询解析整库。
 pub(super) fn schema(c: &Connection) -> Result<()> {

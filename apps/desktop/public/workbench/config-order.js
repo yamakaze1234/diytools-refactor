@@ -31,3 +31,14 @@ export function insertConfigAfter(configs,sourceId,duplicate){
  }
  const result=[...ordered];result.splice(index+1,0,{...duplicate,workspaceOrder:value});return result;
 }
+
+/** 按链接现有顺序连续编号；只替换明确的配置编号，保留容量、型号及特殊名称。 */
+export function planConfigRenumber(configs){
+ let ordinal=0;
+ return configs.filter(c=>!c.deletedAt).map(c=>{
+  const before=String(c.name||'');
+  const match=/^配置\s*(?:[0-9]+|[一二三四五六七八九十百零〇两]+)(?=$|[\s：:·\-—_（(丨|])/.exec(before);
+  const after=match?`配置${++ordinal}${before.slice(match[0].length)}`:before;
+  return {id:c.id,before,after,skipped:!match};
+ });
+}

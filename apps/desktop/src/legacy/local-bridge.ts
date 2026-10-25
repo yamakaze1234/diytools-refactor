@@ -31,6 +31,7 @@ export const LOCAL_WORKBENCH_ROUTES = [
   '/api/versions/name', '/api/versions/preview', '/api/versions/restore',
   '/api/versions/delete-named', '/api/versions/cleanup', '/api/cache/preview',
   '/api/cache/clear', '/api/cache/maintain', '/api/profit/start', '/api/profit/history', '/api/profit/status',
+  '/api/cache/shops/preview', '/api/cache/shops/clear',
   '/api/profit/reset', '/api/profit/publish', '/api/workspace-sync/local-history',
   '/api/legacy-history/status', '/api/legacy-history/versions', '/api/legacy-history/preview',
   '/api/legacy-history/restore', '/api/legacy-history/profit',

@@ -34,9 +34,9 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   const logout=$('#cloud-logout');if(logout)logout.disabled=leaving;
  }
  const selectionKey='diy-cloud-selected-shops';
- let selectedShops=[];
- try{const saved=JSON.parse(localStorage.getItem(selectionKey));if(Array.isArray(saved))selectedShops=saved.filter(id=>shops.some(shop=>shop.id===id));}catch{}
- if(!selectedShops.length)selectedShops=[localStorage.getItem('diy-active-shop')||'intel'].filter(id=>shops.some(shop=>shop.id===id));
+ let selectedShops=[],hasSavedSelection=false;
+ try{const saved=JSON.parse(localStorage.getItem(selectionKey));if(Array.isArray(saved)){hasSavedSelection=true;selectedShops=saved.filter(id=>shops.some(shop=>shop.id===id));}}catch{}
+ if(!hasSavedSelection)selectedShops=[localStorage.getItem('diy-active-shop')||'intel'].filter(id=>shops.some(shop=>shop.id===id));
  const controller=createCloudController({getShopIds:()=>[...selectedShops],flush,receive,isBlocked:()=>blocked()||cleaning,onChange:render,makeEngine:createCloudWorker,onProgress:progress=>{
   // 只展示服务端已确认的数量和当前批次，未知总量时不拼凑百分比。
   const count=Math.max(0,Number(progress.count)||0),completed=Math.max(0,Number(progress.completed)||0);
@@ -85,8 +85,8 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   const root=$('#cloud-conflict-root');
   await mountCloudConflicts(root,{controller,esc,toast,onBack:guard(open),isCurrent:()=>$('#cloud-conflict-root')===root&&Boolean($('#dialog')?.open)});
  }
- const cacheRequest=async(action='preview')=>{
-  const response=await fetch('/api/cache/'+action,action!=='preview'?{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}:{});
+ const cacheRequest=async(action='preview',payload={})=>{
+  const response=await fetch('/api/cache/'+action,action!=='preview'?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}:{});
   const value=await response.json();if(!response.ok)throw Error(value.error||'缓存操作失败');return value;
  };
  const cacheSize=bytes=>`${(Number(bytes||0)/1024/1024).toFixed(2)} MiB`;
@@ -105,8 +105,9 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   const marker=$('#cache-message');
   let plan;try{plan=await cacheRequest();}catch(error){if($('#cache-message')===marker)marker.textContent=error.message;return;}
   if($('#cache-message')!==marker||!$('#dialog')?.open)return;
-  openDialog('清理本机缓存',`<p>每 3 天自动清理一次；关闭期间到期，下次启动后补做。</p>${(plan.categories||[]).map(c=>`<p>${esc(c.label)}：${Number(c.count||0)} 项，约 ${cacheSize(c.bytes)}。</p>`).join('')}<p>过期且无引用的旧生成图会直接删除；每套配置各版式的最新生成图、配置、历史记录、恢复草稿和原图均保留。</p><p>历史更新备份只保留最近一次可回退备份，更早的成功更新目录直接删除；失败或尚未确认的更新保留。更新成功后也会自动清理，未完成的清理在下次启动时重试。</p><p class="hint">配置索引需要时重建，空间供数据库复用，数据库文件不会立即缩小。</p><p>下次自动清理：${plan.nextCleanupAt?esc(new Date(plan.nextCleanupAt).toLocaleString('zh-CN')):'首次运行后开始计时'}</p><p id="cache-message" role="status"></p><div class="actions"><button id="cache-clear" class="primary" ${plan.count?'':'disabled'}>清理缓存</button><button id="cache-back">返回数据与同步</button></div>`);
+  openDialog('清理本机缓存',`<p>每 3 天自动清理一次；关闭期间到期，下次启动后补做。</p>${(plan.categories||[]).map(c=>`<p>${esc(c.label)}：${Number(c.count||0)} 项，约 ${cacheSize(c.bytes)}。</p>`).join('')}<p>过期且无引用的旧生成图会直接删除；每套配置各版式的最新生成图、配置、历史记录、恢复草稿和原图均保留。</p><p>历史更新备份只保留最近一次可回退备份，更早的成功更新目录直接删除；失败或尚未确认的更新保留。更新成功后也会自动清理，未完成的清理在下次启动时重试。</p><p class="hint">配置索引需要时重建，空间供数据库复用，数据库文件不会立即缩小。</p><p>下次自动清理：${plan.nextCleanupAt?esc(new Date(plan.nextCleanupAt).toLocaleString('zh-CN')):'首次运行后开始计时'}</p><p id="cache-message" role="status"></p><div class="actions"><button id="cache-clear" class="primary" ${plan.count?'':'disabled'}>清理缓存</button><button id="cache-shops">删除所选店铺数据</button><button id="cache-back">返回数据与同步</button></div>`);
   $('#cache-back').onclick=guard(open);
+  $('#cache-shops').onclick=guard(openShopCleanup);
   const clearButton=$('#cache-clear'),message=$('#cache-message');
   clearButton.onclick=async()=>{
    if(cleaning)return;
@@ -121,6 +122,43 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
    }catch(error){if($('#cache-message')===message){message.textContent=error.message;clearButton.disabled=false;}else toast(error.message);}
    finally{cleaning=false;}
   };
+ }
+ async function openShopCleanup(){
+  openDialog('删除所选店铺数据',`<p>仅删除所选店铺在本机的配置、专属模板和店铺设置，云端数据保留。</p><p>公用成本、图库、原图、历史记录和恢复草稿保留；数据库文件不会立即缩小。</p><fieldset><legend>选择要删除的店铺</legend>${shops.map(shop=>`<label style="display:block"><input type="checkbox" data-cleanup-shop="${shop.id}"> ${esc(shop.name)}</label>`).join('')}</fieldset><p id="shop-cleanup-message" role="status"></p><div class="actions"><button id="shop-cleanup-preview">预览删除范围</button><button id="shop-cleanup-back">返回缓存</button></div>`);
+  $('#shop-cleanup-back').onclick=guard(openCache);
+  $('#shop-cleanup-preview').onclick=guard(async()=>{
+   const ids=[...document.querySelectorAll('[data-cleanup-shop]:checked')].map(n=>n.dataset.cleanupShop);
+   if(!ids.length)throw Error('请选择要删除的店铺');
+   await runMutation(async()=>{
+    if(window.workbenchSourceEditor?.hasPending())await window.workbenchSourceEditor.save();
+    await flush();
+    const plan=await cacheRequest('shops/preview',{shopIds:ids});
+    openDialog('确认删除所选店铺数据',`${plan.shops.map(row=>`<p><strong>${esc(shops.find(s=>s.id===row.id)?.name||row.id)}</strong>：${row.configs} 套配置、${row.templates} 个模板、${row.settings} 份店铺设置</p>`).join('')}<p>本机尚未上传的修改也会移除。数据库记录不能放入回收站，删除前会保存完整恢复备份；历史、恢复草稿及图片仍保留。</p><p>删除后暂停自动同步，并取消这些店铺的同步选择。需要时重新勾选并同步，即可从云端下载。</p><p id="shop-cleanup-message" role="status">${plan.blocked?'存在结果待确认的同步提交，请先完成同步再删除。':''}</p><div class="actions"><button id="shop-cleanup-confirm" ${plan.blocked?'disabled':''}>确认删除本机数据</button><button id="shop-cleanup-back">返回选择</button></div>`);
+    $('#shop-cleanup-back').onclick=guard(openShopCleanup);
+    $('#shop-cleanup-confirm').onclick=async()=>{
+     const button=$('#shop-cleanup-confirm'),message=$('#shop-cleanup-message');
+     button.disabled=true;
+     try{
+      await runMutation(async()=>{
+       await controller.stop();
+       if(window.workbenchSourceEditor?.hasPending())throw Error('有未保存编辑，请返回保存后重新预览');
+       await flush();
+       // 先持久化取消选择；即使删除回执丢失或应用退出，也不会自动下载所删店铺。
+       selectedShops=selectedShops.filter(id=>!ids.includes(id));
+       localStorage.setItem(selectionKey,JSON.stringify(selectedShops));
+       const result=await cacheRequest('shops/clear',{...plan,confirmed:true});
+       close();
+       let notice='店铺本机数据已删除，云端保留。恢复备份：'+result.backup;
+       // 关闭维护弹窗后回载，避免编辑器将它视为仍在编辑的草稿弹窗。
+       try{if(await receive()===false)throw Error('回载未完成');}catch{notice+='；页面尚未刷新，请重新打开工作台。';}
+       openDialog('删除完成',`<p role="status">${esc(notice)}</p><div class="actions"><button id="shop-cleanup-done">返回数据与同步</button></div>`);
+       $('#shop-cleanup-done').onclick=guard(open);
+       await controller.refresh();
+      });
+     }catch(error){message.textContent=error.message+'；请返回重新预览后再操作。';}
+    };
+   });
+  });
  }
  async function open(){
   // 先显示已知状态，避免打开面板也排队等待上传或一次额外的保存。
@@ -156,7 +194,8 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   if(!localOnly(controller.status())){
    timer=setInterval(()=>controller.tick().catch(showError),2*60*60*1000);
   // Initialization is in the background; its failure remains visible/retryable.
-  Promise.resolve().then(()=>controller.start()).catch(showError).then(maintainCache);
+  if(selectedShops.length)Promise.resolve().then(()=>controller.start()).catch(showError).then(maintainCache);
+  else void maintainCache();
   }else void maintainCache();
   maintenanceTimer=setInterval(maintainCache,60*60*1000);
  }

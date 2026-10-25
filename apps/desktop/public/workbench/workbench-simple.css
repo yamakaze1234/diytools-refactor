@@ -161,3 +161,39 @@ details>summary:hover,#dialog-body details>summary:hover{background:#e4edff}
 .sidebar .config-item>div{min-width:0;flex:1}
 .sidebar .config-item .config-hardware-summary{display:block;margin-top:4px;font-size:12px;font-weight:600;line-height:1.65;color:#64748b;white-space:normal;overflow:visible;overflow-wrap:anywhere;max-height:none}
 .sidebar .config-item.active .config-hardware-summary{color:#5b86bd}
+
+/* 输出源变动：单层结果滚动，操作栏固定在结果下方。 */
+.source-review{background:#fff;border:1px solid #dce4ef;border-radius:12px;padding:20px;color:#23324a}
+.source-review [hidden]{display:none!important}.source-review-heading h3{margin:0;font-size:21px}.source-review .hint{color:#718098;line-height:1.7}
+.source-review-tabs{display:flex;gap:28px;border-bottom:1px solid #e0e7f1;margin-bottom:16px}.source-review-tabs button{border:0;border-radius:0;background:transparent;padding:14px 4px;color:#63718a;font-size:15px}.source-review-tabs button[aria-pressed=true]{color:#2459df;border-bottom:3px solid #2459df;font-weight:700}.source-review-tabs span{margin-left:8px}
+.source-review-filter{display:flex;gap:10px;align-items:center;margin:14px 0;flex-wrap:wrap}.source-review-filter input{flex:2;min-width:170px}.source-review-filter select{flex:1;min-width:130px;max-width:280px}.source-review-more summary,.source-review-options summary{cursor:pointer;color:#62748d;font-size:12px}.source-review-more .source-fields{padding:12px 0}
+.source-review #source-diff,.source-review .source-auto-follow-results{max-height:48vh;overflow:auto;margin:0;padding:0 4px 4px 0}.source-review .source-part-group>h5{display:none}.source-review .source-part-group{margin:0;border:0;padding:0;background:transparent}
+.source-review .source-description-group{background:#fff;border:1px solid #d9e2ef;border-radius:10px;padding:16px;margin:12px 0}.source-review .source-description-group.is-selected{background:#f4f8ff;border-color:#7da4ff}.source-review .source-description-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.source-review .source-description-heading strong{font-size:14px}.source-review .source-description-heading span{color:#758298;font-size:12px}
+.source-review .source-option-change{display:grid;grid-template-columns:minmax(0,1fr) 26px minmax(0,1fr);align-items:center;gap:12px;background:transparent;padding:14px 0;white-space:normal}.source-review .source-option-change>div{padding:12px;border:1px solid #e8edf5;border-radius:8px;background:#f8faff;min-width:0}.source-review .source-option-change small{display:block;color:#6a778c;margin-bottom:7px}.source-review .source-option-change span{color:#23324a;white-space:pre-wrap;overflow-wrap:anywhere}.source-review .source-option-change>b{color:#8996a9;text-align:center;font-size:22px}
+.source-review-members{border-top:1px solid #e8edf5;padding-top:10px}.source-review-members>summary{cursor:pointer;color:#687c96;font-size:12px}.source-review .source-description-members{max-height:none;overflow:visible;padding-top:10px}.source-review .source-description-members label{display:flex;gap:7px;align-items:flex-start;margin:8px 0}
+.source-review-footer{display:flex;align-items:center;justify-content:space-between;gap:16px;border-top:1px solid #dce4ef;background:#fff;padding:16px 0 4px;margin-top:12px}.source-review-footer strong{font-size:13px}.source-review-options{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-top:8px;font-size:12px}.source-review-buttons{display:flex;gap:10px;flex-shrink:0}.source-review #source-apply{margin:0}.source-review .source-review-footer button{min-height:36px}.source-review .source-auto-follow-panel{border:0;background:transparent;padding:0;margin:0}.source-review .source-selection-actions{display:flex;gap:14px;align-items:center;font-size:12px;margin:10px 0}.source-review-message{margin:8px 0 0;font-size:12px}
+@media(max-width:700px){.source-review{padding:12px}.source-review-footer{align-items:stretch;flex-direction:column}.source-review-buttons{justify-content:flex-end;flex-wrap:wrap}.source-review .source-option-change{grid-template-columns:1fr}.source-review .source-option-change>b{display:none}.source-review-filter select{max-width:100%}.source-review #source-diff,.source-review .source-auto-follow-results{max-height:42vh}}
+
+.source-review mark{color:inherit;border-radius:3px;padding:1px 2px}.source-review .source-before{background:#fff0c2}.source-review .source-after{background:#d8f3df}
+
+#dialog-body .source-review-heading h3{font-size:22px;font-weight:700;margin:0 0 6px}
+#dialog-body .source-review-members>summary{background:transparent;border:0;border-radius:0;padding:4px 0;color:#687c96;min-height:0;font-weight:400}
+#dialog-body .source-review .source-description-heading strong{font-size:14px}
+
+.source-review-footer>div:first-child{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.source-review .source-review-options{margin:0;gap:10px}.source-review-options label{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}.source-review-options .source-export-inline select{width:155px;max-width:100%;min-height:30px;padding:5px 8px;font-size:12px}.source-review-footer{gap:10px;flex-wrap:wrap}.source-review-pagination{display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:8px 0;font-size:12px;color:#718098}.source-review-pagination>span:first-child{margin-right:auto}.source-review-pagination button{padding:5px 10px;min-height:28px}
+
+.source-change-entry{display:flex;gap:10px;align-items:center;margin:10px 0 16px}.source-change-entry span{margin-left:6px;color:#637a9d}
+dialog.source-changes-dialog{width:min(1100px,96vw);max-height:92vh;padding:20px;box-sizing:border-box;overflow:auto}.source-changes-close{position:absolute;right:24px;top:20px;font-size:22px;background:transparent;border:0;z-index:2}.source-changes-dialog .source-review{border:0;padding:0;margin:0}.source-review-standalone .source-review-tabs{display:none}.source-changes-dialog .source-review-heading{padding-right:36px}.source-changes-dialog .source-review-heading h3{font-size:22px}.source-changes-dialog .source-review-members>summary{background:transparent;border:0;padding:4px 0;color:#687c96}.source-changes-dialog .source-review-filter{margin:12px 0}.source-changes-dialog .source-review-footer{padding:10px 0 0}.source-changes-dialog .source-review-message{margin:4px 0 0}.source-changes-dialog .source-review-footer strong{white-space:nowrap}
+
+/* 紧凑差异卡片：保留字号，缩小空白与展开行。 */
+.source-review .source-description-group{padding:10px 12px;margin:7px 0;border-radius:8px}
+.source-review .source-description-heading{gap:7px;line-height:1.5}
+.source-review .source-option-change{padding:8px 0;gap:9px}
+.source-review .source-option-change>div{padding:7px 9px;border-radius:6px}
+.source-review .source-option-change small{margin-bottom:3px;line-height:1.4}
+.source-review .source-option-change span{line-height:1.5}
+.source-review-members{padding-top:5px}
+#dialog-body .source-review-members>summary,.source-changes-dialog .source-review-members>summary{padding:2px 0;line-height:1.5;min-height:0}
+.source-review .source-selection-actions{margin:5px 0;padding:4px 0}
+.source-review .source-description-members{padding-top:4px}
+.source-review .source-description-members label{margin:5px 0}

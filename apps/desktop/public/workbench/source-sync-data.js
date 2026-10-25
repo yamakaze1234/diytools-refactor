@@ -54,3 +54,13 @@ export function sourceExportEntries(configs,changes,shopId,scope='changed'){
  const targets=configs.filter(c=>!c.deletedAt&&c.shopId===shopId&&links.has(linkKey(c)));
  return sourceImageEntries(targets,scope==='all'?null:changes.map(c=>c.id));
 }
+
+/** 只标出共同前后缀之间的变化，先转义再生成标记，避免业务文案成为 HTML。 */
+export function sourceComparisonHtml(before,after,oldLabel='当前内容',newLabel='输出源新内容'){
+ const escape=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+ const a=String(before??''),b=String(after??'');let start=0,end=0;
+ while(start<Math.min(a.length,b.length)&&a[start]===b[start])start++;
+ while(end<Math.min(a.length,b.length)-start&&a[a.length-1-end]===b[b.length-1-end])end++;
+ const value=(text,kind)=>!text?'（空）':text===a&&a===b?escape(text):escape(text.slice(0,start))+(text.length-start-end>0?`<mark class="${kind}">${escape(text.slice(start,text.length-end))}</mark>`:'')+escape(text.slice(text.length-end));
+ return `<div><small>${escape(oldLabel)}</small><span>${value(a,'source-before')}</span></div><b aria-hidden="true">→</b><div><small>${escape(newLabel)}</small><span>${value(b,'source-after')}</span></div>`;
+}

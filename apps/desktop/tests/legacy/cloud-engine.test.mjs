@@ -460,3 +460,20 @@ test('combining already synced shops reuses each shops durable progress',async()
  assert.equal(h.current.document.shopCursors.intel,100);assert.equal(h.current.document.shopCursors.jonsbo,100);
  assert.equal(h.current.document.shopCursors['gigabyte|jonsbo'],80);
 });
+
+
+test('locally removed shop re-downloads from zero without sending cloud deletions',async()=>{
+ const s=fixture(),remote=copy(s.document.records.find(r=>r.type==='configuration'));
+ s.state.configs=[];s.state.revision++;s.cloudVersion++;
+ s.document.records=s.document.records.filter(r=>r.type!=='configuration');s.document.materializedProjection=[];
+ s.document.cursor=0;s.document.shopCursors={intel:0,jonsbo:50,gigabyte:80};
+ const h=harness({snapshot:s,onCall:req=>{
+  if(req.action==='sync.snapshot')return {ok:false,code:'SNAPSHOT_UNAVAILABLE'};
+  if(req.action==='sync.pull')return {ok:true,shopIds:req.payload.shopIds,headSeq:80,nextCursor:80,hasMore:false,changes:req.payload.cursor<1&&req.payload.shopIds.includes('intel')?[{type:remote.type,id:remote.id,version:remote.version,seq:1,data:remote.base}]:[]};
+ }});
+ await h.engine.run({member,shopIds:['jonsbo']});assert.equal(h.current.state.configs.length,0);
+ await h.engine.run({member,shopIds:['intel']});assert.equal(h.current.state.configs[0].id,'c1');
+ assert.equal(h.calls.some(c=>c.action==='sync.pushBatch'),false);
+ assert.equal(h.calls.filter(c=>c.action==='sync.pull'&&c.payload.shopIds.includes('intel'))[0].payload.cursor,0);
+ assert.equal(h.current.document.shopCursors.gigabyte,80);
+});
