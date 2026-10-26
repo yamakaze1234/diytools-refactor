@@ -1,3 +1,6 @@
+import {Button} from '@/components/ui/button';
+import {Input} from '@/components/ui/input';
+import './reui.css';
 import DiagnosticExport from './DiagnosticExport';
 /** 启动登录表单：展示鉴权与准备阶段，提供登录、重试和退出会话入口。 */
 import { useState } from 'react';
@@ -35,25 +38,25 @@ export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogou
           {state.busy && <p role="status" className="startup-login-progress"><span className="startup-login-spinner" aria-hidden="true" />{state.message || '正在准备工作台…'}</p>}
           {state.error && <p className="startup-login-error" role="alert">{state.error}</p>}
           {state.firstUse && <div className="startup-data-choices" aria-label="首次使用的数据来源" aria-busy={state.busy}>
-            <button className="startup-data-choice" disabled={state.busy} onClick={() => void onChooseData('cloud')}>
+            <button type="button" className="startup-data-choice" disabled={state.busy} onClick={() => void onChooseData('cloud')}>
               <strong>从云端下载全部数据</strong><span>下载当前工作区的配置与原图，适合没有旧版资料的电脑。</span>
             </button>
-            <button className="startup-data-choice" disabled={state.busy} onClick={() => void onChooseData('legacy')}>
+            <button type="button" className="startup-data-choice" disabled={state.busy} onClick={() => void onChooseData('legacy')}>
               <strong>选择旧版 data 目录迁移</strong><span>复用本机配置与原图，保留未同步修改，再补齐云端变化。</span>
             </button>
             <p className="startup-data-note">迁移前请保存并退出旧程序。旧目录保持不变。</p>
           </div>}
-          {!state.busy && <div className="startup-login-retry-actions">{!state.firstUse && <button className="startup-login-submit" onClick={() => void onRetry()}>重试</button>}<button className="startup-login-other" onClick={() => void onLogout()}>退出重新登录</button></div>}
+          {!state.busy && <div className="startup-login-retry-actions">{!state.firstUse && <Button type="button" variant="outline" className="startup-login-submit" onClick={() => void onRetry()}>重试</Button>}<Button type="button" variant="outline" className="startup-login-other" onClick={() => void onLogout()}>退出重新登录</Button></div>}
         </div> : <form onSubmit={submit} className="startup-login-form">
           <label htmlFor="startup-username">账号</label>
-          <input id="startup-username" name="username" autoComplete="username" autoFocus value={username} onChange={event => setUsername(event.target.value)} disabled={state.busy} required />
+          <Input id="startup-username" name="username" autoComplete="username" autoFocus value={username} onChange={event => setUsername(event.target.value)} disabled={state.busy} required />
           <label htmlFor="startup-password">密码</label>
-          <input id="startup-password" name="password" type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} disabled={state.busy} required />
+          <Input id="startup-password" name="password" type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} disabled={state.busy} required />
           <label className="startup-login-remember"><input id="startup-remember" type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} disabled={state.busy} />保留登录信息</label>
           {state.error && <p className="startup-login-error" role="alert">{state.error}</p>}
           {state.busy && <p className="startup-login-progress" role="status">{state.message}</p>}
-          <button type="submit" className="startup-login-submit" disabled={state.busy}>{state.busy ? '请稍候…' : '登录'}</button>
-          {state.error && <button type="button" className="startup-login-other" disabled={state.busy} onClick={() => void onRetry()}>重新检查登录状态</button>}
+          <Button type="submit" className="startup-login-submit" disabled={state.busy}>{state.busy ? '请稍候…' : '登录'}</Button>
+          {state.error && <Button variant="outline" type="button" className="startup-login-other" disabled={state.busy} onClick={() => void onRetry()}>重新检查登录状态</Button>}
         </form>}
       {desktop && <DiagnosticExport />}
       <p className="startup-login-storage">配置先保存在本机，登录后自动同步。</p>

@@ -1,5 +1,7 @@
 # Windows 桌面 Agent 启动入口
 
+当前正式版主 EXE 已内置配套 CLI，首次启动和更新重启自动准备连接。普通用户直接运行 DIYTools.exe 即可，无需安装本页的兼容启动脚本。以下步骤仅用于维护仍使用旧快捷方式的环境；当前协议见 [AI 与 CLI](AGENT-TOOLS.md)。
+
 桌面快捷方式通过系统 `wscript.exe` 执行 `start-workbench-agent.vbs`，由 VBS 以隐藏方式创建 PowerShell 7 进程。直接将快捷方式指向 `pwsh.exe -WindowStyle Hidden` 时，控制台可能在 PowerShell 应用隐藏设置前短暂出现。
 
 在 PowerShell 7 中执行 `tools/install-agent-desktop-launcher.ps1`，传入现有安装目录、桌面快捷方式和一个尚不存在的备份目录。`PowerShellPath` 默认使用运行安装脚本的 PowerShell 7 路径，也可显式指定。安装脚本仅复制两个启动脚本、更新现有快捷方式，并保存原快捷方式、原启动脚本、快捷方式元数据及工作台 EXE 摘要；不会启动或停止工作台。

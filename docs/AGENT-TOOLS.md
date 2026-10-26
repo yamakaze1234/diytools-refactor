@@ -77,3 +77,7 @@ queued / running 只是排队或执行中；继续查询 jobs status，直到 su
 `request --method` 仅开放 status、shops.list、configs.find、configs.get、jobs.status 五种只读方法。其他修改使用专用命令，无原始写入逃生接口。
 
 更多参数与退出码见 [CLI 说明](../packages/agent-cli/README.md)。构建与启用策略见 [开发说明](./DEVELOPMENT.md)，正式程序通过软件内“更多 → 检查更新”升级。
+
+## 与连续编辑界面协作
+
+CLI 与界面共用本机保存和版本校验。界面正在编辑时先查询版本并预览改动，发生冲突按差异处理。配件行使用实际 slot 标识；删除新增行后其他编号保持不变，不应按当前数组位置推断配件名称。图片主题按链接管理，与界面浅深色切换无关。

@@ -11,7 +11,7 @@ const makeState=()=>({revision:1,configs:[config('one'),config('two')],templates
 const ui=()=>({active:'one',activeShopId:'intel',selected:new Set(['one'])});
 const app=await fs.readFile(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
 // Keep these existing undo/retry fixtures on the complete-workspace branch.
-const fullBranch={fullWorkspace:true,pruneDetails(){},compactWorkspace:async()=>false,setTimeout:()=>0};
+const fullBranch={fullWorkspace:true,pruneDetails(){},compactWorkspace:async()=>false,setTimeout:()=>0,queueMicrotask,continuousWorkbench:null};
 const historyCode=app.slice(app.indexOf('function historySnapshot(){'),app.indexOf('function visiblePosterInput('));
 test('全量历史压缩包含其他撤销步骤涉及的配置，往返修改不能丢撤销',()=>{
  const state=makeState(),first=helpers.captureHistorySnapshot(state,ui());

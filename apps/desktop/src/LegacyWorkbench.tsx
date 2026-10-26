@@ -27,8 +27,9 @@ window.createWorkbenchReactRenderer = () => {
 };
 
 /** 管理 iframe 生命周期，卸载时释放消息及关闭监听。 */
-export default function LegacyWorkbench({onDirty}: {onDirty: (dirty: boolean) => void}) {
+export default function LegacyWorkbench({onDirty,onHeaderTarget}: {onDirty: (dirty: boolean) => void;onHeaderTarget?: (target:HTMLElement|null)=>void}) {
  const frame = useRef<HTMLIFrameElement>(null);
+ useEffect(()=>()=>onHeaderTarget?.(null),[onHeaderTarget]);
  useEffect(()=>()=>{for(const renderer of reactRenderers)renderer.dispose();},[]);
  const [error, setError] = useState('');
  const [closeError, setCloseError] = useState('');
@@ -89,6 +90,6 @@ export default function LegacyWorkbench({onDirty}: {onDirty: (dirty: boolean) =>
   {error && <p className="legacy-workbench-error" role="alert">工作台载入失败：{error}</p>}
   {closeError && <p className="legacy-workbench-error" role="alert">退出未完成：{closeError} 当前窗口与输入已保留，请处理后重新关闭。</p>}
   {closing && <p className="legacy-workbench-error" role="status">正在保存当前修改，请稍候…</p>}
-  <iframe ref={frame} className="legacy-workbench-frame" src="/workbench/index.html" title="DIY 配置工作台" />
+  <iframe ref={frame} className="legacy-workbench-frame" src="/workbench/index.html" onLoad={()=>onHeaderTarget?.(frame.current?.contentDocument?.getElementById("desktop-host-actions")??null)} title="DIY 配置工作台" />
  </section>;
 }

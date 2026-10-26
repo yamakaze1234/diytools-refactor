@@ -28,7 +28,8 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
  if(c.layout==='square'&&c.skuMode==='padded'){
   const detail=await renderPoster({...c,layout:'long'},width,{beforeDraw});
   if(beforeDraw)await beforeDraw('padding');
-  return {...detail,canvas:paddedSquare(detail.canvas,width),base:width,height:width,regions:[],textRegions:[],imageRegion:null,addedImageRegions:[],padding:true,readOnly:true};
+  const scale=Math.min(width/detail.canvas.width,width/detail.canvas.height),contentWidth=detail.canvas.width*scale,contentHeight=detail.canvas.height*scale;
+  return {...detail,canvas:paddedSquare(detail.canvas,width),base:width,height:width,previewContentRect:{x:(width-contentWidth)/2,y:(width-contentHeight)/2,width:contentWidth,height:contentHeight},regions:[],textRegions:[],imageRegion:null,addedImageRegions:[],padding:true,readOnly:true};
  }
  if(c.layout==='square'){c=normalizePosterDesign(structuredClone(c));c.textStyles=c.skuTextStyles||{};c.caseVisible=false;c.posterImages=[];}
  const square=c.layout==='square',image=c.caseVisible===false?null:await getImage(c.caseImage),dark=c.theme==='dark';

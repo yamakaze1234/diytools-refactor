@@ -1,6 +1,6 @@
 # 系统架构
 
-重构版使用 Tauri 2 与 Rust 处理本机能力，React 负责宿主、登录和桥接。配置编辑与绘图仍复用现有工作台页面，并在 iframe 内运行。Windows 使用 WebView2 显示界面，当前不是纯原生控件界面。
+重构版使用 Tauri 2 与 Rust 处理本机能力，React 负责宿主、登录、连续配置表、外围面板和桥接。配置领域逻辑、保存与绘图复用工作台控制器，在同源 iframe 内运行。Windows 使用 WebView2 显示界面，当前不是纯原生控件界面。
 
 ![系统架构](diagrams/architecture.png)
 
@@ -11,6 +11,8 @@
 | 组件 | 责任 | 代码入口 |
 | --- | --- | --- |
 | React 宿主 | 启动登录、iframe 生命周期、原生关闭保护 | `apps/desktop/src/LegacyWorkbench.tsx` |
+| 连续配置表 | 展示/实际配件编辑、行复制、增删与可见配置挂载 | `apps/desktop/src/legacy/continuous-workbench.tsx` |
+| 领域回调 | 配件投影、原子复制删除、选择与保存分发 | `apps/desktop/public/workbench/continuous-workbench.js` |
 | 页面桥接 | 将受支持的页面请求转成 Tauri IPC；转换渲染素材地址 | `apps/desktop/src/legacy/local-bridge.ts` |
 | 工作台页面 | 配置、成本、批量维护、版式与图片绘制 | `apps/desktop/public/workbench/` |
 | Rust 本机服务 | SQLite 存储、历史、恢复、缓存与本机接口 | `apps/desktop/src-tauri/src/` |
@@ -21,6 +23,10 @@
 ## 编辑与保存
 
 工作台先获取配置索引，选择配置时加载完整详情，当前编辑对象保持加载。页面通过桥接调用本机接口，Rust 将修改写入本机存储。保存、恢复草稿和历史是本机数据流程；云端回执是另一项状态，不能用本机保存成功推断同步成功。
+
+同一链接超过6套配置时只挂载可见配置及相邻区域；当前输入所在配置保持挂载，选行状态跨卸载保留。共享候选与库存索引减少每次输入的重复计算，未变配置的投影缓存复用。自由编辑缩放将尺寸读取与样式写入分开，合并同帧布局刷新。
+
+浅深界面通过共享主题变量同步宿主与 iframe；换色期间暂停全页颜色过渡，避免大量控件同时动画。此主题不写入图片配色字段。
 
 图片按需要绘制和导出。导出文件按链接及图片类型分组；应用缓存由缓存维护逻辑管理，与用户导出的图片目录分开。
 

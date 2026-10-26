@@ -22,13 +22,14 @@ export function partUsageSummary(configs,query='',slot=''){
  return [...groups.values()].map(item=>({key:item.key,name:item.name,goodsId:item.goodsId,slots:[...item.slots],count:item.configs.size,linkCount:item.products.size,occurrences:item.occurrences})).sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name,'zh-CN'));
 }
 const matchesUpgrade=(part,query)=>String(part.upgrade||'').toLowerCase().includes(query.trim().toLowerCase());
-export function findPartUsage(configs,query,descriptionQuery=''){
- const q=query.trim().toLowerCase(),found=new Map();if(!q&&!descriptionQuery.trim())return [];
- for(const c of configs.filter(c=>!c.deletedAt))for(const p of c.parts){if(!p.name||![p.name,p.goodsId].some(v=>String(v||'').toLowerCase().includes(q))||!matchesUpgrade(p,descriptionQuery))continue;const k=key(p);if(!found.has(k))found.set(k,{key:k,goodsId:p.goodsId,name:p.name,ids:new Set()});found.get(k).ids.add(c.id);}
+export function findPartUsage(configs,query,descriptionQuery='',slot='',showAll=false){
+ const q=query.trim().toLowerCase(),found=new Map();if(!q&&!descriptionQuery.trim()&&!slot&&!showAll)return [];
+ for(const c of configs.filter(c=>!c.deletedAt))for(const p of c.parts){if(!p.name||(slot&&p.slot!==slot)||![p.name,p.goodsId].some(v=>String(v||'').toLowerCase().includes(q))||!matchesUpgrade(p,descriptionQuery))continue;const k=key(p);if(!found.has(k))found.set(k,{key:k,goodsId:p.goodsId,name:p.name,ids:new Set()});found.get(k).ids.add(c.id);}
  return [...found.values()].map(r=>({...r,count:r.ids.size,ids:undefined}));
 }
+const selectedPart=(part,partKeys,slot='')=>(Array.isArray(partKeys)?partKeys:[partKeys]).includes(key(part))&&(!slot||part.slot===slot);
 const inUsageScope=(config,part,occurrences)=>!occurrences||occurrences.some(item=>item.configId===config.id&&item.slot===part.slot);
-export function usageGroups(configs,partKey,descriptionQuery='',occurrences=null){return productGroups(configs.filter(c=>!c.deletedAt)).map(g=>({...g,matches:g.configs.filter(c=>c.parts.some(p=>key(p)===partKey&&matchesUpgrade(p,descriptionQuery)&&inUsageScope(c,p,occurrences)))})).filter(g=>g.matches.length);}
+export function usageGroups(configs,partKey,descriptionQuery='',occurrences=null,slot=''){return productGroups(configs.filter(c=>!c.deletedAt)).map(g=>({...g,matches:g.configs.filter(c=>c.parts.some(p=>selectedPart(p,partKey,slot)&&matchesUpgrade(p,descriptionQuery)&&inUsageScope(c,p,occurrences)))})).filter(g=>g.matches.length);}
 /** 按所选链接及出现位置生成替换计划，预览阶段不修改原配置。 */
 export function replacementPlan(configs,partKey,productIds,replacement,qty,occurrences=null){
  if(!replacement||replacement.deletedAt)throw Error('请选择新的配件');if(qty!==null&&(!Number.isInteger(qty)||qty<1))throw Error('数量必须是正整数，留空则保留原数量');
@@ -46,12 +47,12 @@ export function applyReplacement(plan,configs){
  const targets=validateReplacement(plan,configs);
  targets.forEach((c,i)=>Object.assign(c,clone(plan.changes[i].after)));return targets.map(c=>c.id);
 }
-export function upgradeDescriptionPlan(configs,partKey,productIds,description,descriptionQuery=''){
- if(!partKey)throw Error('请选择原配件');
- const groups=usageGroups(configs,partKey,descriptionQuery).filter(g=>productIds.includes(g.id)),changes=[];
+export function upgradeDescriptionPlan(configs,partKey,productIds,description,descriptionQuery='',slot=''){
+ if(!partKey||(Array.isArray(partKey)&&!partKey.length))throw Error('请选择原配件');
+ const groups=usageGroups(configs,partKey,descriptionQuery,null,slot).filter(g=>productIds.includes(g.id)),changes=[];
  for(const g of groups)for(const c of g.matches){
   const after=clone(c);
-  for(const part of after.parts)if(key(part)===partKey&&matchesUpgrade(part,descriptionQuery)&&part.upgrade!==description){part.upgrade=description;markSourceFieldManual(part,'upgrade');}
+  for(const part of after.parts)if(selectedPart(part,partKey,slot)&&matchesUpgrade(part,descriptionQuery)&&part.upgrade!==description){part.upgrade=description;markSourceFieldManual(part,'upgrade');}
   if(JSON.stringify(c)!==JSON.stringify(after))changes.push({id:c.id,productId:g.id,name:c.name,product:g.name,before:clone(c),after});
  }
  return {changes,partKey,productIds:groups.map(g=>g.id),description};
@@ -68,13 +69,14 @@ export function openUpgradeDescriptionBatch(api){
  const getConfigs=()=>api.getConfigs().filter(c=>!c.deletedAt&&(!api.productId||($('#upgrade-batch-scope').value==='selected'?(api.getSelectedIds?.()||[]).includes(c.id):c.productId===api.productId)));
  const descriptionQuery=()=>isName?'':$('#upgrade-batch-description-query').value;
  openDialog(isName?'批量修改配件展示名称':api.productId?'批量修改加购描述':'批量修改全店加购说明',`${api.productId?'<label class="field">修改范围<select id="upgrade-batch-scope"><option value="link">当前链接全部配置</option><option value="selected">勾选配置（本店，可跨链接）</option></select></label>':''}<p class="hint">按配件或加购描述查找，只修改范围内符合搜索条件的逐项升级说明。手动添加的“加购与选配”、实际配置和输出源均保留。</p><label class="field">查找原配件<input id="upgrade-batch-query" placeholder="输入配件名称或 ERP ID"></label><label class="field">只搜索加购描述<input id="upgrade-batch-description-query" placeholder="输入逐项升级说明关键词，可单独搜索"></label><div id="upgrade-batch-candidates" class="global-list"></div><div id="upgrade-batch-work" class="hidden"><details open><summary>选择影响的链接</summary><label class="global-all"><input id="upgrade-batch-all" type="checkbox" checked> 全选关联链接</label><div id="upgrade-batch-links" class="global-list"></div></details><label class="field">新的配件加购描述<textarea id="upgrade-batch-text" rows="3" placeholder="留空可清除所选配件的说明"></textarea></label><label class="global-export"><input id="upgrade-batch-export" type="checkbox"> 保存后导出对应修改链接的配置清单图和 SKU 图</label><label class="field">导出范围<select id="upgrade-batch-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><p class="hint">每套导出配置图和 SKU 图，保留各套主题；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="upgrade-batch-preview">预览修改</button><button id="upgrade-batch-apply" class="primary" disabled>应用修改</button></div><details id="upgrade-batch-diff-details"><summary>查看修改明细</summary><pre id="upgrade-batch-diff"></pre></details></div><p id="upgrade-batch-status" role="status"></p><button id="upgrade-batch-retry" class="hidden">导出刚修改的链接图片</button><button id="upgrade-batch-undo" class="hidden">一键还原本次修改</button>`);
+ api.render?.({hasScope:Boolean(api.productId)});
  const $=s=>document.querySelector(s);
  if(isName){
  $('#upgrade-batch-description-query').closest('label').remove();
- $('#upgrade-batch-query').closest('label').previousElementSibling.textContent='按原配件名称或 ERP ID 查找，只修改所选配件的展示名称，用于配置图；留空恢复原配件名称。原配件、实际配置、加购描述和输出源均保留。';
+ ($('#upgrade-batch-hint')||$('#upgrade-batch-query').closest('label').previousElementSibling).textContent='按原配件名称或 ERP ID 查找，只修改所选配件的展示名称，用于配置图；留空恢复原配件名称。原配件、实际配置、加购描述和输出源均保留。';
  const input=$('#upgrade-batch-text');input.closest('label').firstChild.textContent='新的配件展示名称';input.placeholder='留空恢复原配件名称';input.maxLength=200;input.rows=2;
- }else if(api.openDisplayNames){const button=document.createElement('button');button.type='button';button.id='upgrade-batch-display-names';button.textContent='批量修改配件展示名称';button.onclick=api.openDisplayNames;$('#upgrade-batch-query').closest('label').before(button);}
- let partKey='',plan=null,busy=false,exportIds=null,changedConfigIds=null,undoRecords=null;
+ }else if(api.openDisplayNames){const button=document.createElement('button');button.type='button';button.id='upgrade-batch-display-names';button.textContent='批量修改配件展示名称';button.onclick=api.openDisplayNames;const shortcuts=$('#upgrade-batch-shortcuts');if(shortcuts)shortcuts.append(button);else $('#upgrade-batch-query').closest('label').before(button);}
+ let partKey='',selectedParts=new Set(),plan=null,busy=false,exportIds=null,changedConfigIds=null,undoRecords=null;
  const root=$('#upgrade-batch-status'),dialog=root.closest('dialog'),status=text=>{if(root.isConnected)root.textContent=text;};dialog.classList.add('global-batch-dialog');
  const changedLinks=plan=>[...new Set(plan.changes.map(change=>change.productId))];
  let lockedControls=[];
@@ -85,13 +87,41 @@ export function openUpgradeDescriptionBatch(api){
  const invalidate=()=>{plan=null;$('#upgrade-batch-apply').disabled=true;$('#upgrade-batch-diff').textContent='';};
  const updateAll=()=>{const rows=[...dialog.querySelectorAll('[data-upgrade-link]')],count=rows.filter(el=>el.checked).length;$('#upgrade-batch-all').checked=rows.length>0&&count===rows.length;$('#upgrade-batch-all').indeterminate=count>0&&count<rows.length;invalidate();};
  $('#upgrade-batch-all').onchange=()=>{dialog.querySelectorAll('[data-upgrade-link]').forEach(el=>el.checked=$('#upgrade-batch-all').checked);updateAll();};
- $('#upgrade-batch-query').oninput=()=>{invalidate();$('#upgrade-batch-work').classList.add('hidden');const rows=findPartUsage(getConfigs(),$('#upgrade-batch-query').value,descriptionQuery());$('#upgrade-batch-candidates').innerHTML=rows.slice(0,80).map((r,i)=>`<button data-upgrade-part="${i}"><strong>${esc(r.name)}</strong><small>ERP ID ${esc(r.goodsId||'无')} · ${r.count} 套配置</small></button>`).join('');$('#upgrade-batch-status').textContent=rows.length?(isName?'选择要修改展示名称的原配件':'选择要修改描述的原配件'):'没有匹配配件';document.querySelectorAll('[data-upgrade-part]').forEach(button=>button.onclick=()=>{const row=rows[Number(button.dataset.upgradePart)];partKey=row.key;const groups=usageGroups(getConfigs(),partKey,descriptionQuery());$('#upgrade-batch-candidates').innerHTML=`<p class="hint">原配件：${esc(row.name)} · ${esc(row.goodsId||'无 ERP ID')}</p>`;$('#upgrade-batch-links').innerHTML=groups.map(g=>`<label><input type="checkbox" data-upgrade-link value="${esc(g.id)}" checked><span><strong>${esc(g.name)}</strong><small>SPU ${esc(g.spu||'未绑定')} · ${g.matches.length}/${g.configs.length} 套命中</small><details><summary>查看配置</summary>${g.matches.map(c=>`<small>${esc(c.shortName||c.name)}</small>`).join('')}</details></span></label>`).join('');$('#upgrade-batch-work').classList.remove('hidden');$('#upgrade-batch-status').textContent=`已找到 ${groups.length} 个链接`;document.querySelectorAll('[data-upgrade-link]').forEach(input=>input.onchange=updateAll);updateAll();});};
- if(!isName)$('#upgrade-batch-description-query').oninput=$('#upgrade-batch-query').oninput;
- if(api.productId)$('#upgrade-batch-scope').onchange=$('#upgrade-batch-query').oninput;
+ const slot=()=>isName?'':$('#upgrade-batch-slot').value;
+ if(!isName){
+  const slots=[...new Set(getConfigs().flatMap(c=>(c.parts||[]).map(p=>p.slot)).filter(Boolean))];
+  $('#upgrade-batch-query').closest('label').before(Object.assign(document.createElement('label'),{className:'field',innerHTML:`配件类型<select id="upgrade-batch-slot"><option value="">全部配件类型</option>${slots.map(s=>`<option value="${esc(s)}">${esc(s)}</option>`).join('')}</select>`}));
+ }
+ const renderLinks=()=>{
+  const previous=[...dialog.querySelectorAll('[data-upgrade-link]')],unchecked=new Set(previous.filter(el=>!el.checked).map(el=>el.value));
+  const groups=usageGroups(getConfigs(),isName?partKey:[...selectedParts],descriptionQuery(),null,slot());
+  $('#upgrade-batch-links').innerHTML=groups.map(g=>`<label><input type="checkbox" data-upgrade-link value="${esc(g.id)}" ${unchecked.has(g.id)?'':'checked'}><span><strong>${esc(g.name)}</strong><small>SPU ${esc(g.spu||'未绑定')} · ${g.matches.length}/${g.configs.length} 套命中</small><details><summary>查看配置</summary>${g.matches.map(c=>`<small>${esc(c.shortName||c.name)}</small>`).join('')}</details></span></label>`).join('');
+  $('#upgrade-batch-work').classList.toggle('hidden',!groups.length);
+  dialog.querySelectorAll('[data-upgrade-link]').forEach(input=>input.onchange=updateAll);updateAll();
+  status(isName?`已找到 ${groups.length} 个链接`:`已选择 ${selectedParts.size} 种配件，涉及 ${groups.length} 个链接`);
+ };
+ const listParts=()=>{
+  invalidate();selectedParts.clear();partKey='';$('#upgrade-batch-links').innerHTML='';$('#upgrade-batch-work').classList.add('hidden');
+  const rows=findPartUsage(getConfigs(),$('#upgrade-batch-query').value,descriptionQuery(),slot(),!isName);
+  if(isName){
+   $('#upgrade-batch-candidates').innerHTML=rows.slice(0,80).map((r,i)=>`<button data-upgrade-part="${i}"><strong>${esc(r.name)}</strong><small>ERP ID ${esc(r.goodsId||'无')} · ${r.count} 套配置</small></button>`).join('');
+   dialog.querySelectorAll('[data-upgrade-part]').forEach(button=>button.onclick=()=>{const row=rows[Number(button.dataset.upgradePart)];partKey=row.key;$('#upgrade-batch-candidates').innerHTML=`<p class="hint">原配件：${esc(row.name)} · ${esc(row.goodsId||'无 ERP ID')}</p>`;renderLinks();});
+  }else{
+   // 不截断筛选结果，确保“全选”包含当前类型和搜索条件下的全部配件。
+   $('#upgrade-batch-candidates').innerHTML=`<label class="global-all"><input id="upgrade-batch-parts-all" type="checkbox" ${rows.length?'':'disabled'}> 全选筛选结果（${rows.length} 种配件）</label><div style="max-height:280px;overflow:auto">${rows.map((r,i)=>`<label><input type="checkbox" data-upgrade-part="${i}"><span><strong>${esc(r.name)}</strong><small>ERP ID ${esc(r.goodsId||'无')} · ${r.count} 套配置</small></span></label>`).join('')}</div>`;
+   const updateParts=()=>{const all=$('#upgrade-batch-parts-all');all.checked=rows.length>0&&selectedParts.size===rows.length;all.indeterminate=selectedParts.size>0&&selectedParts.size<rows.length;renderLinks();};
+   dialog.querySelectorAll('[data-upgrade-part]').forEach(input=>input.onchange=()=>{const key=rows[Number(input.dataset.upgradePart)].key;if(input.checked)selectedParts.add(key);else selectedParts.delete(key);updateParts();});
+   $('#upgrade-batch-parts-all').onchange=event=>{selectedParts=new Set(event.target.checked?rows.map(r=>r.key):[]);dialog.querySelectorAll('[data-upgrade-part]').forEach(el=>el.checked=event.target.checked);updateParts();};
+  }
+  status(rows.length?(isName?'选择要修改展示名称的原配件':`找到 ${rows.length} 种配件，可多选；切换筛选条件会清空选择`):'没有匹配配件');
+ };
+ $('#upgrade-batch-query').oninput=listParts;
+ if(!isName){$('#upgrade-batch-description-query').oninput=listParts;$('#upgrade-batch-slot').onchange=listParts;}
+ if(api.productId)$('#upgrade-batch-scope').onchange=listParts;
  $('#upgrade-batch-text').oninput=invalidate;
  $('#upgrade-batch-export').onchange=invalidate;
  $('#upgrade-batch-export-scope').onchange=invalidate;
- $('#upgrade-batch-preview').onclick=()=>{try{$('#upgrade-batch-diff-details').open=true;plan=(isName?displayNamePlan:upgradeDescriptionPlan)(getConfigs(),partKey,[...document.querySelectorAll('[data-upgrade-link]:checked')].map(input=>input.value),$('#upgrade-batch-text').value,descriptionQuery());$('#upgrade-batch-diff').textContent=plan.changes.map(change=>{const lines=change.before.parts.filter(part=>key(part)===partKey&&matchesUpgrade(part,descriptionQuery())).map(part=>isName?`${part.slot}：${part.displayName||part.name} → ${plan.displayName||part.name}`:`${part.slot}：${part.upgrade||'（空）'} → ${plan.description||'（空）'}`);return `${change.product} / ${change.name}\n${lines.join('\n')}`;}).join('\n\n');$('#upgrade-batch-apply').disabled=!plan.changes.length;const count=$('#upgrade-batch-export').checked?exportEntries(api.getConfigs(),changedLinks(plan),'both',exportOptions(plan.changes.map(c=>c.id))).length:0;status(`将修改 ${plan.changes.length} 套配置${count?`，导出 ${changedLinks(plan).length} 个链接，共 ${count} 张图片`:''}`); }catch(e){invalidate();$('#upgrade-batch-status').textContent=e.message;}};
+ $('#upgrade-batch-preview').onclick=()=>{try{$('#upgrade-batch-diff-details').open=true;plan=(isName?displayNamePlan:upgradeDescriptionPlan)(getConfigs(),isName?partKey:[...selectedParts],[...document.querySelectorAll('[data-upgrade-link]:checked')].map(input=>input.value),$('#upgrade-batch-text').value,descriptionQuery(),slot());$('#upgrade-batch-diff').textContent=plan.changes.map(change=>{const lines=change.before.parts.filter(part=>selectedPart(part,isName?partKey:[...selectedParts],slot())&&matchesUpgrade(part,descriptionQuery())).map(part=>isName?`${part.slot}：${part.displayName||part.name} → ${plan.displayName||part.name}`:`${part.slot}：${part.upgrade||'（空）'} → ${plan.description||'（空）'}`);return `${change.product} / ${change.name}\n${lines.join('\n')}`;}).join('\n\n');$('#upgrade-batch-apply').disabled=!plan.changes.length;const count=$('#upgrade-batch-export').checked?exportEntries(api.getConfigs(),changedLinks(plan),'both',exportOptions(plan.changes.map(c=>c.id))).length:0;status(`将修改 ${plan.changes.length} 套配置${count?`，导出 ${changedLinks(plan).length} 个链接，共 ${count} 张图片`:''}`); }catch(e){invalidate();$('#upgrade-batch-status').textContent=e.message;}};
  $('#upgrade-batch-apply').onclick=async()=>{
   if(!plan||busy)return;const approved=plan,auto=$('#upgrade-batch-export').checked;let saved=false;
   try{if(auto)exportEntries(api.getConfigs(),changedLinks(approved),'both',exportOptions(approved.changes.map(c=>c.id)));validateReplacement(approved,getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);await apply(approved);saved=true;exportIds=changedLinks(approved);changedConfigIds=approved.changes.map(c=>c.id);undoRecords=captureBatchRevert(approved,api.getConfigs());$('#upgrade-batch-undo').classList.remove('hidden');$('#upgrade-batch-undo').textContent='一键还原本次修改';plan=null;$('#upgrade-batch-retry').classList.remove('hidden');if(auto){lock(false);await exportImages();}else status(`已保存 ${approved.changes.length} 套配置，可继续修改、单次还原或导出图片。`);}
@@ -106,6 +136,7 @@ export function openUpgradeDescriptionBatch(api){
  };
  $('#upgrade-batch-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(e){status('修改已保存，导出未完成：'+e.message);}finally{lock(false);if(root.isConnected)invalidate();}};
 
+ if(!isName)listParts();
 }
 export function replacementDiff(plan){
  return plan.changes.map(change=>{

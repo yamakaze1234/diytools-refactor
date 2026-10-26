@@ -15,7 +15,7 @@ function dom(t) {
    this.tagName=tag.toUpperCase();this.nodeType=1;this.parentElement=null;this.children=[];this.dataset={};this.attributes={};this.listeners=new Map();this.value='';this.textContent='';this.width=1000;this.height=2000;this.capture=null;this.open=false;
    const classes=new Set();this.classList={contains:name=>classes.has(name),add:(...names)=>names.forEach(name=>classes.add(name)),remove:(...names)=>names.forEach(name=>classes.delete(name)),toggle:(name,force)=>{const next=force??!classes.has(name);next?classes.add(name):classes.delete(name);return next;}};
    Object.defineProperty(this,'className',{get:()=>[...classes].join(' '),set:value=>{classes.clear();String(value).split(/\s+/).filter(Boolean).forEach(name=>classes.add(name));}});
-   this.style=new Proxy({removeProperty:property=>{if(property==='grid-template-columns')delete this.style.gridTemplateColumns;else delete this.style[property];}}, {set:(target,key,value)=>{counts.styleWrites++;if(key==='gridTemplateColumns')counts.gridWrites++;target[key]=value;return true;}});
+   this.style=new Proxy({setProperty:(property,value)=>{this.style[property]=value;},removeProperty:property=>{if(property==='grid-template-columns')delete this.style.gridTemplateColumns;else delete this.style[property];}}, {set:(target,key,value)=>{counts.styleWrites++;if(key==='gridTemplateColumns')counts.gridWrites++;target[key]=value;return true;}});
    for(const [name,value] of [['clientWidth',1600],['clientHeight',800],['clientTop',0]])Object.defineProperty(this,name,{configurable:true,get:()=>{counts.dimensionReads++;return this[name+'Value']??value;}});
    for(const name of ['scrollTop','scrollLeft']){let value=0;Object.defineProperty(this,name,{get:()=>value,set:next=>{counts.scrollWrites++;value=next;}});}
   }
@@ -48,7 +48,7 @@ function dom(t) {
  for(const id of ['poster-format-copy','poster-format-paste','poster-add-image','poster-image-file','poster-image-select','poster-undo','poster-redo','poster-auto-layout','poster-zoom','poster-pick-mode','poster-object-select','poster-layer-control'])add(preview,'input',{id});
  document.querySelector('#poster-zoom').value='fit';
  const columnWidths=()=>{const match=/^(\d+)px .* (\d+)px$/.exec(workspace.style.gridTemplateColumns??'');return match?{left:Number(match[1]),right:Number(match[2])}:{left:248,right:400};};
- const globals={document,window:{innerWidth:1600,addEventListener:(name,callback)=>windowEvents.set(name,callback)},innerWidth:1600,innerHeight:900,localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},MutationObserver:class{constructor(callback){this.callback=callback;observers.push(this);}observe(root,options){this.root=root;this.options=options;}disconnect(){this.disconnected=true;}},ResizeObserver:class{constructor(callback){this.callback=callback;resizes.push(this);}observe(){}},requestAnimationFrame:callback=>{frames.set(++frameId,callback);return frameId;},cancelAnimationFrame:id=>frames.delete(id),getComputedStyle:()=>({paddingLeft:'12',paddingRight:'12',paddingBottom:'12'})};
+ const globals={matchMedia:()=>({matches:false,addEventListener(){}}),document,window:{innerWidth:1600,addEventListener:(name,callback)=>windowEvents.set(name,callback)},innerWidth:1600,innerHeight:900,localStorage:{getItem:key=>storage.get(key)??null,setItem:(key,value)=>storage.set(key,value),removeItem:key=>storage.delete(key)},MutationObserver:class{constructor(callback){this.callback=callback;observers.push(this);}observe(root,options){this.root=root;this.options=options;}disconnect(){this.disconnected=true;}},ResizeObserver:class{constructor(callback){this.callback=callback;resizes.push(this);}observe(){}},requestAnimationFrame:callback=>{frames.set(++frameId,callback);return frameId;},cancelAnimationFrame:id=>frames.delete(id),getComputedStyle:()=>({paddingLeft:'12',paddingRight:'12',paddingBottom:'12'})};
  const previous=new Map();for(const [key,value]of Object.entries(globals)){previous.set(key,Object.getOwnPropertyDescriptor(globalThis,key));Object.defineProperty(globalThis,key,{configurable:true,writable:true,value});}
  t.after(()=>{for(const [key,descriptor]of previous)descriptor?Object.defineProperty(globalThis,key,descriptor):delete globalThis[key];});
  const reset=()=>{for(const key of Object.keys(counts))counts[key]=key==='queries'?[]:0;};
@@ -67,7 +67,7 @@ test('same-size poster redraws do not read layout, write stage size, or reset sc
 test('poster geometry and container changes still fit while retaining scroll',t=>{
  const env=dom(t);let configId='a';const editor=bindPosterEditor({current:()=>({id:configId,posterImages:[]})});editor.render(poster());const oldWidth=parseFloat(env.stage.style.width);env.scroll.scrollTop=100;env.scroll.scrollLeft=20;env.reset();
  editor.render(poster(2672));assert.ok(parseFloat(env.stage.style.width)<oldWidth);assert.equal(env.counts.rectReads,2);assert.equal(env.scroll.scrollTop,100);assert.equal(env.scroll.scrollLeft,20);
- env.scroll.clientHeightValue=600;const width=parseFloat(env.stage.style.width);env.resizes[0].callback();assert.ok(parseFloat(env.stage.style.width)<width);
+ env.scroll.clientHeightValue=600;const width=parseFloat(env.stage.style.width);env.reset();for(let i=0;i<10;i++)env.resizes[0].callback();assert.equal(env.counts.rectReads,0);env.flush();assert.equal(env.counts.rectReads,2);assert.ok(parseFloat(env.stage.style.width)<width);
  configId='b';env.reset();editor.render(poster(2672));assert.equal(env.counts.rectReads,2);assert.equal(env.counts.scrollWrites,0);
  env.document.querySelector('#poster-zoom').value='150';env.document.querySelector('#poster-zoom').onchange();assert.equal(env.stage.style.width,'1050px');env.reset();editor.render(poster(3000));assert.equal(env.counts.rectReads,0);assert.equal(env.stage.style.width,'1050px');
 });
@@ -86,16 +86,16 @@ test('column pointer events apply only the latest width once per animation frame
 });
 test('column release flushes the final move and persists it before a queued frame',t=>{
  const env=dom(t);mountWorkspaceResize(env.workspace);const handle=env.workspace.children.find(node=>node.dataset.resizeColumn==='right');handle.onpointerdown(pointer());handle.onpointermove(pointer(140));handle.onpointerup();
- assert.equal(env.frames.size,0);assert.deepEqual(JSON.parse(env.storage.get('diy-workspace-widths-v1')),{left:248,right:460});assert.equal(handle.capture,null);assert.equal(env.columnWidths().right,460);
+ assert.equal(env.frames.size,0);assert.deepEqual(JSON.parse(env.storage.get('diy-workspace-widths-reui-v2')),{left:248,right:460});assert.equal(handle.capture,null);assert.equal(env.columnWidths().right,460);
 });
 test('column cancel restores the previous saved widths and discards pending moves',t=>{
- const env=dom(t);env.storage.set('diy-workspace-widths-v1',JSON.stringify({left:280,right:420}));mountWorkspaceResize(env.workspace);const handle=env.workspace.children.find(node=>node.dataset.resizeColumn==='left');handle.onpointerdown(pointer());handle.onpointermove(pointer(300));env.flush();assert.equal(env.columnWidths().left,380);handle.onpointermove(pointer(400));handle.onpointercancel();
- assert.equal(env.frames.size,0);assert.deepEqual(env.columnWidths(),{left:280,right:420});assert.deepEqual(JSON.parse(env.storage.get('diy-workspace-widths-v1')),{left:280,right:420});assert.equal(handle.capture,null);
+ const env=dom(t);env.storage.set('diy-workspace-widths-reui-v2',JSON.stringify({left:280,right:420}));mountWorkspaceResize(env.workspace);const handle=env.workspace.children.find(node=>node.dataset.resizeColumn==='left');handle.onpointerdown(pointer());handle.onpointermove(pointer(300));env.flush();assert.equal(env.columnWidths().left,380);handle.onpointermove(pointer(400));handle.onpointercancel();
+ assert.equal(env.frames.size,0);assert.deepEqual(env.columnWidths(),{left:280,right:420});assert.deepEqual(JSON.parse(env.storage.get('diy-workspace-widths-reui-v2')),{left:280,right:420});assert.equal(handle.capture,null);
  handle.onpointerdown(pointer());handle.onpointermove(pointer(500));env.windowEvents.get('blur')();assert.deepEqual(env.columnWidths(),{left:280,right:420});
 });
 test('canceling an unsaved column resize restores CSS defaults without persisting',t=>{
  const env=dom(t);mountWorkspaceResize(env.workspace);const handle=env.workspace.children.find(node=>node.dataset.resizeColumn==='left');handle.onpointerdown(pointer());handle.onpointermove(pointer(500,2));assert.equal(env.frames.size,0);handle.onpointermove(pointer(300));env.flush();assert.equal(env.columnWidths().left,348);handle.onpointermove(pointer(400));handle.onlostpointercapture();
- assert.equal(env.frames.size,0);assert.deepEqual(env.columnWidths(),{left:248,right:400});assert.equal(env.workspace.style.gridTemplateColumns,undefined);assert.equal(env.storage.has('diy-workspace-widths-v1'),false);
+ assert.equal(env.frames.size,0);assert.deepEqual(env.columnWidths(),{left:248,right:400});assert.equal(env.workspace.style.gridTemplateColumns,undefined);assert.equal(env.storage.has('diy-workspace-widths-reui-v2'),false);
 });
 test('error observer scans added subtrees and updates enclosing errors without root rescans',t=>{
  const env=dom(t),existing=env.add(env.workspace,'div',{class:'error'});const disconnect=observeEmptyErrors(env.body),observer=env.observers[0];assert.ok(existing.classList.contains('is-empty-error'));env.reset();

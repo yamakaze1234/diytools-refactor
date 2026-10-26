@@ -30,6 +30,10 @@ ERP 网页未配置返回 `ERP_NOT_CONFIGURED`；缺少可选 worker 返回 `ERP
 
 管理员可在内部单独分发 integrations.json 和所需私有运行时，不能把这些文件上传公开仓库或 Release。内部新电脑包不应携带个人会话、凭据、原成员同步检查点或本机数据库。
 
+## ERP 操作入口
+
+日常读取与确认应用从工作台“ERP 同步”进入，同窗提供 ERP 库存/成本和核算成本来源。旧“更多 → ERP 环境”入口已移除；运行时、只读接口和本机凭据仍保留。首次旧数据迁移从登录接入流程执行，不再从“更多”菜单进入。
+
 ## ERP 可选运行时
 
 Windows 正式版仅从本机 `data/runtime/erp-worker.exe` 启动可选运行时，不内嵌私有公司包，不从页面指定路径，不自动下载安装。开发模式可回退到 `services/erp-worker/.venv` 的 Python，运行公开的通用 JSONL 服务。

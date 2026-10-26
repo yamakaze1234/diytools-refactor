@@ -16,14 +16,15 @@ export function bindPosterEditor(api){
  let saved=[];try{saved=JSON.parse(localStorage.getItem('diy-poster-colors-v1')||'[]').filter(c=>/^#[0-9a-f]{6}$/i.test(c)).slice(0,24);}catch{}
  const stage=$('#poster-stage'),box=$('#poster-selection'),inspector=$('#poster-inspector');
  let copiedFormat=null;const guideLayer=document.createElement('div');guideLayer.className='poster-guides';stage.append(guideLayer);
- const showGuides=guides=>{guideLayer.replaceChildren(...guides.map(g=>{const line=document.createElement('i');line.className='poster-guide-'+g.axis;line.style[g.axis==='x'?'left':'top']=g.position/(g.axis==='x'?result.base:result.height)*100+'%';return line;}));};
+ const showGuides=guides=>{if(!guides.length){guideLayer.replaceChildren();return;}const canvas=$('#poster').getBoundingClientRect(),surface=stage.getBoundingClientRect();guideLayer.replaceChildren(...guides.map(g=>{const line=document.createElement('i');line.className='poster-guide-'+g.axis;line.style[g.axis==='x'?'left':'top']=(g.axis==='x'?canvas.left-surface.left+g.position/result.base*canvas.width:canvas.top-surface.top+g.position/result.height*canvas.height)+'px';return line;}));};
  const textRegion=()=>result?.textRegions.find(r=>r.key===selected);
  $('#poster-format-copy').onclick=()=>{const r=textRegion();if(!r)return api.toast('请先选中要复制格式的文字');copiedFormat=captureTextFormat(api.current(),r,result.density||1);$('#poster-format-paste').disabled=false;api.toast('已复制文字格式，选中目标文字后点击应用格式');};
  $('#poster-format-paste').onclick=()=>{if(!copiedFormat)return;const r=textRegion();if(!r)return api.toast('请选择目标文字');api.checkpoint();applyTextFormat(api.current(),selected,copiedFormat);refresh=true;api.changed('格式刷应用文字样式');};
  const currentLayer=()=>api.current()?.posterImages?.find(layer=>'poster-image:'+layer.id===selected);
  const currentRegion=()=>selected?.startsWith('module:')?result?.regions.find(r=>r.key===selected):selected==='case-image'?result?.imageRegion:result?.addedImageRegions?.find(r=>r.key===selected)||result?.textRegions.find(r=>r.key===selected);
  const isImage=()=>selected==='case-image'||!!currentLayer();
- function outline(){const r=currentRegion();box.classList.toggle('hidden',!r);if(!r)return;Object.assign(box.style,{left:r.x/result.base*100+'%',top:r.top/result.height*100+'%',width:r.width/result.base*100+'%',height:r.height/result.height*100+'%'});box.classList.toggle('text-selection',r.value!==undefined&&!r.isLogo&&!isImage()&&!selected?.startsWith('module:'));box.classList.toggle('image-selection',isImage());box.classList.toggle('module-selection',selected?.startsWith('module:'));$('#poster-selection-label').textContent=r.label||(selected==='case-image'?'机箱图片':currentLayer()?.name||'图片');}
+ // 内容放大可能裁去补白；选框和辅助线必须跟随实际画布坐标，不能按裁切容器百分比定位。
+ function outline(){const r=currentRegion();box.classList.toggle('hidden',!r);if(!r)return;const canvas=$('#poster').getBoundingClientRect(),surface=stage.getBoundingClientRect();Object.assign(box.style,{left:canvas.left-surface.left+r.x/result.base*canvas.width+'px',top:canvas.top-surface.top+r.top/result.height*canvas.height+'px',width:r.width/result.base*canvas.width+'px',height:r.height/result.height*canvas.height+'px'});box.classList.toggle('text-selection',r.value!==undefined&&!r.isLogo&&!isImage()&&!selected?.startsWith('module:'));box.classList.toggle('image-selection',isImage());box.classList.toggle('module-selection',selected?.startsWith('module:'));$('#poster-selection-label').textContent=r.label||(selected==='case-image'?'机箱图片':currentLayer()?.name||'图片');}
  function select(key){textSelection=null;selected=key;if(key)$('#poster-pick-mode').value=key.startsWith('module:')?'modules':'objects';$('#poster-object-select').value=key||'';$('#poster-image-select').value=currentLayer()?key:'';paint();outline();}
  function changeStyle(key,value){const c=api.current();c.textStyles??={};c.textStyles[selected]??={};if(textSelection&&['size','weight','color','fontFamily','italic','strikethrough'].includes(key)){c.textStyles[selected].ranges??=[];c.textStyles[selected].ranges.push({...textSelection,style:{[key]:value}});}else{c.textStyles[selected][key]=value;if(key==='strikethrough'&&c.textStyles[selected].ranges)for(const range of c.textStyles[selected].ranges)delete range.style?.strikethrough;}api.changed('调整预览文字样式');}
  function swatches(){return [...new Set([...presets,...saved])].map(c=>`<button type="button" class="color-swatch" data-swatch="${c}" style="--swatch:${c}" aria-label="使用颜色 ${c}" title="${c}"></button>`).join('');}
@@ -110,28 +111,39 @@ export function bindPosterEditor(api){
  $('#poster-auto-layout').onclick=()=>{api.checkpoint();const c=api.current();delete c.textTransforms?.[c.layout];delete c.moduleTransforms?.[c.layout];delete c.freeCanvasLayouts?.[c.layout];delete c.caseTransforms?.[c.layout];for(const style of Object.values(c.textStyles||{})){delete style.x;delete style.y;delete style.width;}selected=null;refresh=true;paint();outline();api.changed('恢复文字、模块与机箱自动排版');};
  const scroll=$('#preview-scroll');let previewDisplayWidth=700,lastRequestedWidth=null;
  const resolutionChanged=()=>{
-  previewDisplayWidth=parseFloat(stage.style.width)||700;
+  previewDisplayWidth=parseFloat($('#poster').style.width)||parseFloat(stage.style.width)||700;
   if(!result)return;
   const width=previewRasterWidth({displayWidth:previewDisplayWidth,devicePixelRatio:window.devicePixelRatio,exportWidth:result.exportWidth||(api.current()?.layout==='square'?1400:1000),geometry:result});
   const changed=width!==lastRequestedWidth;lastRequestedWidth=width;
   if(changed&&width!==result.canvas?.width)api.previewResolutionChanged?.();
  };
+ let zoomFrame=0,outlineFrame=0;
  const zoom=()=>{
-  const value=$('#poster-zoom').value;
-  if(value!=='fit'){stage.style.width=`${700*Number(value)/100}px`;stage.style.maxWidth='none';resolutionChanged();return;}
-  const css=getComputedStyle(scroll),canvas=$('#poster');
-  const width=scroll.clientWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight);
-  const top=stage.getBoundingClientRect().top-scroll.getBoundingClientRect().top-scroll.clientTop+scroll.scrollTop;
-  const height=scroll.clientHeight-top-parseFloat(css.paddingBottom)-2;
-  const ratio=result?result.base/result.height:canvas.width/canvas.height;
-  const bounded=window.innerWidth>1180||!!stage.closest('.preview-expanded');
-  stage.style.width=`${Math.max(1,Math.min(700,width,bounded?Math.max(1,height)*ratio:Infinity))}px`;
-  stage.style.maxWidth='100%';
-  resolutionChanged();
+  const value=$('#poster-zoom').value,canvas=$('#poster');
+  const canvasStyle={width:'',maxWidth:'',transform:''},stageStyle={width:`${700*Number(value)/100}px`,maxWidth:'none',height:'',overflow:''};
+  // 先统一读取容器尺寸，再写样式；不要清空尺寸后立即强制浏览器重排。
+  if(value==='content'||value==='fit'){
+   const css=getComputedStyle(scroll),width=Math.max(1,scroll.clientWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight));
+   if(value==='content'){
+    stageStyle.width=`${width}px`;
+    if(result?.previewContentRect){const r=result.previewContentRect,scale=width/r.width;Object.assign(canvasStyle,{width:`${result.base*scale}px`,maxWidth:'none',transform:`translate(${-r.x*scale}px,${-r.y*scale}px)`});Object.assign(stageStyle,{height:`${r.height*scale}px`,overflow:'hidden'});}
+   }else{
+    const top=stage.getBoundingClientRect().top-scroll.getBoundingClientRect().top-scroll.clientTop+scroll.scrollTop;
+    const height=scroll.clientHeight-top-parseFloat(css.paddingBottom)-2;
+    const ratio=result?result.base/result.height:canvas.width/canvas.height;
+    const bounded=window.innerWidth>1180||!!stage.closest('.preview-expanded');
+    stageStyle.width=`${Math.max(1,Math.min(width,bounded?Math.max(1,height)*ratio:Infinity))}px`;stageStyle.maxWidth='100%';
+   }
+  }
+  for(const [node,styles] of [[canvas,canvasStyle],[stage,stageStyle]])for(const [key,value] of Object.entries(styles))if(node.style[key]!==value)node.style[key]=value;
+  document.querySelectorAll('[data-preview-fit]').forEach(b=>{const pressed=String(b.dataset.previewFit===value);if(b.getAttribute('aria-pressed')!==pressed)b.setAttribute('aria-pressed',pressed);});
+  cancelAnimationFrame(outlineFrame);outlineFrame=requestAnimationFrame(()=>{outlineFrame=0;outline();});resolutionChanged();
  };
- const fitObserver=new ResizeObserver(()=>{if($('#poster-zoom').value==='fit')zoom();});
- fitObserver.observe(scroll);fitObserver.observe(scroll.querySelector('.canvas-tools'));
+ const fitObserver=new ResizeObserver(()=>{if(!zoomFrame&&['fit','content'].includes($('#poster-zoom').value))zoomFrame=requestAnimationFrame(()=>{zoomFrame=0;zoom();});});
+ fitObserver.observe(scroll);fitObserver.observe($('.canvas-tools'));
+ window.addEventListener('pagehide',()=>{fitObserver.disconnect();cancelAnimationFrame(zoomFrame);cancelAnimationFrame(outlineFrame);},{once:true});
  $('#poster-zoom').onchange=zoom;zoom();
+ document.querySelectorAll('[data-preview-fit]').forEach(b=>b.onclick=()=>{$('#poster-zoom').value=b.dataset.previewFit;scroll.scrollTop=0;scroll.scrollLeft=0;zoom();});
  scroll.addEventListener('wheel',e=>{if(!e.ctrlKey)return;e.preventDefault();const values=[50,75,100,125,150,200],current=$('#poster-zoom').value;let index=current==='fit'?2:values.indexOf(Number(current));index=clamp(index+(e.deltaY<0?1:-1),0,values.length-1);$('#poster-zoom').value=values[index];zoom();},{passive:false});
  $('#poster-pick-mode').onchange=()=>{select(null);};
  $('#poster-object-select').onchange=e=>{select(e.target.value||null);stage.focus({preventScroll:true});};

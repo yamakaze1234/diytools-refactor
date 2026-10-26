@@ -1,0 +1,135 @@
+/* Workbench shell owns geometry; ReUI owns component internals. */
+:root {
+  --desktop-toolbar-height: 52px;
+  --ui-ink: #1f2328;
+  --ui-muted: #656d76;
+  --ui-line: #d1d9e0;
+  --ui-blue: #0969da;
+  --ui-soft: #ddf4ff;
+  --blue: #0969da;
+  --line: #d1d9e0;
+  --legacy-muted: #656d76;
+  --sidebar-w: 218px;
+  --preview-w: 280px;
+}
+html { height: 100%; overflow: hidden; }
+body { height: 100%; overflow: hidden; color: var(--ui-ink); background: #fff; }
+body.has-reui-rail { padding-left: 64px; }
+body .topbar { height: var(--desktop-toolbar-height); min-height: var(--desktop-toolbar-height); position: relative; padding: 8px 16px; flex-wrap: nowrap; background: #f6f8fa; border-bottom: 1px solid var(--ui-line); box-shadow: none; }
+body .topbar .brand { display: block; font-size: 15px; }
+body .topbar .brand span { font-size: 12px; }
+body .topbar .top-right { width: auto; margin-left: auto; gap: 8px; flex-wrap: nowrap; }
+body .topbar #save { background: #1f883d; border-color: #1a7f37; }
+body .topbar button { min-height: 32px; }
+body .workspace { position: relative; display: grid; grid-template-columns: var(--sidebar-w) minmax(0,1fr) var(--preview-w); grid-template-rows: minmax(0,1fr); gap: 0; height: calc(100dvh - var(--desktop-toolbar-height)); min-height: 0; max-width: none; margin: 0; overflow: hidden; }
+body .workspace > .sidebar { position: relative; top: 0; grid-row: 1; grid-column: 1; height: 100%; min-height: 0; padding: 14px 12px; overflow: auto; background: #fff; border-right: 1px solid var(--ui-line); }
+body .workspace > .main { position: relative; grid-row: 1; grid-column: 2; height: 100%; min-height: 0; min-width: 0; padding: 16px; overflow: auto; scrollbar-gutter: auto; background: #fff; }
+body .workspace > .preview-side:not(.preview-expanded) { position: relative; top: 0; grid-row: 1; grid-column: 3; height: 100%; min-height: 0; min-width: 0; padding: 14px 12px; overflow: hidden; background: #f6f8fa; border-left: 1px solid var(--ui-line); gap: 10px; }
+body .preview-side:not(.preview-expanded) #preview-scroll { flex: 1; min-height: 0; max-height: none; overflow: auto; background: #eaeef2; }
+body .preview-side .preview-bottom { flex-shrink: 0; padding-top: 10px; }
+body .preview-side .preview-bottom > div { display: flex; flex-wrap: wrap; gap: 6px; }
+body .preview-side .preview-bottom button { flex: 1; white-space: nowrap; }
+body .preview-side #download { background: #1f883d; border-color: #1a7f37; }
+body .preview-quick-actions span { display: none; }
+body .preview-side #image-status { margin-top: 2px; }
+body .workspace-step { display: none; }
+
+/* One link heading, followed by actions, maintenance and editor tabs. */
+body .page-heading { gap: 8px; margin: 0 0 10px; }
+body .page-heading h1 { font-size: 18px; color: var(--ui-ink); }
+body.continuous-mode .page-heading > div:first-child { display: none; }
+body.continuous-mode .page-heading { float: right; margin: 0 0 6px 10px; }
+body .heading-actions { max-width: none; gap: 6px; }
+body .main .product-panel { padding: 0; margin: 0 0 12px; border: 0; background: none; border-radius: 0; box-shadow: none; }
+body .product-heading { display: block; }
+body .product-heading strong { display: block; font-size: 18px; line-height: 28px; color: var(--ui-ink); }
+body .product-heading small { font-size: 11px; margin-top: 3px; line-height: 18px; color: var(--ui-muted); }
+body .product-actions { gap: 6px; margin-top: 10px; }
+body .main .maintenance-tools { margin: 0 0 10px; padding: 0; border: 0; background: none; clear: both; }
+body .main .maintenance-tools > summary { padding: 7px 10px; font-size: 12px; color: var(--ui-ink); background: #f6f8fa; border: 1px solid var(--ui-line); border-radius: 6px; }
+body .main .maintenance-tools > .main-actions { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0 0; margin: 0; }
+body .main-actions button { white-space: nowrap; padding-inline: 9px; }
+body .main > .tabs { position: static; display: flex; flex-wrap: nowrap; overflow-x: auto; flex-shrink: 0; gap: 0; padding: 0; margin: 0; background: none; border: 0; border-bottom: 1px solid var(--ui-line); border-radius: 0; }
+body .main > .tabs button { flex: 0 0 auto; min-height: 36px; padding: 8px 12px; color: var(--ui-muted); background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; }
+body .main > .tabs button.active { color: var(--ui-ink); border-bottom-color: #fd8c73; background: none; box-shadow: none; }
+body .main > .editor { margin-top: 12px; }
+body.continuous-mode .identity, body.continuous-mode #cost-summary, body.continuous-mode #editor, body.continuous-mode #sample-note { display: none !important; }
+body.continuous-mode .main { display: flex; flex-direction: column; overflow: hidden; }
+body.continuous-mode .main > * { flex-shrink: 0; }
+body.continuous-mode .page-heading { position: absolute; right: 16px; top: 16px; z-index: 2; }
+body.continuous-mode #product-panel .product-heading { padding-right: 270px; }
+body.continuous-mode #continuous-workbench { flex: 1; min-height: 0; }
+#continuous-workbench { min-width: 0; max-width: 100%; }
+#continuous-workbench[hidden] { display: none !important; }
+.reui-continuous { height: 100%; font-family: var(--font-sans),"Microsoft YaHei",sans-serif; }
+.continuous-sheet { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border: 1px solid var(--ui-line); border-radius: 6px; }
+.continuous-sheet-content { width: 100%; min-width: 100%; }
+.continuous-config-heading { position: sticky; left: 0; width: min(var(--sheet-visible-width, 100%), 100%); }
+.continuous-config-heading .config-finance { display: grid; grid-template-columns: 158px repeat(4,minmax(75px,1fr)); align-items: center; gap: 14px; }
+.continuous-config-heading .config-identity { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.continuous-config-heading .config-title { flex: 1; min-width: 100px; }
+.continuous-config-heading .config-version { width: 110px; }
+
+/* Navigation and legacy shell surfaces share neutral tokens. */
+.reui-rail { position: fixed; inset: 0 auto 0 0; width: 64px; z-index: 30; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; background: #24292f; color: #fff; }
+.reui-rail strong { font-size: 24px; line-height: 28px; margin-bottom: 18px; }
+.reui-rail a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 52px; min-height: 58px; border-radius: 6px; color: #b6c2cf; font-size: 11px; text-decoration: none; cursor: pointer; }
+.reui-rail a:hover, .reui-rail a[aria-current] { background: #39424e; color: #fff; }
+.reui-rail svg { width: 19px; height: 19px; }
+body .sidebar .shop { padding-bottom: 0; margin-bottom: 10px; }
+body .sidebar .shop-brand { display: none; }
+body .sidebar .shop > div { width: 100%; }
+body .sidebar .sidebar-list-heading { margin-top: 12px; }
+body .sidebar .config-item { min-height: 50px; padding: 7px 6px; }
+body .sidebar .config-item.active { background: #ddf4ff; border-color: #b6e3ff; box-shadow: inset 3px 0 0 #0969da; }
+body .sidebar .config-item.active strong { color: #0550ae; }
+body .sidebar .nav-section { margin-top: 8px; }
+body button:not([data-slot]), body select:not([data-slot]), body input:not([data-slot]):not([type=checkbox]):not([type=radio]), body textarea:not([data-slot]) { border-color: var(--ui-line); color: var(--ui-ink); }
+body button.primary:not([data-slot]) { background: #1f883d; border-color: #1a7f37; color: #fff; }
+body button:not([data-slot]):hover:enabled { background: #f3f4f6; color: var(--ui-ink); }
+body button.primary:not([data-slot]):hover:enabled { background: #1a7f37; color: #fff; }
+body .sidebar #new-product { color: var(--ui-ink); border-color: var(--ui-line); background: #f6f8fa; }
+body .preview-side .preview-head h2 { color: var(--ui-ink); }
+body .dialog-title { border-color: var(--ui-line); }
+/* Tailwind preflight clears the browser's auto dialog margins. Restore modal
+   centering explicitly; the color picker keeps its pointer-anchored position. */
+body dialog:not(.color-picker-dialog) { position: fixed; inset: 0; margin: auto; }
+body #dialog { border: 1px solid var(--ui-line); border-radius: 8px; }
+body #dialog::backdrop { background: #1f232866; backdrop-filter: none; }
+body #dialog > form { padding: 16px 20px 0; }
+body #dialog-body { padding: 16px 20px 20px; }
+body #dialog .dialog-title { padding-bottom: 12px; }
+body #dialog .dialog-title h2 { font-size: 15px; font-weight: 600; }
+body .gallery-card { border-radius: 6px; }
+body .gallery-card.selected { border-color: var(--ui-blue); box-shadow: 0 0 0 1px var(--ui-blue); }
+body .gallery-card-open small, body .gallery-search, body #gallery-count,
+body .gallery-path, body .gallery-empty { color: var(--ui-muted); }
+body .source-item.active { border-color: #b6e3ff; background: var(--ui-soft); }
+
+/* Native host navigation lives in this toolbar, not a second header. */
+#desktop-host-actions:empty { display: none; }
+#desktop-host-actions .app-header { display: block; padding: 0; height: auto; border: 0; background: none; }
+#desktop-host-actions .app-header > div, #desktop-host-actions .app-header > nav, #desktop-host-actions .sandbox-label { display: none; }
+#desktop-host-actions .app-more { position: relative; margin: 0; padding: 0; border: 0; }
+#desktop-host-actions .app-more > summary { list-style: none; padding: 6px 10px; border: 1px solid var(--ui-line); border-radius: 6px; font-size: 12px; cursor: pointer; }
+#desktop-host-actions .app-more-menu { position: absolute; z-index: 40; right: 0; top: 38px; width: 180px; padding: 6px; border: 1px solid var(--ui-line); border-radius: 6px; background: #fff; box-shadow: 0 8px 24px #1f232826; }
+#desktop-host-actions .app-more-menu button { display: flex; width: 100%; justify-content: flex-start; margin-bottom: 4px; }
+#preview-close { display: none; }
+body.preview-collapsed .workspace { grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
+body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
+@media (min-width: 1800px) { :root { --sidebar-w: 238px; --preview-w: 310px; } }
+@media (max-width: 1279px) {
+  #preview-close { display: inline-block; }
+  :root { --sidebar-w: 200px; --preview-w: 260px; }
+  body .workspace { grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
+  body .workspace > .preview-side:not(.preview-expanded) { position: absolute; top: 0; right: 0; bottom: 0; width: 300px; z-index: 15; box-shadow: -12px 0 30px #1f23281a; }
+  body .topbar .brand span { display: none; }
+  body .main { padding: 12px; }
+}
+@media (max-width: 900px) {
+  :root { --sidebar-w: 180px; }
+  body .topbar .brand { display: none; }
+  body.continuous-mode .page-heading { position: static; align-self: flex-end; margin-bottom: 6px; }
+  body.continuous-mode #product-panel .product-heading { padding-right: 0; }
+  body .topbar #save-status { max-width: 110px; }
+}

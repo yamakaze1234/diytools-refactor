@@ -3,11 +3,17 @@
 /** 绑定工作台分隔条与尺寸恢复，返回界面需要的布局控制。 */
 export function mountWorkspaceResize(workspace){
  const sidebar=workspace.querySelector('.sidebar'),preview=workspace.querySelector('.preview-side');
- const storageKey='diy-workspace-widths-v1',minimum={left:200,main:420,right:320};
+ const storageKey='diy-workspace-widths-reui-v2',minimum={left:180,main:520,right:250};
  let saved=null,drag=null,frame=null,pendingX=null;
  try{const value=JSON.parse(localStorage.getItem(storageKey));if(value&&Number.isFinite(value.left)&&Number.isFinite(value.right))saved=value;}catch{}
  const handles=['left','right'].map(side=>{const el=document.createElement('div');el.className='workspace-resizer';el.dataset.resizeColumn=side;el.tabIndex=0;el.setAttribute('role','separator');el.setAttribute('aria-orientation','vertical');el.setAttribute('aria-label',side==='left'?'调整商品列表与编辑区宽度':'调整编辑区与图片预览宽度');el.title='左右拖动调整宽度；双击恢复默认';workspace.append(el);return el;});
- const enabled=()=>innerWidth>1180&&!preview.classList.contains('hidden')&&!preview.classList.contains('preview-expanded');
+ const previewToggle=document.querySelector('#preview-toggle'),narrow=matchMedia('(max-width:1279px)');
+ let previewPreference=null;
+ const syncPreview=(scheduleLayout=true)=>{const collapsed=previewPreference??narrow.matches;document.body.classList.toggle('preview-collapsed',collapsed);if(previewToggle){previewToggle.textContent=collapsed?'展开预览':'收起预览';previewToggle.setAttribute('aria-expanded',String(!collapsed));}if(scheduleLayout)schedule();};
+ if(previewToggle)previewToggle.onclick=()=>{previewPreference=!document.body.classList.contains('preview-collapsed');syncPreview();};
+ const previewClose=document.querySelector('#preview-close');if(previewClose)previewClose.onclick=()=>{previewPreference=true;syncPreview();};
+ narrow.addEventListener('change',()=>{previewPreference=null;syncPreview();});
+ const enabled=()=>innerWidth>=1280&&!document.body.classList.contains('preview-collapsed')&&!preview.classList.contains('hidden')&&!preview.classList.contains('preview-expanded');
  function fit(value){
   const width=workspace.clientWidth;
   const left=Math.max(minimum.left,Math.min(value.left,width-minimum.main-minimum.right));
@@ -40,5 +46,5 @@ export function mountWorkspaceResize(workspace){
  }
  window.addEventListener('blur',()=>finish(true));window.addEventListener('resize',()=>{finish(true);schedule();});
  new ResizeObserver(schedule).observe(workspace);new MutationObserver(schedule).observe(preview,{attributes:true,attributeFilter:['class']});
- layout();return{reset};
+ syncPreview(false);layout();return{reset};
 }

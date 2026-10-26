@@ -1,3 +1,7 @@
+import { createPortal } from 'react-dom';
+import WorkbenchThemeToggle from './WorkbenchThemeToggle';
+import {Button} from '@/components/ui/button';
+import './reui.css';
 import DiagnosticExport from './DiagnosticExport';
 /** 桌面 React 宿主：组织启动登录、工作台导航和更新流程，统一阻止未完成保存时的切换。 */
 import { useEffect, useRef, useState } from "react";
@@ -19,6 +23,7 @@ export default function App() {
   const [login, setLogin] = useState(() => initialStartupLoginState(desktop));
   const loginController = useRef<ReturnType<typeof createStartupLoginController> | null>(null);
   const [page, setPage] = useState<Page>("workbench");
+  const [headerTarget, setHeaderTarget] = useState<HTMLElement|null>(null);
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState("");
   const [updateOpen, setUpdateOpen] = useState(false);
@@ -62,11 +67,12 @@ export default function App() {
     onRetry={() => loginController.current?.retry() ?? Promise.resolve()}
     onChooseData={source => loginController.current?.chooseData(source) ?? Promise.resolve()}
     onLogout={() => loginController.current?.logout() ?? Promise.resolve()} />;
+  const hostHeader = <header ref={header} inert={updateFrozen} className="app-header"><div><strong>DIY Tools</strong><span>配置工作台</span></div><nav aria-label="主导航"><Button type="button" variant="outline" className={page === "workbench" ? "active" : ""} disabled={dirty && page !== "workbench"} onClick={() => navigate("workbench")}>配置工作台</Button></nav><span className="sandbox-label">{login.localOnly ? '本机保存' : '团队工作区'}</span><WorkbenchThemeToggle/><details className="app-more"><summary>更多</summary><div className="app-more-menu"><Button type="button" variant="outline" onClick={event => { setUpdateOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button><DiagnosticExport /></div></details></header>;
   return <main className={`app-shell ${page === "workbench" ? "app-shell-workbench" : ""}`}>
-    <header ref={header} inert={updateFrozen} className="app-header"><div><strong>DIY Tools</strong><span>本地测试版</span></div><nav aria-label="主导航"><button className={page === "workbench" ? "active" : ""} disabled={dirty && page !== "workbench"} onClick={() => navigate("workbench")}>配置工作台</button></nav><span className="sandbox-label">{login.localOnly ? '本机保存' : '独立本地数据'}</span><details className="app-more"><summary>更多</summary><div className="app-more-menu"><button className={page === "migration" ? "active" : ""} disabled={dirty && page !== "migration"} onClick={event => { navigate("migration"); event.currentTarget.closest('details')?.removeAttribute('open'); }}>迁移记录</button><button className={page === "erp" ? "active" : ""} disabled={dirty && page !== "erp"} onClick={event => { navigate("erp"); event.currentTarget.closest('details')?.removeAttribute('open'); }}>ERP 环境</button><button onClick={event => { setUpdateOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</button><DiagnosticExport /></div></details></header>
+    {page === "workbench" && headerTarget ? createPortal(hostHeader, headerTarget) : hostHeader}
     {Boolean(login.migrationMissingImages) && <p className="notice" role="status">旧资料中有 {login.migrationMissingImages} 张原图未找到，配置已保留。云端同步将尝试补齐，仍缺失时请重新选择原图。</p>}
-    {notice && <p className="notice" role="alert">{notice}<button className="text-button" onClick={() => setNotice("")}>知道了</button></p>}
-    <div ref={content} inert={updateFrozen} className="app-content">{page === "workbench" ? <LegacyWorkbench onDirty={setDirty} /> : page === "configs" ? <ConfigWorkspace onDirty={setDirty} /> : page === "migration" ? <LegacyMigration onDirty={setDirty} /> : <ErpEnvironment />}</div>
+    {notice && <p className="notice" role="alert">{notice}<Button type="button" variant="outline" className="text-button" onClick={() => setNotice("")}>知道了</Button></p>}
+    <div ref={content} inert={updateFrozen} className="app-content">{page === "workbench" ? <LegacyWorkbench onDirty={setDirty} onHeaderTarget={setHeaderTarget} /> : page === "configs" ? <ConfigWorkspace onDirty={setDirty} /> : page === "migration" ? <LegacyMigration onDirty={setDirty} /> : <ErpEnvironment />}</div>
     <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} dirty={page !== "workbench" && dirty} onFreeze={freezeForUpdate} />
   </main>;
 }

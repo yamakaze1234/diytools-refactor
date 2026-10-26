@@ -38,7 +38,7 @@ async function fixture(onPatch,count=3){
  const state=markPartialWorkspace(await normalizeWorkspaceStateAsync({...metadata,revision,configs:[]}));
  const context={...scope,request,lazyWorkspace,state,acceptedState:structuredClone(state),fullWorkspace:false,dirty:false,conflict:false,
   createLazyWorkspace,markPartialWorkspace,planCompactRefresh,sameWorkspaceMetadata,prepareWorkspaceState,baseCatalog:[],workspaceLoad:null,activationGeneration:0,fullActionBusy:0,
-  window:{},document:{activeElement:null},imageRecords:new Map(),selected:new Set(),renderList(){},
+  window:{},document:{activeElement:null},imageRecords:new Map(),selected:new Set(),renderList(){},tab:'parts',continuousWorkbench:null,
   changeCounter:0,savePromise:null,batchPromise:null,batchPending:null,ordinaryPending:null,history:[],redoHistory:[],catalog:[],changed:{message:'编辑配置'},operator:'tester',
   normalizeWorkspaceStateAsync,createSourceIndex,bindSources,alignDisplaySourceNames,normalizeProducts,posterModules,assertLoadedChanges,
   cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,applySavedReceiptDraft,sameEditingState,sourceCatalog,historySnapshotBytes,compactConfigHistory,isConfigHistorySnapshot,
@@ -47,6 +47,7 @@ async function fixture(onPatch,count=3){
   captureSaveSnapshot(state,base){const result=scope.captureSaveSnapshot(state,base);captures.push(scope.saveSnapshotIds(result));return result;},
   $:id=>{if(id==='#cloud-close')return null;if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id);}};
  context.loadedIds=()=>context.state.configs.map(row=>row.id);context.current=()=>context.state.configs.find(row=>row.id===context.active&&!row.deletedAt);
+ context.available=()=>context.state.configs.filter(row=>!row.deletedAt&&row.shopId===(context.current()?.shopId||'intel'));
  vm.runInNewContext(implementation+'\nglobalThis.runSave=save;globalThis.load=loadDetail;globalThis.refresh=refreshCompactWorkspace;',context);
  await context.load('c0');
  return {context,requests,documents,captures,metadata,advance:()=>++revision,patches:()=>requests.filter(row=>row.url==='/api/configs/patch').map(row=>row.payload)};
@@ -128,7 +129,7 @@ test('repeated clicks while a new config loads share its request and detail prep
 
 test('navigation between loaded configs after a batch only renders the selected detail',async()=>{
  const rows=[{id:'one',shopId:'intel',productId:'link'},{id:'two',shopId:'intel',productId:'link'}],rendered=[];
- const c={activationGeneration:0,fullWorkspace:true,active:'one',selected:new Set(),collapsedProducts:new Set(['link']),posterEditor:{clear(){}},
+ const c={$:()=>({}),capturePanelTransition:()=>()=>{},activationGeneration:0,fullWorkspace:true,active:'one',selected:new Set(),collapsedProducts:new Set(['link']),posterEditor:{clear(){}},
   current:()=>rows.find(row=>row.id===c.active),available:()=>rows,renderCompact:ids=>rendered.push(Array.from(ids)),renderAll(){throw Error('navigation must not normalize every configuration');},pruneDetails(){},toast(message){throw Error(message);}};
  vm.runInNewContext(extract('async function activate(','function renderShop('),c);
  await c.activate('two');assert.equal(c.current(),rows[1]);assert.deepEqual(rendered,[['two']]);

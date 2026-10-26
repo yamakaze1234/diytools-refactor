@@ -7,7 +7,7 @@ import {createCloudWorker} from './cloud-worker-client.js';
 import {mountCloudConflicts} from './cloud-conflict-view.js';
 
 /** 安装登录后同步调度和手动操作入口，将远端回读交给宿主 receive。 */
-export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMember}){
+export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMember,renderPanel}){
  const $=selector=>document.querySelector(selector),button=$('#workspace-sync'),label=$('#workspace-sync-status'),operator=$('#operator-open');
  const history=bindVersionHistory({flush,receive,openDialog,esc,toast,runMutation}),legacy=bindLegacyHistory({flush,receive,openDialog,esc,toast,runMutation});
  let available=true,phase='',timer,maintenanceTimer,lastSyncedAt=null,wasRunning=false,leaving=false,cleaning=false;
@@ -175,6 +175,9 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
    <p class="cloud-background-note">同步在后台进行，可关闭此窗口继续编辑。</p>
    <details class="cloud-tools"><summary>历史、缓存与诊断</summary><p class="hint">本机缓存每 3 天自动清理；还原和清理需等待本轮同步完成。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-diagnostics">导出诊断日志</button><button id="cloud-diagnostic-text">查看诊断文本</button></div></details>
    <div class="cloud-footer">${!localOnly(view)&&available&&view.session.authenticated?'<button id="cloud-logout" class="cloud-signout">退出登录</button>':'<span></span>'}<button id="cloud-close">关闭</button></div></section>`);
+  // Mount once per open, before binding the existing handlers. Status leaves and
+  // native control properties below remain owned by render(view), not React state.
+  renderPanel?.({mode:localOnly(view)?'local':!available?'unavailable':!view.session.authenticated?'expired':'authenticated',shops,selectedShops:[...selectedShops],memberName:member?.name||'成员',automatic:view.automatic,conflicts:conflictCount(view)});
   $('#local-cache').onclick=guard(openCache);$('#offline-history').onclick=history.open;$('#offline-restore').onclick=history.restore;$('#offline-legacy-history').onclick=legacy.open;$('#cloud-close').onclick=close;
   // 诊断导出独立于同步/保存互斥，下载卡住时仍可点击；取消不显示成功。
   $('#cloud-diagnostic-text').onclick=()=>{const text=window.workbenchDiagnosticText?.();if(!text){toast('诊断文本需要桌面程序');return;}openDialog('诊断文本','<p>可全选复制以下信息。不含账号与配置内容，无需等待本机保存或导出完成。</p><textarea id="diagnostic-text" aria-label="诊断文本" readonly rows="14" style="width:100%;box-sizing:border-box"></textarea>');const field=$('#diagnostic-text');field.value=text;field.focus();field.select();};

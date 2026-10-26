@@ -9,7 +9,7 @@
 .topbar .erp-sync-controls, .topbar .workspace-sync-controls { border: 0; padding: 0; min-width: 0; }
 .topbar button { min-height: 30px; padding: 5px 10px; }
 .topbar #save-status { max-width: 210px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-right: 2px; }
-.topbar #operator-open { border-color: transparent; color: var(--muted); }
+.topbar #operator-open { border-color: transparent; color: var(--legacy-muted); }
 .workspace-step { display: none; }
 .main .page-heading { margin-bottom: 12px; }
 .main .page-heading h1 { font-size: 20px; margin: 5px 0; }
