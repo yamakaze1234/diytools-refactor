@@ -345,7 +345,7 @@
   html[data-workbench-design] .workspace > .main { background: var(--ef-paper) !important; padding: 30px 20px 12px !important; }
   html[data-workbench-design] .workspace > .sidebar { padding: 23px 14px !important; }
   html[data-workbench-design] .workspace > .preview-side:not(.preview-expanded) { padding: 24px 16px 16px !important; gap: 13px !important; }
-  html[data-workbench-design] body.continuous-mode .page-heading { top: 32px; right: 20px; }
+  html[data-workbench-design] body.continuous-mode .page-heading { top: auto; right: auto; }
   html[data-workbench-design] .product-heading strong { font-size: 20px; line-height: 30px; }
   html[data-workbench-design] .product-heading small { margin-top: 8px; }
   html[data-workbench-design] .main .product-panel { background: transparent !important; margin-bottom: 18px; }
@@ -386,7 +386,7 @@
   html[data-workbench-design] .startup-login-mark span { background: var(--ef-ink) !important; border-radius: 0; }
   html[data-workbench-design] .startup-login-mark span:nth-child(2) { background: var(--ef-signal) !important; }
   @media(min-width:1800px) { :root[data-workbench-design] { --preview-w: 330px; } html[data-workbench-design] .workspace > .main { padding-inline: 26px !important; } }
-  @media(max-width:1279px) { html[data-workbench-design] .workspace > .main { padding: 22px 12px 8px !important; } html[data-workbench-design] body.continuous-mode .page-heading { top: 24px; right: 12px; } }
+  @media(max-width:1279px) { html[data-workbench-design] .workspace > .main { padding: 22px 12px 8px !important; } html[data-workbench-design] body.continuous-mode .page-heading { top: auto; right: auto; } }
 }
 
 /* 短时操作反馈：没有循环、逐行动画、常驻 will-change 或整页截图过渡。 */
@@ -522,7 +522,6 @@
  html[data-workbench-design] .continuous-view-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:10px 0; }
  html[data-workbench-design] .continuous-view-options { display:flex; align-items:center; flex-wrap:wrap; gap:4px; }
  html[data-workbench-design] .continuous-view-caption { color:var(--ef-ink-2); font-size:11px; margin-right:4px; }
- html[data-workbench-design] .continuous-diff-filter { border-left:1px solid var(--ef-rule); padding-left:10px; }
  html[data-workbench-design] .continuous-view-toggle { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:32px; padding:5px 10px; font-size:12px; line-height:20px; border:1px solid var(--ef-rule) !important; background:var(--ef-panel) !important; color:var(--ef-ink-2) !important; clip-path:none; }
  html[data-workbench-design] .continuous-view-toggle[aria-pressed=true] { background:var(--ef-chip) !important; color:var(--ef-ink) !important; border-bottom:2px solid var(--ef-trace) !important; padding-bottom:4px; }
  html[data-workbench-design] .continuous-view-mark { display:inline-flex; align-items:center; justify-content:center; width:15px; height:15px; font-size:12px; line-height:1; }
@@ -734,7 +733,7 @@
 /* 页签是 z-index:3 的 flex 子项，菜单必须连同父级提升，不能只提升浮层。 */
 body .main .page-heading:has(.action-menu[open]),
 body .main #product-panel:has(.action-menu[open]) { position:relative; z-index:20; }
-body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:absolute; }
+body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:relative; }
 
 
 /* 金额区：共享标签与数值基线，仅放大售价，分期采用轻量说明行。 */
@@ -864,4 +863,43 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:abso
 
 @layer endfield-theme {
  html[data-workbench-design] .continuous-row-actions > button[data-row-slot] {height:26px!important;min-height:26px!important;}
+}
+/* 图库与工作台共享主题变量，深浅切换时不保留独立配色。 */
+@layer workbench-interaction {
+ html[data-workbench-design] #dialog.case-gallery-dialog { --gallery-bg:var(--ef-paper); --gallery-panel:var(--ef-panel); --gallery-text:var(--ef-ink); --gallery-muted:var(--ef-ink-2); --gallery-line:var(--ef-rule); --gallery-accent:var(--ef-trace); --gallery-selected:var(--ef-chip); --gallery-hover:var(--ef-paper); background:var(--gallery-panel)!important; color:var(--gallery-text)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(.gallery-layout,#gallery-tree,#gallery-detail,.gallery-card,.gallery-card-footer,[data-slot=frame],[data-slot=frame-panel]) { background:var(--gallery-panel)!important; color:var(--gallery-text)!important; border-color:var(--gallery-line)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(button,summary) { clip-path:none!important; border-radius:5px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(#gallery-tree button,.gallery-card-open) { background:transparent!important; color:var(--gallery-text)!important; border-color:transparent!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(#gallery-tree button,.gallery-card-open):hover { background:var(--gallery-hover)!important; color:var(--gallery-text)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-tree button.active { background:var(--gallery-selected)!important; color:var(--gallery-accent)!important; box-shadow:inset 3px 0 var(--gallery-accent)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-card { border-radius:8px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-card.selected { border-color:var(--gallery-accent)!important; box-shadow:0 0 0 1px var(--gallery-accent)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(.gallery-card-open img,.gallery-detail-image) { background:var(--gallery-bg)!important; border-color:var(--gallery-line)!important; border-radius:5px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(.gallery-card strong,h3,[data-slot=frame-panel-title],.gallery-empty strong) { color:var(--gallery-text)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(p,small,.field,.gallery-search,#gallery-count,.gallery-card-footer,.gallery-path,.gallery-empty,.source-pagination) { color:var(--gallery-muted)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(input,select,textarea) { background:var(--gallery-panel)!important; color:var(--gallery-text)!important; border:1px solid var(--gallery-line)!important; border-radius:5px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog input::file-selector-button { border:0; border-right:1px solid var(--gallery-line); padding:6px 10px; margin-right:8px; background:var(--gallery-hover); color:var(--gallery-text); cursor:pointer; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(.gallery-toolbar,.gallery-detail-actions,.gallery-card-footer,.source-pagination) button { background:var(--gallery-hover)!important; color:var(--gallery-text)!important; border:1px solid var(--gallery-line)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(#gallery-new,#gallery-save,#gallery-pick,[data-gallery-use]) { background:var(--ef-signal)!important; color:var(--ef-on-signal)!important; border:1px solid var(--ef-signal)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-card-footer [data-slot=badge] { background:var(--gallery-bg)!important; color:var(--gallery-muted)!important; border-color:var(--gallery-line)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-confirm { background:var(--gallery-bg)!important; color:var(--gallery-text)!important; border-color:var(--gallery-line)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(#gallery-delete,#gallery-delete-yes) { color:var(--ef-danger)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog button:not(:disabled):hover { filter:brightness(.96); }
+ html[data-workbench-design] #dialog.case-gallery-dialog :is(button,input,summary):focus-visible { outline:2px solid var(--gallery-accent)!important; outline-offset:1px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-upload-status:not(:empty) { padding:9px 10px; border:1px solid var(--gallery-line); background:var(--gallery-bg)!important; color:var(--gallery-text)!important; line-height:1.6; overflow-wrap:anywhere; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-detail-form { display:flex!important; flex-direction:column!important; gap:8px!important; min-width:0; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-metadata-grid { display:grid!important; grid-template-columns:repeat(2,minmax(0,1fr))!important; gap:8px 10px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-name-field { grid-column:1/-1!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-detail .field { display:flex!important; flex-direction:column!important; align-items:stretch!important; gap:4px!important; min-width:0!important; margin:0!important; padding:0!important; font-size:12px!important; line-height:1.4!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-detail input { width:100%!important; min-width:0!important; height:32px!important; min-height:32px!important; padding:5px 8px!important; font-size:12px!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-detail input[type=file] { padding:0!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-upload-field small { font-size:10px!important; margin-left:4px; }
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-detail .gallery-detail-image { height:120px!important; margin:0!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-detail p { margin:0!important; font-size:12px!important; line-height:1.5!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-detail-actions { gap:6px!important; margin:0!important; padding-top:8px!important; border-top:1px solid var(--gallery-line)!important; }
+ html[data-workbench-design] #dialog.case-gallery-dialog .gallery-upload-status:empty { display:none!important; }
+}
+@layer workbench-interaction {
+ html[data-workbench-design] #dialog.case-gallery-dialog .dialog-title,
+ html[data-workbench-design] #dialog.case-gallery-dialog #gallery-tree :is(summary,details) { background:var(--gallery-panel)!important; color:var(--gallery-text)!important; border-color:var(--gallery-line)!important; }
 }

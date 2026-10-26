@@ -1,5 +1,6 @@
 /** 机箱图库界面：管理分类、上传与引用，选择模式向配置编辑器返回素材。 */
 import {rememberImage} from './image-cache.js';
+import {readImageFile} from './image-upload.js';
 import {galleryFields,galleryPath,filterGallery,galleryUsage} from './case-gallery-data.js';
 
 /** 根据 pick/append 模式打开图库；图片载入和业务保存沿用调用方提供的接口。 */
@@ -10,14 +11,14 @@ export function openCaseGallery(api,{pick=false,append=false}={}){
  const dialog=document.querySelector('#dialog'),root=document.querySelector('#gallery-grid'),$=selector=>dialog.querySelector(selector);
  dialog.classList.add('case-gallery-dialog');let page=0;const pageSize=36;let path=[],query='',trash=false,selected=null,draft=null,file=null,previewUrl=null,busy=false;const expanded=new Set();
  const controller=new AbortController();
- const release=()=>{if(previewUrl){URL.revokeObjectURL(previewUrl);previewUrl=null;}};
+ const release=()=>{if(previewUrl){if(previewUrl.startsWith('blob:'))URL.revokeObjectURL(previewUrl);previewUrl=null;}};
  dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();},{signal:controller.signal});
  dialog.addEventListener('close',()=>{release();dialog.classList.remove('case-gallery-dialog');controller.abort();},{once:true,signal:controller.signal});
  const live=()=>root.isConnected&&dialog.open;
- const report=message=>{if(live())$('#gallery-status').textContent=message;};
- const lock=value=>{busy=value;if(live())dialog.querySelectorAll('button,input,select').forEach(el=>el.disabled=value);};
+ const report=message=>{if(!live())return;$('#gallery-status').textContent=message;const inline=$('#gallery-upload-status');if(inline)inline.textContent=message;};
+ const lock=value=>{busy=value;if(live()){dialog.querySelectorAll('button,input,select').forEach(el=>el.disabled=value);const save=$('#gallery-save');if(save){save.textContent=value?'正在保存…':'保存图片';save.setAttribute('aria-busy',String(value));}}};
  const run=async action=>{if(busy)return;lock(true);try{await new Promise(resolve=>requestAnimationFrame(()=>setTimeout(resolve,0)));await action();}catch(error){report(error.message);toast(error.message);}finally{busy=false;dialog.querySelector('.close').disabled=false;if(live())lock(false);}};
- const resetDraft=()=>{release();draft=null;file=null;};
+ const resetDraft=()=>{release();draft=null;file=null;report('');};
  const getSelected=()=>getRows().find(row=>row.id===selected);
  function renderTree(){
   const rows=filterGallery(getRows(),{query,deleted:trash}),tree=$('#gallery-tree');tree.replaceChildren();
@@ -44,11 +45,19 @@ export function openCaseGallery(api,{pick=false,append=false}={}){
   const pane=$('#gallery-detail'),row=getSelected();
   api.release?.(pane);
   if(draft){
-   pane.innerHTML=`<h3>${draft.id?'编辑图片资料':'新增机箱图片'}</h3><p class="hint">分类分别填写，方便多级查找。</p>${!draft.id?'<label class="field">上传图片<input id="gallery-file" type="file" accept="image/png,image/jpeg"></label><small class="hint">PNG / JPG，最大 24MB</small>':''}<img id="gallery-upload-preview" class="gallery-detail-image ${draft.url||previewUrl?'':'hidden'}" alt="待保存图片预览" ${draft.url||previewUrl?`src="${esc(globalThis.resolveWorkbenchAsset?.(previewUrl||draft.url)||previewUrl||draft.url)}"`:''}><label class="field">图片名称<input id="gallery-name" maxlength="160" value="${esc(draft.name||'')}" placeholder="例如：X400CG 黑色进阶主图"></label>${galleryFields.map((field,i)=>`<label class="field">${['品牌','型号','颜色','版本'][i]}<input data-gallery-field="${field}" maxlength="80" value="${esc(draft[field]||'')}" placeholder="${['乔思伯','X400CG','黑色 / 白色','进阶 / 豪华 / 通用'][i]}" list="gallery-values-${field}"><datalist id="gallery-values-${field}">${[...new Set(getRows().filter(r=>!r.deletedAt).map(r=>r[field]).filter(Boolean))].map(value=>`<option value="${esc(value)}"></option>`).join('')}</datalist></label>`).join('')}<div class="gallery-detail-actions"><button id="gallery-save" class="primary">保存图片</button><button id="gallery-cancel">取消</button></div>`;
-   api.renderRegion?.(pane,'case-gallery-detail',{draft,fields:galleryFields,previewUrl:globalThis.resolveWorkbenchAsset?.(previewUrl||draft.url)||previewUrl||draft.url,values:Object.fromEntries(galleryFields.map(field=>[field,[...new Set(getRows().filter(r=>!r.deletedAt).map(r=>r[field]).filter(Boolean))]]))});
-   if($('#gallery-file'))$('#gallery-file').onchange=event=>{file=event.target.files[0]||null;release();if(file){previewUrl=URL.createObjectURL(file);$('#gallery-upload-preview').src=previewUrl;$('#gallery-upload-preview').classList.remove('hidden');if(!$('#gallery-name').value)$('#gallery-name').value=file.name.replace(/\.[^.]+$/,'');}else $('#gallery-upload-preview').classList.add('hidden');};
+   pane.innerHTML=`<h3>${draft.id?'编辑图片资料':'新增机箱图片'}</h3><div class="gallery-detail-form">${!draft.id?'<label class="field gallery-upload-field"><span>上传图片 <small>PNG / JPG · 最大 24MB</small></span><input id="gallery-file" type="file" accept="image/png,image/jpeg"></label>':''}<img id="gallery-upload-preview" class="gallery-detail-image ${draft.url||previewUrl?'':'hidden'}" alt="待保存图片预览" ${draft.url||previewUrl?`src="${esc(globalThis.resolveWorkbenchAsset?.(previewUrl||draft.url)||previewUrl||draft.url)}"`:''}><div class="gallery-metadata-grid"><label class="field gallery-name-field">图片名称<input id="gallery-name" maxlength="160" value="${esc(draft.name||'')}" placeholder="例如：X400CG 黑色进阶主图"></label>${galleryFields.map((field,i)=>`<label class="field">${['品牌','型号','颜色','版本'][i]}<input data-gallery-field="${field}" maxlength="80" value="${esc(draft[field]||'')}" placeholder="${['乔思伯','X400CG','黑色 / 白色','进阶 / 豪华 / 通用'][i]}" list="gallery-values-${field}"><datalist id="gallery-values-${field}">${[...new Set(getRows().filter(r=>!r.deletedAt).map(r=>r[field]).filter(Boolean))].map(value=>`<option value="${esc(value)}"></option>`).join('')}</datalist></label>`).join('')}</div><p id="gallery-upload-status" class="gallery-upload-status" role="status" aria-live="polite"></p><div class="gallery-detail-actions"><button id="gallery-save" class="primary">保存图片</button><button id="gallery-cancel">取消</button></div></div>`;
+   api.renderRegion?.(pane,'case-gallery-detail',{draft,fields:galleryFields,previewUrl:(previewUrl||draft.url)?(globalThis.resolveWorkbenchAsset?.(previewUrl||draft.url)||previewUrl||draft.url):'',values:Object.fromEntries(galleryFields.map(field=>[field,[...new Set(getRows().filter(r=>!r.deletedAt).map(r=>r[field]).filter(Boolean))]]))});
+   if($('#gallery-file'))$('#gallery-file').onchange=async event=>{
+    const chosen=event.target.files[0]||null;file=chosen;release();const preview=$('#gallery-upload-preview');preview.classList.add('hidden');
+    if(!chosen){report('请选择一张机箱图片');return;}
+    report('正在读取图片预览…');
+    try{const {data}=await readImageFile(chosen);if(!live()||file!==chosen||!preview.isConnected)return;previewUrl=data;preview.src=data;preview.classList.remove('hidden');if(!$('#gallery-name').value)$('#gallery-name').value=chosen.name.replace(/\.[^.]+$/,'');report('已选择 '+chosen.name+'，填写分类后点击保存图片');}
+    catch(error){if(!live()||file!==chosen||!preview.isConnected)return;file=null;event.target.value='';report(error.message);}
+   };
    $('#gallery-cancel').onclick=()=>{resetDraft();renderDetail();};
+   $('#gallery-upload-preview').onerror=()=>report('图片预览失败，请重新选择有效的 PNG 或 JPG 图片');
    $('#gallery-save').onclick=()=>run(async()=>{
+    file=$('#gallery-file')?.files?.[0]||file;
     const name=$('#gallery-name').value.trim(),metadata=Object.fromEntries([...pane.querySelectorAll('[data-gallery-field]')].map(input=>[input.dataset.galleryField,input.value.trim()]));
     if(!name)throw Error('请填写图片名称');if(!metadata.brand||!metadata.model||!metadata.color||!metadata.edition)throw Error('请填写品牌、型号、颜色和版本；无区分的版本可填“通用”');
     if(!draft.id&&!file)throw Error('请选择一张机箱图片');

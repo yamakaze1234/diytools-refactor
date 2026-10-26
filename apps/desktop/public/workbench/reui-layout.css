@@ -38,13 +38,13 @@ body .workspace-step { display: none; }
 body .page-heading { gap: 8px; margin: 0 0 10px; }
 body .page-heading h1 { font-size: 18px; color: var(--ui-ink); }
 body.continuous-mode .page-heading > div:first-child { display: none; }
-body.continuous-mode .page-heading { float: right; margin: 0 0 6px 10px; }
+body.continuous-mode .page-heading { float: none; margin: 0 0 6px; }
 body .heading-actions { max-width: none; gap: 6px; }
 body .main .product-panel { padding: 0; margin: 0 0 12px; border: 0; background: none; border-radius: 0; box-shadow: none; }
 body .product-heading { display: block; }
 body .product-heading strong { display: block; font-size: 18px; line-height: 28px; color: var(--ui-ink); }
 body .product-heading small { font-size: 11px; margin-top: 3px; line-height: 18px; color: var(--ui-muted); }
-body .product-actions { gap: 6px; margin-top: 10px; }
+body .product-actions { gap: 6px; margin-top: 10px; flex-wrap: wrap; }
 body .main .maintenance-tools { margin: 0 0 10px; padding: 0; border: 0; background: none; clear: both; }
 body .main .maintenance-tools > summary { padding: 7px 10px; font-size: 12px; color: var(--ui-ink); background: #f6f8fa; border: 1px solid var(--ui-line); border-radius: 6px; }
 body .main .maintenance-tools > .main-actions { display: flex; gap: 6px; flex-wrap: wrap; padding: 8px 0 0; margin: 0; }
@@ -56,8 +56,9 @@ body .main > .editor { margin-top: 12px; }
 body.continuous-mode .identity, body.continuous-mode #cost-summary, body.continuous-mode #editor, body.continuous-mode #sample-note { display: none !important; }
 body.continuous-mode .main { display: flex; flex-direction: column; overflow: hidden; }
 body.continuous-mode .main > * { flex-shrink: 0; }
-body.continuous-mode .page-heading { position: absolute; right: 16px; top: 16px; z-index: 2; }
-body.continuous-mode #product-panel .product-heading { padding-right: 270px; }
+/* 操作栏参与布局，避免绝对定位在滚动与窄窗口中被裁切。 */
+body.continuous-mode .page-heading { position: relative; align-self: stretch; justify-content: flex-end; top: auto; right: auto; z-index: 2; }
+body.continuous-mode #product-panel .product-heading { padding-right: 0; }
 body.continuous-mode #continuous-workbench { flex: 1; min-height: 0; }
 #continuous-workbench { min-width: 0; max-width: 100%; }
 #continuous-workbench[hidden] { display: none !important; }
@@ -129,7 +130,7 @@ body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
 @media (max-width: 900px) {
   :root { --sidebar-w: 180px; }
   body .topbar .brand { display: none; }
-  body.continuous-mode .page-heading { position: static; align-self: flex-end; margin-bottom: 6px; }
+  body.continuous-mode .page-heading { align-self: stretch; margin-bottom: 6px; }
   body.continuous-mode #product-panel .product-heading { padding-right: 0; }
   body .topbar #save-status { max-width: 110px; }
 }
