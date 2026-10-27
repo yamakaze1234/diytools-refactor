@@ -15,7 +15,9 @@ use std::{
 use uuid::Uuid;
 
 const MAX_JOBS: usize = 1000;
-const MAX_BYTES: usize = 32 * 1024 * 1024;
+// 批量配置计划包含完整前后快照及导图上下文，32MiB 无法容纳真实批次的完成回执。
+// 仍保留有界容量和全部幂等回执，不以删除旧任务绕过限制。
+const MAX_BYTES: usize = 256 * 1024 * 1024;
 const UI_LEASE: Duration = Duration::from_secs(30);
 const PLAN_TTL_MS: u64 = 30 * 60 * 1000;
 type Result<T> = std::result::Result<T, AgentError>;
@@ -917,7 +919,7 @@ fn persist(path: &Path, journal: &Journal) -> Result<()> {
     let bytes =
         serde_json::to_vec(journal).map_err(|e| error("JOBS_PERSIST_FAILED", e.to_string()))?;
     if bytes.len() > MAX_BYTES {
-        return Err(error("JOBS_CAPACITY", "任务记录超过 32MiB；未丢弃任何回执"));
+        return Err(error("JOBS_CAPACITY", "任务记录超过 256MiB；未丢弃任何回执"));
     }
     let parent = path.parent().unwrap();
     fs::create_dir_all(parent).map_err(io_error)?;

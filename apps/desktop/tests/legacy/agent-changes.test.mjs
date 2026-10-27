@@ -42,7 +42,7 @@ test('替换复用来源、成本与加购描述选择，更新 BOM 并解除旧
  const state=fixture();state.configs[0].parts[0].displayName='旧手工名';state.costSource=[{goodsId:'002',name:'ERP别名',erp:300,tax:310}];
  const plan=buildAgentPlan(state,request({type:'replace',sourceId:'new',quantity:3})),after=plan.changes[0].after;
  const expected=copy(state.configs[0]);ensureActualParts(expected);replaceSourcePart(expected,0,plan.sources[0]);expected.parts[0].qty=3;syncActualParts(expected,state.configs[0].parts);
- assert.deepEqual(after,expected);assert.equal(after.parts[0].displayName,undefined);assert.equal(after.actualParts[0].goodsId,'002');
+ assert.deepEqual(after,JSON.parse(JSON.stringify(expected)));assert.equal(after.parts[0].displayName,undefined);assert.equal(after.actualParts[0].goodsId,'002');
  assert.equal(after.actualParts[0].tax,310);assert.equal(after.actualParts[0].taxOverride,null);assert.equal(after.parts[0].upgrade,'新说明');
  assert.equal(after.parts[0].sourceFollow.name.mode,'follow');
 });
@@ -98,4 +98,18 @@ test('no-op 目标也冻结完整基线，旧店铺缺失字段仍使用 intel',
 test('虚拟特殊输出源沿用现有预设与零成本规则',()=>{
  const state=fixture(),plan=buildAgentPlan(state,request({type:'replace',sourceId:'special:intel:1'}));
  const after=plan.changes[0].after;assert.equal(after.parts[0].specialComponent,true);assert.equal(after.parts[0].goodsId,'');assert.equal(after.actualParts[0].tax,0);assert.equal(validateAgentPlan(state,plan),true);
+});
+
+test('真实 JSON 传递后替换计划仍可校验，空容量字段不产生伪冲突',()=>{
+ const state=fixture(),before=copy(state),plan=buildAgentPlan(state,request({type:'replace',sourceId:'new'}));
+ const transported=JSON.parse(JSON.stringify(plan));
+ assert.equal(validateAgentPlan(state,transported),true);
+ assert.deepEqual(state,before);
+ for(const mutate of [
+  p=>{p.changes[0].after.parts[0].goodsId='wrong';},
+  p=>{p.changes[0].after.parts[0].capacityOverrides=null;},
+  p=>{p.baselines[0].before.price=1;}
+ ]){const altered=copy(transported);mutate(altered);assert.throws(()=>validateAgentPlan(state,altered));}
+ const changed=copy(state);changed.configs[0].parts[0].upgrade='人工新说明';
+ assert.throws(()=>validateAgentPlan(changed,transported));
 });

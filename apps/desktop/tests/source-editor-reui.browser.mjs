@@ -22,7 +22,8 @@ try {
  const {sourceAddon,sourceAddonFields}=await import('/workbench/addon-data.js');
  const renderer=createWorkbenchReactRenderer(),dialog=document.querySelector('#dialog'),body=document.querySelector('#dialog-body');
  const make=(id,goodsId,name,tax)=>({sourceId:id,shopId:'intel',goodsId,name,erp:tax-10,tax,upgrade:'',capacityOverrides:{},...sourceAddonFields(sourceAddon({}))});
- let state={configs:[],templates:[],sourceCatalog:[make('fixture-a','71001','隔离内存16GB',100),make('fixture-b','71002','隔离硬盘1TB',200)],costSource:[{goodsId:'71001',name:'隔离内存16GB',erp:90,tax:100,stockAvailable:10},{goodsId:'71002',name:'隔离硬盘1TB',erp:190,tax:200,stockAvailable:20}]};
+ const legacyChoice={id:'legacy-upgrade',goodsId:'',qty:1,priceCents:null,label:'历史加购说明',enabled:true};
+ let state={configs:[],templates:[],sourceCatalog:[make('fixture-a','71001','隔离内存16GB',100),{...make('fixture-b','71002','隔离硬盘1TB',200),capacityOverrides:null,addonText:'历史加购说明',addonChoices:[legacyChoice]},{...make('fixture-other-shop','71001','跨店内存16GB',100),shopId:'gigabyte',addonText:'历史加购说明',addonChoices:[legacyChoice]}],costSource:[{goodsId:'71001',name:'隔离内存16GB',erp:90,tax:100,stockAvailable:10},{goodsId:'71002',name:'隔离硬盘1TB',erp:190,tax:200,stockAvailable:20}]};
  const probe={writes:[],failNext:false,notices:[],state:()=>structuredClone(state)};window.sourceProbe=probe;
  function openDialog(title,markup){window.workbenchSourceEditor?.detachForDialog?.();renderer.release(body);body.innerHTML=markup;document.querySelector('#dialog-title').textContent=title;dialog.classList.remove('source-dialog');if(!dialog.open)dialog.showModal();}
  dialog.addEventListener('close',()=>{if(dialog.open)return;window.workbenchSourceEditor?.detachForDialog?.();renderer.release(body);});
@@ -34,6 +35,31 @@ try {
  await page.locator('#source-name').waitFor();assert.equal(await page.locator('#source-name').inputValue(),'隔离内存16GB');
  assert.equal(await page.locator('#source-save-all').getAttribute('data-slot'),'button');
  assert.equal(await page.locator('#source-id').getAttribute('data-slot'),'input');checks.push('real-renderer-controls');
+ const initialState=await page.evaluate(()=>window.sourceProbe.state());
+ assert.equal(await page.evaluate(()=>window.workbenchSourceEditor.hasPending()),false);
+ // 空容量对象来自已有资料；打开、放弃后都不能被误判为新修改。
+ await page.locator('#source-name').fill('应当放弃的名称');
+ await page.locator('#source-discard-all').click();
+ assert.equal(await page.locator('#source-name').inputValue(),'隔离内存16GB');
+ assert.equal(await page.evaluate(()=>window.workbenchSourceEditor.hasPending()),false,'放弃后空容量对象不得产生幽灵草稿');
+ assert.equal(await page.locator('#source-pending').innerText(),'暂无待保存修改');
+ await page.locator('button.close').click();await page.waitForFunction(()=>!document.querySelector('#dialog').open);
+ assert.equal(await page.evaluate(()=>window.sourceProbe.writes.length),0);
+ await page.evaluate(()=>window.sourceProbe.open());await page.locator('#source-name').waitFor();
+ checks.push('discard-empty-capacity-close-without-save');
+ // 历史加购缺少默认字段，包含另一店铺；仅打开不能产生待保存记录。
+ await page.locator('[data-source-id="fixture-b"]').click();
+ assert.equal(await page.evaluate(()=>window.workbenchSourceEditor.hasPending()),false);
+ await page.locator('[data-local-choices] [data-choice-label]').first().evaluate(el=>{el.value='待放弃的加购';el.dispatchEvent(new Event('input',{bubbles:true}));});
+ assert.equal(await page.evaluate(()=>window.workbenchSourceEditor.hasPending()),true);
+ await page.locator('button.close').click();assert.equal(await page.locator('#dialog').evaluate(el=>el.open),true);
+ for(let i=0;i<2;i++)await page.locator('#source-discard-all').click();
+ await page.locator('[data-source-id="fixture-b"]').click();
+ assert.equal(await page.locator('[data-local-choices] [data-choice-label]').first().inputValue(),'历史加购说明');
+ assert.equal(await page.evaluate(()=>window.workbenchSourceEditor.hasPending()),false);
+ assert.deepEqual(await page.evaluate(()=>window.sourceProbe.state()),initialState);
+ assert.equal(await page.evaluate(()=>window.sourceProbe.writes.length),0);
+ await page.locator('[data-source-id="fixture-a"]').click();checks.push('legacy-addons-real-edit-guard-repeat-discard-no-write');
  // Keep exact nodes across a shared-dialog replacement, including legacy addon/capacity subforms.
  await page.locator('#source-name').fill('未保存中文名称');await page.locator('#source-tax').fill('123.45');
  await page.locator('[data-common-note]').fill('未保存加购说明');

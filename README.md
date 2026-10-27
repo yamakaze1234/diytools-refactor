@@ -2,7 +2,7 @@
 
 面向 DIY 整机业务的 Windows 工作台。按店铺和商品链接集中维护配置、配件、库存与利润，批量更新说明，制作配置清单图和 SKU 图。
 
-**Windows x64 · 当前版本 0.2.31 · 解压即用**
+**Windows x64 · 当前版本 0.2.32 · 解压即用**
 
 连续表格直接编辑和复制配件；底部新增配件行，支持删除与撤销；自由编辑画布和属性分区显示。浅色、深色界面随时切换，多配置滚动、输入和换色响应已优化。
 
@@ -10,9 +10,9 @@
 
 | 下载入口 | 说明 |
 | --- | --- |
-| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.31/DIYTools-0.2.31-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
-| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.31/DIYTools-0.2.31-Windows-x64.zip) | 备用下载源 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.31) | 完整变化和下载附件 |
+| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.32/DIYTools-0.2.32-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
+| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.32/DIYTools-0.2.32-Windows-x64.zip) | 备用下载源 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.32) | 完整变化和下载附件 |
 
 1. 下载并完整解压到可写目录，不要直接在压缩包内运行。
 2. 无团队配置时使用本机模式；团队成员登录后，按提示下载资料或迁移旧数据。

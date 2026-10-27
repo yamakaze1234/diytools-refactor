@@ -8,6 +8,12 @@ import {suggestedName} from './legacy-names.js';
 import {syncPosterShortName} from './short-name-poster.js';
 
 const copy=value=>structuredClone(value);
+// 原生任务经 JSON 传递，预览时先移除对象中的 undefined；null 和实际字段值仍严格比较。
+function transportPlan(value){
+ if(Array.isArray(value))return value.map(transportPlan);
+ if(value&&typeof value==='object')return Object.fromEntries(Object.entries(value).filter(([,v])=>v!==undefined).map(([k,v])=>[k,transportPlan(v)]));
+ return value;
+}
 const fail=message=>{throw Error(message);};
 function object(value,allowed,label){
  if(!value||typeof value!=='object'||Array.isArray(value)||![Object.prototype,null].includes(Object.getPrototypeOf(value)))fail(`${label}必须为对象`);
@@ -102,7 +108,7 @@ export function buildAgentPlan(state,request){
   }
   if(!same(before,after))changes.push({id:before.id,productId:before.productId,name:before.name,product:before.product,before:copy(before),after,targets:copy(targets)});
  }
- return {baseRevision:state.revision,shopId:request.shopId,request:copy(request),changes,sources:source?[copy(source.effective)]:[],sourceBaselines:source?[copy(source.baseline)]:[],baselines,summary:{action:action.type,targetCount:request.targets.length,configCount:groups.size,changedConfigCount:changes.length}};
+ return transportPlan({baseRevision:state.revision,shopId:request.shopId,request:copy(request),changes,sources:source?[copy(source.effective)]:[],sourceBaselines:source?[copy(source.baseline)]:[],baselines,summary:{action:action.type,targetCount:request.targets.length,configCount:groups.size,changedConfigCount:changes.length}});
 }
 
 /** 保存前拒绝版本、界面配置、输出源或预览计划本身的任何变化。 */

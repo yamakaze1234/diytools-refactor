@@ -10,10 +10,11 @@ export function installAgentBridge(target: AgentWindow, invoke: Invoke) {
  const sessionId=target.crypto.randomUUID();
  let activeClaim: string|null=null;
  let pending: Record<string,unknown>|null=null;
+ let retryAfter=0;
  const call=<T=unknown>(action:string,payload:unknown={})=>invoke<T>('agent_ui',{action,payload:{...(activeClaim?{claimToken:activeClaim}:{}),...(payload as Record<string,unknown>),sessionId}});
  target.workbenchAgentNative=call;
  const pulse=async()=>{
-  if(stopped||busy||!target.workbenchReady||!target.workbenchAgentExecute)return;
+  if(stopped||busy||Date.now()<retryAfter||!target.workbenchReady||!target.workbenchAgentExecute)return;
   busy=true;
   try{
    if(!enabled){await call('ready',{connect:true});enabled=true;}
@@ -24,7 +25,7 @@ export function installAgentBridge(target: AgentWindow, invoke: Invoke) {
    try{pending={id:job.id,claimToken:job.claimToken,result:await target.workbenchAgentExecute(target.structuredClone(job)),error:null};}
    catch(error){const e=error as {code?:string;message?:string};pending={id:job.id,claimToken:job.claimToken,result:null,error:{code:e.code||'OPERATION_FAILED',message:e.message||String(error)}};}
    await call('complete',pending);pending=null;activeClaim=null;
-  }catch{if(!enabled)stopped=true; /* 启用后只重传回执；不能丢失结果并重新执行写入。 */}
+  }catch(error){if(!enabled)stopped=true;else if(String(error).includes('JOBS_CAPACITY'))retryAfter=Date.now()+30000; /* 容量不足时退避，保留原回执且不重复执行写入。 */}
   finally{busy=false;}
  };
  const timer=target.setInterval(()=>void pulse(),750);

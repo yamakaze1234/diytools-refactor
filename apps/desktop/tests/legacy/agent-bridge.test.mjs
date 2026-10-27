@@ -4,6 +4,19 @@ import vm from 'node:vm';
 import {installAgentBridge} from '../../src/legacy/agent-bridge.ts';
 
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('任务记录容量不足时停止高频回执重试并保留原任务',async()=>{
+ let executions=0,attempts=0;
+ const f=windowFixture(async()=>{executions++;return {localSave:'saved'};});
+ installAgentBridge(f.target,async(_command,{action})=>{
+  if(action==='claim')return {id:'capacity-job',claimToken:'capacity-token',params:{}};
+  if(action==='complete'){attempts++;throw Error('JOBS_CAPACITY: 任务记录超过容量');}
+  return null;
+ });
+ await f.tick(750);
+ for(let n=0;n<10;n++)await f.tick(750);
+ assert.equal(executions,1);assert.equal(attempts,1);
+});
 function windowFixture(execute=async()=>({ok:true})){
  const timers=new Map(),events=new Map();let id=0;
  const target={crypto:globalThis.crypto,structuredClone:globalThis.structuredClone,workbenchReady:true,workbenchAgentExecute:execute,setInterval:(fn,ms)=>{timers.set(++id,{fn,ms});return id;},clearInterval:id=>timers.delete(id),addEventListener:(name,fn)=>events.set(name,fn)};
