@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import {exportSingleImage} from '../../public/workbench/single-image-export.js';
 const app=await fs.readFile(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
 const schedule=app.slice(app.indexOf('function scheduleImageSave(){'),app.indexOf('function openConflict('));
-const exportCode=app.slice(app.indexOf('async function exportCurrent(){'),app.indexOf('function filename('));
+const exportCode=app.slice(app.indexOf('async function exportCurrent(){'),app.indexOf('function filename('))+app.slice(app.indexOf('async function exportConfiguredImages('),app.indexOf('// 使用完整配置和本机成本数据执行利润检查。'));
 
 test('saving edited configurations schedules no image work and releases stale pending pins',()=>{
  const context={imageTimer:1,pendingImages:new Set(['a','b']),clearTimeout(){},setTimeout(){throw Error('No background image timer');},request(){throw Error('No cache writes');},renderPoster(){throw Error('No background render');}};
@@ -16,14 +16,14 @@ test('saving edited configurations schedules no image work and releases stale pe
 
 test('explicit export downloads the click-time draft directly without an application cache copy',async()=>{
  let config={id:'one',name:'first',layout:'long'},finish;const waits=new Promise(resolve=>finish=resolve),rendered=[],downloads=[];
- const context={exportSingleImage:(blob,name,options)=>exportSingleImage(blob,name,{...options,saveFolder:async()=>null}),current:()=>config,clone:structuredClone,$:()=>({value:'1400'}),defaultPosterWidth:()=>1000,dirty:true,savePromise:null,conflict:false,exportJobs:0,
- imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async(c,w)=>{rendered.push([c,w]);await waits;return{canvas:'canvas'};},toBlob:async()=>new Blob(['png']),filename:c=>c.name+'.png',downloadBlob:(blob,name)=>downloads.push({blob,name}),toast(){},scheduleImageSave(){},request(){throw Error('No intermediate disk cache');}};
+ const context={exportSingleImage:(blob,name,options)=>exportSingleImage(blob,name,{...options,saveFolder:async()=>null}),current:()=>config,clone:structuredClone,$:()=>({value:'1400'}),defaultPosterWidth:()=>1000,dirty:true,savePromise:null,conflict:false,exportJobs:0,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),numberedImageEntries:rows=>rows.map(config=>({config,name:'test.png'})),imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1400}),filename:c=>(c.name||'test')+'.png',
+ imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async(c,w)=>{rendered.push([c,w]);await waits;return{canvas:'canvas'};},toBlob:async()=>new Blob(['png']),downloadBlob:(blob,name)=>downloads.push({blob,name}),toast(){},scheduleImageSave(){},request(){throw Error('No intermediate disk cache');}};
  vm.runInNewContext(exportCode,context);const pending=context.exportCurrent();config.name='changed';finish();await pending;
  assert.equal(rendered[0][0].name,'first');assert.equal(rendered[0][1],1400);assert.equal(downloads[0].name,'first.png');assert.equal(context.exportJobs,0);
 });
 
 test('overflow export reports failure without downloading or saving a cached PNG',async()=>{
- const errors=[];const context={current:()=>({id:'one'}),clone:structuredClone,$:()=>({value:'0'}),defaultPosterWidth:()=>1000,dirty:false,savePromise:null,conflict:false,exportJobs:0,
+ const errors=[];const context={current:()=>({id:'one'}),clone:structuredClone,$:()=>({value:'0'}),defaultPosterWidth:()=>1000,dirty:false,savePromise:null,conflict:false,exportJobs:0,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),numberedImageEntries:rows=>rows.map(config=>({config,name:'test.png'})),imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1400}),filename:c=>(c.name||'test')+'.png',
  imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async()=>({overflow:true}),downloadBlob(){throw Error('Unexpected download');},toast:text=>errors.push(text),scheduleImageSave(){}};
  vm.runInNewContext(exportCode,context);await context.exportCurrent();assert.match(errors[0],/超出/);assert.equal(context.exportJobs,0);
 });

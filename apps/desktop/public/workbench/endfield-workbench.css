@@ -903,3 +903,14 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:rela
  html[data-workbench-design] #dialog.case-gallery-dialog .dialog-title,
  html[data-workbench-design] #dialog.case-gallery-dialog #gallery-tree :is(summary,details) { background:var(--gallery-panel)!important; color:var(--gallery-text)!important; border-color:var(--gallery-line)!important; }
 }
+
+/* 导出设置和操作分行，窄侧栏内不让按钮随字段高度拉伸。 */
+@layer endfield-theme {
+ html[data-workbench-design] .preview-bottom #image-export-panel {display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:10px!important;width:100%!important;min-width:0!important;}
+ html[data-workbench-design] #image-export-panel .image-export-options {display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:8px!important;}
+ html[data-workbench-design] #image-export-panel .field {display:grid!important;grid-template-columns:70px minmax(0,1fr)!important;align-items:center!important;gap:8px!important;margin:0!important;min-width:0!important;font-size:12px!important;}
+ html[data-workbench-design] #image-export-panel .field.hidden {display:none!important;}
+ html[data-workbench-design] #image-export-panel select {width:100%!important;min-width:0!important;height:34px!important;margin:0!important;padding:0 8px!important;font-size:12px!important;}
+ html[data-workbench-design] #image-export-panel .image-export-actions {display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;align-items:center!important;}
+ html[data-workbench-design] #image-export-panel .image-export-actions button {width:100%!important;min-width:0!important;height:36px!important;min-height:36px!important;margin:0!important;padding:0 6px!important;line-height:1.2!important;font-size:12px!important;white-space:nowrap!important;}
+}

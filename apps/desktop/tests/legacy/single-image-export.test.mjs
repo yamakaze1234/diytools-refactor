@@ -30,6 +30,6 @@ test('当前图片与仅勾选一张的批量入口都等待统一导出',()=>{
  const source=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
  for(const name of ['exportCurrent','batchExportFull']){
   const body=source.split(`async function ${name}(){`)[1].split('\nfunction ')[0];
-  assert.match(body,/await exportSingleImage/);assert.doesNotMatch(body,/downloadBlob\(await toBlob/);
+  assert.match(body,/await exportConfiguredImages/);assert.doesNotMatch(body,/downloadBlob\(await toBlob/);
  }
 });
