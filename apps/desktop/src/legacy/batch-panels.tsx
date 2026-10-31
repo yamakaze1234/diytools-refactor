@@ -7,6 +7,7 @@ export function BatchDescription({model}:{model:Row}){
  return <div className="batch-description-layout compact-tool-layout">
   <div className="batch-description-toolbar">{model.hasScope&&<label className="field">修改范围<Select id="upgrade-batch-scope" value="link"><option value="link">当前链接全部配置</option><option value="selected">勾选配置（本店，可跨链接）</option></Select></label>}<div id="upgrade-batch-shortcuts"/></div>
   <p id="upgrade-batch-hint" className="hint">按配件或加购描述查找，只修改范围内符合搜索条件的逐项升级说明。手动添加的“加购与选配”、实际配置和输出源均保留。</p>
+  {model.multiTask&&<section id="upgrade-batch-tasks" aria-label="加购描述修改任务"/>}
   <div className="batch-description-filters">
   <label className="field">查找原配件<Input id="upgrade-batch-query" placeholder="输入配件名称或 ERP ID"/></label>
   <label className="field">只搜索加购描述<Input id="upgrade-batch-description-query" placeholder="输入逐项升级说明关键词，可单独搜索"/></label>

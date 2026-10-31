@@ -24,7 +24,12 @@ export function mergeWorkspaceEdit(type,base,local,remote,sharedCostIds=[]){
   [base,local,remote]=[base,local,remote].map(record=>{
    if(!record)return record;
    const value=copy(record);
-   for(const field of ['parts','actualParts'])for(const part of value[field]||[])if(part.taxOverride===null)delete part.taxOverride;
+   for(const field of ['parts','actualParts'])for(const part of value[field]||[]){
+    if(part.taxOverride===null)delete part.taxOverride;
+    // 空配件行加载后可能补 tax:null；它与未保存成本等价，不应阻塞删行或同组文案编辑。
+    // 有商品、名称或特殊项的行及有效成本仍原样参与冲突判断。
+    if(part.goodsId===''&&part.name===''&&!isSpecialComponent(part)&&part.tax===null)delete part.tax;
+   }
    return value;
   });
  }

@@ -30,3 +30,24 @@ for(const mode of ['nas','cloud'])test(mode+' 独立成本不上传、不被配�
  remote.find(r=>r.type==='configuration').data.parts.push({goodsId:'999',name:'remote',tax:888,lineId:'unknown'});
  const merged=applyWorkspace(s,remote);assert.deepEqual(merged.costSource,s.costSource);assert.equal(merged.configs[0].parts[0].tax,500);assert.equal(merged.configs[0].parts[1].tax,null);assert.equal(merged.configs[0].actualParts[0].tax,450);assert.equal(merged.configs[0].actualParts[0].taxOverride.base,500);assert.equal(merged.sharedCostScope,s.sharedCostScope);
 });
+
+test('空配件行的空成本缓存不阻塞删行及同组文案编辑，输入保持不变',()=>{
+ for(const field of ['parts','actualParts'])for(const remove of [true,false]){
+  const base={id:'c',[field]:[{lineId:'cpu',goodsId:'123',name:'CPU',upgrade:'旧文案'},{lineId:'empty',goodsId:'',name:'',slot:'配件6',qty:1}]};
+  const local=structuredClone(base),remote=structuredClone(base);
+  if(remove)local[field].pop();else local[field][0].upgrade='新文案';
+  remote[field][1].tax=null;
+  const before=structuredClone({base,local,remote});
+  const result=mergeWorkspaceEdit('configuration',base,local,remote);
+  assert.deepEqual(result.fields,[]);assert.deepEqual(result.value,local);
+  assert.deepEqual({base,local,remote},before);
+ }
+});
+
+test('空行的有效成本及非空配件成本仍保留真实冲突',()=>{
+ for(const extra of [{tax:0},{tax:12},{tax:null,name:'自定义配件'},{tax:null,goodsId:'123'},{tax:null,specialComponent:true}]){
+  const base={id:'c',parts:[{lineId:'p',goodsId:'',name:'',qty:1}]},local={...base,parts:[]};
+  const remote={...base,parts:[{...base.parts[0],...extra}]};
+  assert.deepEqual(mergeWorkspaceEdit('configuration',base,local,remote).fields,['parts']);
+ }
+});
