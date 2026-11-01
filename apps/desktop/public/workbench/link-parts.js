@@ -1,4 +1,4 @@
-/** 单链接配件批量维护：支持展示与实际 BOM 范围、多条规则和变更后图片导出。 */
+/** 单链接配件批量维护：支持展示与实际 BOM 范围、多条任务和变更后图片导出。 */
 import {actualParts,ensureActualParts} from './actual-parts.js';
 import {clone,slots,productGroups} from './core.js';
 import {replaceSourcePart} from './source.js';
@@ -35,7 +35,7 @@ function removalPlan(configs,partKey){
  if(!partKey)throw Error('请选择原配件');
  return {changes:configs.filter(c=>!c.deletedAt&&c.parts.some(p=>partIdentity(p)===partKey)).map(c=>({id:c.id,name:c.name,product:c.product,before:clone(c),after:{...clone(c),parts:c.parts.filter(p=>partIdentity(p)!==partKey).map(p=>clone(p))}}))};
 }
-/** 依据选定范围和规则生成一条配件增删换计划。 */
+/** 依据选定范围和任务生成一条配件增删换计划。 */
 export function linkPartsPlan(configs,{scope={parts:true,actualParts:true},mode='replace',partKey,row,slot,qty=null}){
  const fields=targetFields(scope),changes=new Map(),productIds=[...new Set(configs.map(c=>c.productId))],byId=new Map(configs.map(c=>[c.id,c]));
  for(const field of fields){
@@ -56,10 +56,10 @@ export function linkPartsDiff(plan){
 }
 
 // Build on copies so a later invalid rule cannot partially modify live data.
-/** 依次模拟多条规则，得到可统一预览与应用的最终变更。 */
+/** 依次模拟多条任务，得到可统一预览与应用的最终变更。 */
 export function linkPartsBatchPlan(configs,{scope={parts:true,actualParts:true},rules=[]}){
  targetFields(scope);
- if(!rules.length)throw Error('请至少添加一条修改规则');
+ if(!rules.length)throw Error('请至少添加一条修改任务');
  const originals=configs.filter(c=>!c.deletedAt),working=clone(originals),results=[];
  if(!working.length)throw Error('请选择需要修改的配置');
  for(const [index,rule] of rules.entries()){
@@ -72,7 +72,7 @@ export function linkPartsBatchPlan(configs,{scope={parts:true,actualParts:true},
    const byId=new Map(step.changes.map(c=>[c.id,c.after]));
    for(let i=0;i<working.length;i++)if(byId.has(working[i].id))working[i]=byId.get(working[i].id);
    results.push({mode:rule.mode==='replace'&&rule.row==null?'delete':rule.mode,count:step.changes.length,name:rule.row?.name||rule.partKey});
-  }catch(error){throw Error(`第 ${index+1} 条规则：${error.message}`);}
+  }catch(error){throw Error(`第 ${index+1} 条任务：${error.message}`);}
  }
  const changes=working.flatMap((after,i)=>JSON.stringify(after)===JSON.stringify(originals[i])?[]:[{id:after.id,name:after.name,product:after.product,before:clone(originals[i]),after}]);
  return {scope:{...scope},changes,productIds:[...new Set(originals.map(c=>c.productId))],replacements:rules.filter(r=>r.row!=null).map(r=>clone(r.row)),rules:results,overview:working.map((after,i)=>({id:after.id,name:after.name,product:after.product,before:clone(originals[i]),after}))};
@@ -145,10 +145,11 @@ export function createLinkPartsExportSession(api){
  };
 }
 
-/** 组织规则编辑、预览、保存与配置图/SKU 图导出流程。 */
+/** 组织任务编辑、预览、保存与配置图/SKU 图导出流程。 */
 export function openLinkParts(api){
- const {product,openDialog,esc,getConfigs,getCatalog,apply,toast}=api;
- openDialog('链接内配件批量修改',`<p class="hint">${esc(product.name)} · 可添加多条规则，按列表顺序执行。查找替换时，未选择新配件即删除原配件；统一预览后保存。</p><label class="field">修改范围<select id="link-part-scope"><option value="link">当前链接全部配置</option><option value="selected">按左侧勾选配置修改（本店，可跨链接）</option></select></label><div class="actions" role="group" aria-label="修改内容"><label><input id="link-part-display" type="checkbox" checked> 展示配件</label><label><input id="link-part-actual" type="checkbox" checked> 实际配置</label></div><p id="link-part-scope-summary" class="hint"></p><div id="link-part-rules"></div><div class="actions"><button id="link-part-add-replace">＋ 查找替换</button><button id="link-part-add-new">＋ 新增配件</button></div><div class="link-part-preview-bar actions"><button id="link-part-preview">预览全部修改</button><button id="link-part-apply" class="primary" disabled>应用到本链接</button><label><input id="link-part-show-all" type="checkbox"> 显示全部配件</label></div><p id="link-part-status" role="status" aria-live="polite"></p><div id="link-part-diff"><p class="hint">设置规则后，点击“预览全部修改”查看各配置的修改前后总览。</p></div><section id="link-part-export-panel" class="hidden"><h3>导出本次修改的链接图片</h3><p id="link-part-export-summary" class="hint"></p><div class="actions"><label class="field">导出范围<select id="link-part-export-scope"><option value="changed" selected>仅本次有变动的配置</option><option value="all">有变动链接内全部配置</option></select></label><label class="field">图片类型<select id="link-part-export-kind"><option value="long">配置清单图</option><option value="square">SKU 图</option><option value="both" selected>配置清单图和 SKU 图</option></select></label><button id="link-part-export">导出已保存配置图片</button><button id="link-part-export-cancel" class="hidden">取消导出</button></div><p class="hint">按所选范围导出已保存配置，默认仅导出本次有变动的配置。后续编辑不影响本次导出；图片保留链接内序号。可重新选择范围和类型再次导出。</p></section>`);
+ const {product,openDialog,esc,getConfigs,getCatalog,getCosts=()=>[],apply,toast}=api;
+ const price=value=>value===null||value===undefined||String(value).trim()===''||!Number.isFinite(Number(value))?'未知':'¥'+Number(value).toLocaleString('zh-CN',{maximumFractionDigits:2});
+ openDialog('链接内配件批量修改',`<p class="hint">${esc(product.name)} · 可添加多条任务，按列表顺序执行。查找替换时，未选择新配件即删除原配件；统一预览后保存。</p><label class="field">修改范围<select id="link-part-scope"><option value="link">当前链接全部配置</option><option value="selected">按左侧勾选配置修改（本店，可跨链接）</option></select></label><div class="actions" role="group" aria-label="修改内容"><label><input id="link-part-display" type="checkbox" checked> 展示配件</label><label><input id="link-part-actual" type="checkbox" checked> 实际配置</label></div><p id="link-part-scope-summary" class="hint"></p><div id="link-part-rules"></div><div class="actions"><button id="link-part-add-replace">＋ 查找替换</button><button id="link-part-add-new">＋ 新增配件</button></div><div class="link-part-preview-bar actions"><button id="link-part-preview">预览全部修改</button><button id="link-part-apply" class="primary" disabled>应用到本链接</button><label><input id="link-part-show-all" type="checkbox"> 显示全部配件</label></div><p id="link-part-status" role="status" aria-live="polite"></p><div id="link-part-diff"><p class="hint">设置任务后，点击“预览全部修改”查看各配置的修改前后总览。</p></div><section id="link-part-export-panel" class="hidden"><h3>导出本次修改的链接图片</h3><p id="link-part-export-summary" class="hint"></p><div class="actions"><label class="field">导出范围<select id="link-part-export-scope"><option value="changed" selected>仅本次有变动的配置</option><option value="all">有变动链接内全部配置</option></select></label><label class="field">图片类型<select id="link-part-export-kind"><option value="long">配置清单图</option><option value="square">SKU 图</option><option value="both" selected>配置清单图和 SKU 图</option></select></label><button id="link-part-export">导出已保存配置图片</button><button id="link-part-export-cancel" class="hidden">取消导出</button></div><p class="hint">按所选范围导出已保存配置，默认仅导出本次有变动的配置。后续编辑不影响本次导出；图片保留链接内序号。可重新选择范围和类型再次导出。</p></section>`);
  api.render?.({product});
  const root=document.querySelector('#link-part-status'),dialog=root.closest('dialog'),$=s=>dialog.querySelector(s);
  let plan=null,busy=false,phase='',serial=0;const rules=[];
@@ -161,8 +162,8 @@ export function openLinkParts(api){
  const scope=()=>({parts:$('#link-part-display').checked,actualParts:$('#link-part-actual').checked});
  const configs=()=>{const selected=$('#link-part-scope').value==='selected'?new Set(api.getSelectedIds?.()||[]):null;return getConfigs().filter(c=>!c.deletedAt&&(selected?selected.has(c.id):c.productId===product.id));};
  const scopeSummary=()=>{const rows=configs();$('#link-part-scope-summary').textContent=rows.length?`范围内 ${rows.length} 套配置 · ${new Set(rows.map(c=>c.productId)).size} 个链接`:'尚未勾选配置，请先在左侧勾选';$('#link-part-apply').textContent=$('#link-part-scope').value==='selected'?'应用到勾选配置':'应用到本链接';};
- const invalidate=()=>{api.release?.($('#link-part-diff'));plan=null;$('#link-part-apply').disabled=true;$('#link-part-diff').innerHTML='<p class="hint">规则已变化，请重新预览全部修改。</p>';$('#link-part-status').textContent='';};
- const renumber=()=>rules.forEach((rule,i)=>{rule.root.querySelector('[data-rule-title]').textContent=`规则 ${i+1}`;});
+ const invalidate=()=>{api.release?.($('#link-part-diff'));plan=null;$('#link-part-apply').disabled=true;$('#link-part-diff').innerHTML='<p class="hint">任务已变化，请重新预览全部修改。</p>';$('#link-part-status').textContent='';};
+ const renumber=()=>rules.forEach((rule,i)=>{rule.root.querySelector('[data-rule-title]').textContent=`任务 ${i+1}`;});
  const addRule=(mode='replace')=>{
   invalidate();const n=serial++,suffix=n?`-${n+1}`:'',id=name=>`link-part-${name}${suffix}`;
   const root=document.createElement('section');root.className='link-part-rule';root.dataset.rule=String(n);
@@ -170,7 +171,7 @@ export function openLinkParts(api){
   $('#link-part-rules').append(root);
   api.renderRule?.(root,{suffix,slots});
   const local=selector=>root.querySelector(selector);
-  const picker=mountProductSearch(local('[data-rule-new]'),{getRows:getCatalog,deferred:true,idKey:'sourceId',label:'选择新配件',emptySelection:'未选择新配件：替换时删除原配件；新增时必须选择',inputId:id('new-query'),describe:r=>'ERP ID '+r.goodsId,onChange:row=>{local('[data-product-results]').classList.toggle('hidden',!!row);local('[data-product-count]').classList.toggle('hidden',!!row);invalidate();}});
+  const picker=mountProductSearch(local('[data-rule-new]'),{getRows:getCatalog,getCosts,deferred:true,idKey:'sourceId',label:'选择新配件',emptySelection:'未选择新配件：替换时删除原配件；新增时必须选择',inputId:id('new-query'),describe:r=>`ERP ID ${r.goodsId} · ERP ${price(r.erp)} · 含税 ${price(r.tax)}`,onChange:row=>{local('[data-product-results]').classList.toggle('hidden',!!row);local('[data-product-count]').classList.toggle('hidden',!!row);invalidate();}});
   const refreshMatches=()=>{const value=local('[data-rule-match]').value;local('[data-rule-match]').innerHTML='<option value="">请选择原配件</option>'+(Object.values(scope()).some(Boolean)?scopedPartUsage(configs(),local('[data-rule-query]').value,scope()):[]).map(r=>`<option value="${esc(r.key)}">${esc(r.name)} · ${r.count} 套配置</option>`).join('');local('[data-rule-match]').value=value;};
   const rule={root,refreshMatches,read:()=>({mode:local('[data-rule-mode]').value,partKey:local('[data-rule-match]').value,row:picker.row(),slot:local('[data-rule-slot]').value,qty:local('[data-rule-qty]').value===''?null:Number(local('[data-rule-qty]').value)})};
   rules.push(rule);renumber();
@@ -184,9 +185,9 @@ export function openLinkParts(api){
  const renderOverview=()=>{
   if(!plan)return;
   const all=linkPartsOverview(plan),rows=$('#link-part-show-all').checked?all:all.filter(r=>r.changed);
-  const summary=`${plan.scopeIds.length} 套配置中 ${plan.changes.length} 套有变化 · ${plan.rules.length} 条规则 · ${all.filter(r=>r.changed).length} 处配件变化`;
+  const summary=`${plan.scopeIds.length} 套配置中 ${plan.changes.length} 套有变化 · ${plan.rules.length} 条任务 · ${all.filter(r=>r.changed).length} 处配件变化`;
   if(api.renderOverview?.($('#link-part-diff'),{summary,rules:plan.rules,rows}))return;
-  $('#link-part-diff').innerHTML=`<h3>修改结果总览</h3><p class="hint">${summary}</p><div class="link-part-rule-results">${plan.rules.map((r,i)=>`<span>规则 ${i+1} · ${r.mode==='add'?'新增':r.mode==='delete'?'删除':'替换'} ${esc(r.name)}：${r.count} 套</span>`).join('')}</div>${rows.length?`<div class="link-part-overview-wrap" tabindex="0" aria-label="修改结果总览"><table class="link-part-overview"><thead><tr><th>配置</th><th>修改内容</th><th>槽位</th><th>修改前</th><th>修改后</th></tr></thead><tbody>${rows.map(r=>`<tr class="${r.changed?'is-changed':''}"><th scope="row">${esc(r.name)}<small>${esc(r.product)}</small></th><td>${r.field==='parts'?'展示配件':'实际配置'}</td><td>${esc(r.slot)}</td><td>${esc(partText(r.before))}<small>${esc(r.before?.goodsId?'ERP ID '+r.before.goodsId:'')}</small></td><td>${esc(r.after?partText(r.after):'删除')}<small>${esc(r.after?.goodsId?'ERP ID '+r.after.goodsId:'')}${r.changed?' · 已修改':''}</small></td></tr>`).join('')}</tbody></table></div>`:'<p class="hint">没有需要修改的配件。可勾选“显示全部配件”查看当前配置。</p>'}`;
+  $('#link-part-diff').innerHTML=`<h3>修改结果总览</h3><p class="hint">${summary}</p><div class="link-part-rule-results">${plan.rules.map((r,i)=>`<span>任务 ${i+1} · ${r.mode==='add'?'新增':r.mode==='delete'?'删除':'替换'} ${esc(r.name)}：${r.count} 套</span>`).join('')}</div>${rows.length?`<div class="link-part-overview-wrap" tabindex="0" aria-label="修改结果总览"><table class="link-part-overview"><thead><tr><th>配置</th><th>修改内容</th><th>槽位</th><th>修改前</th><th>修改后</th></tr></thead><tbody>${rows.map(r=>`<tr class="${r.changed?'is-changed':''}"><th scope="row">${esc(r.name)}<small>${esc(r.product)}</small></th><td>${r.field==='parts'?'展示配件':'实际配置'}</td><td>${esc(r.slot)}</td><td>${esc(partText(r.before))}<small>${esc(r.before?.goodsId?'ERP ID '+r.before.goodsId:'')}</small></td><td>${esc(r.after?partText(r.after):'删除')}<small>${esc(r.after?.goodsId?'ERP ID '+r.after.goodsId:'')}${r.changed?' · 已修改':''}</small></td></tr>`).join('')}</tbody></table></div>`:'<p class="hint">没有需要修改的配件。可勾选“显示全部配件”查看当前配置。</p>'}`;
  };
  for(const id of ['link-part-display','link-part-actual','link-part-scope'])$('#'+id).onchange=()=>{invalidate();scopeSummary();rules.forEach(r=>r.refreshMatches());};
  $('#link-part-add-replace').onclick=()=>addRule('replace');$('#link-part-add-new').onclick=()=>addRule('add');
@@ -225,7 +226,7 @@ export function openLinkParts(api){
    for(const replacement of approved.replacements){const row=getCatalog().find(r=>r.sourceId===replacement.sourceId);if(JSON.stringify(row)!==JSON.stringify(replacement))throw Error('配件资料已变化，请重新预览');}
    await session.save(approved);plan=null;
    if(!active())return;
-   toast('所选范围内配件已统一修改并保存');showSavedScope();status(`已保存 ${approved.changes.length} 套配置，请选择导出范围和图片类型。也可继续调整规则并重新预览。`);
+   toast('所选范围内配件已统一修改并保存');showSavedScope();status(`已保存 ${approved.changes.length} 套配置，请选择导出范围和图片类型。也可继续调整任务并重新预览。`);
   }catch(error){if(active()){invalidate();if(error.saved){$('#link-part-export-panel').classList.add('hidden');status('修改已保存，导出范围未准备完成：'+error.message);}else status(error.message);}}
   finally{phase='';lock(false);if(active()&&!plan)$('#link-part-apply').disabled=true;}
  };

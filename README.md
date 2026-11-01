@@ -2,17 +2,17 @@
 
 面向 DIY 整机业务的 Windows 工作台。按店铺和商品链接集中维护配置、配件、库存与利润，批量更新说明，制作配置清单图和 SKU 图。
 
-**Windows x64 · 当前版本 0.2.34 · 解压即用**
+**Windows x64 · 当前版本 0.2.35 · 解压即用**
 
-连续表格直接编辑和复制配件；底部新增配件行，支持删除与撤销；自由编辑画布和属性分区显示。浅色、深色界面随时切换，多配置滚动、输入和换色响应已优化。
+配件选择可同时查看价格与库存；批量替换、展示名称和加购描述支持多任务统一预览与保存。维护数据按配件类型显示 CPU 简称、主板板型、机箱支持板型或容量，识别已知的主板机箱搭配错误，并隐藏不兼容的主板加购。
 
 ## 下载与开始使用
 
 | 下载入口 | 说明 |
 | --- | --- |
-| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.34/DIYTools-0.2.34-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
-| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.34/DIYTools-0.2.34-Windows-x64.zip) | 备用下载源 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.34) | 完整变化和下载附件 |
+| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.35/DIYTools-0.2.35-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
+| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.35/DIYTools-0.2.35-Windows-x64.zip) | 备用下载源 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.35) | 完整变化和下载附件 |
 
 1. 下载并完整解压到可写目录，不要直接在压缩包内运行。
 2. 无团队配置时使用本机模式；团队成员登录后，按提示下载资料或迁移旧数据。
@@ -46,6 +46,7 @@
 | 配件复制与增删 | 点击行名选行，Shift 连选、Ctrl 多选，复制后按目标位置粘贴；底部新增配件6及后续行，新增行可删除，固定栏位可清空 |
 | 库存与利润 | 显示实际配件库存、ERP/核算成本及利润；区分缺货、低库存和未知，分期扣费前后利润分别显示 |
 | 批量维护 | 按链接或店铺批量修改配件、加购说明、展示名称、配色格式和平台 ID，预览后应用 |
+| 配件识别与搭配 | 人工维护 CPU 简称、主板板型和机箱支持范围；只显示当前配件对应字段，校验板型搭配并过滤不兼容加购 |
 | 输出源维护 | 分别查看本次变动和待确认差异，保留手动内容或采用源更新，支持对应图片导出 |
 | 配置与 SKU 图片 | 自由编辑文字和布局；选择全部或仅变动配置导出，预览支持放大内容和完整画布 |
 | WPS 与 ERP | WPS 复制数量、展示名称和到手价到 F:H；ERP 成本库存和核算成本提供只读预览后应用 |

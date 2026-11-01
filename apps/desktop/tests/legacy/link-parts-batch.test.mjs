@@ -30,7 +30,7 @@ test('删除只影响勾选集合，保留人工加购；可接续新增且后�
  const c=config('a'),before=structuredClone(c),remove={mode:'replace',partKey:'id:1',row:null};
  const plan=linkPartsBatchPlan([c],{rules:[remove,add('30','CPU')]});
  assert.equal(plan.changes[0].after.parts.find(p=>p.slot==='CPU').goodsId,'30');
- assert.throws(()=>linkPartsBatchPlan([c],{rules:[remove,{mode:'add',row:null}]}),/第 2 条规则.*新配件/);
+ assert.throws(()=>linkPartsBatchPlan([c],{rules:[remove,{mode:'add',row:null}]}),/第 2 条任务.*新配件/);
  assert.throws(()=>linkPartsBatchPlan([c],{rules:[{mode:'replace',row:null}]}),/原配件/);
  assert.deepEqual(c,before);
 });
@@ -49,11 +49,11 @@ test('按顺序执行替换链，总览直接展示原始值到最终值',()=>{
  assert.equal(plan.changes[0].before.parts[0].goodsId,'1');assert.equal(plan.changes[0].after.parts[0].goodsId,'11');
  assert.equal(linkPartsOverview(plan)[0].before.goodsId,'1');assert.equal(linkPartsOverview(plan)[0].after.goodsId,'11');
 });
-test('后续规则占用槽位或无效时整个批次不修改数据',()=>{
+test('后续任务占用槽位或无效时整个批次不修改数据',()=>{
  const configs=[config('a')],before=structuredClone(configs);
- assert.throws(()=>linkPartsBatchPlan(configs,{rules:[replace('1','10'),add('30','风扇'),add('40','风扇')]}),/第 3 条规则.*已有配件/);
+ assert.throws(()=>linkPartsBatchPlan(configs,{rules:[replace('1','10'),add('30','风扇'),add('40','风扇')]}),/第 3 条任务.*已有配件/);
  assert.deepEqual(configs,before);
- assert.throws(()=>linkPartsBatchPlan(configs,{rules:[replace('1','10'),{...add('30','风扇'),qty:0}]}),/第 2 条规则.*正整数/);
+ assert.throws(()=>linkPartsBatchPlan(configs,{rules:[replace('1','10'),{...add('30','风扇'),qty:0}]}),/第 2 条任务.*正整数/);
  assert.throws(()=>linkPartsBatchPlan(configs,{rules:[]}),/至少添加/);
  assert.throws(()=>linkPartsBatchPlan(configs,{rules:[{...replace('1','10'),row:{...row('10'),shopId:'jonsbo'}}]}),/当前店铺/);
 });
@@ -64,7 +64,7 @@ test('仅实际配置范围和未选中配置保持隔离，过期预览阻止�
  const next=linkPartsBatchPlan(configs,{rules:[replace('2','20')]});configs[1].name='已变化';
  assert.throws(()=>applyReplacement(next,configs),/配置已变化/);assert.equal(configs[0].parts[1].goodsId,'2');
 });
-test('没有命中的规则显示零变化，全部总览仍包含原配件',()=>{
+test('没有命中的任务显示零变化，全部总览仍包含原配件',()=>{
  const plan=linkPartsBatchPlan([config('a')],{rules:[replace('missing','10')]});
  assert.equal(plan.changes.length,0);assert.equal(plan.rules[0].count,0);assert.equal(linkPartsOverview(plan).length,4);
  assert.ok(linkPartsOverview(plan).every(r=>!r.changed));

@@ -71,7 +71,13 @@ try{
  await page.locator('#upgrade-batch-preview').click();assert.match(await page.locator('#upgrade-batch-status').innerText(),/任务 1.*选择影响的链接/);await page.locator('[data-upgrade-link]').check();
  for(const width of [1300,760]){await page.setViewportSize({width,height:1000});await page.locator('#upgrade-batch-add-task').scrollIntoViewIfNeeded();const box=await page.locator('#upgrade-batch-tasks').boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width+1);}
  await page.setViewportSize({width:1300,height:1000});
- await page.evaluate(()=>window.memoryProbe.close());await page.locator('#link-display-names').click();await page.locator('#upgrade-batch-query').fill('验收CPU');await page.locator('[data-upgrade-part]').click();await page.locator('#upgrade-batch-text').fill('新展示名');await page.locator('#upgrade-batch-preview').click();assert.equal(await page.locator('#upgrade-batch-apply').isDisabled(),false);assert.equal(await page.locator('#upgrade-batch-add-task').count(),0);
+ await page.evaluate(()=>window.memoryProbe.close());await page.locator('#link-display-names').click();await page.locator('#upgrade-batch-query').fill('验收CPU');await page.locator('[data-upgrade-part]').click();await page.locator('#upgrade-batch-text').fill('新展示名');await page.locator('#upgrade-batch-preview').click();assert.equal(await page.locator('#upgrade-batch-apply').isDisabled(),false);assert.equal(await page.locator('#upgrade-batch-add-task').count(),1);
+ await page.locator('#upgrade-batch-add-task').click();await part('验收内存').check();await page.locator('#upgrade-batch-text').fill('新内存展示名');
+ await page.locator('[data-upgrade-task="0"]').click();assert.equal(await page.locator('#upgrade-batch-text').inputValue(),'新展示名');
+ await page.locator('#upgrade-batch-preview').click();assert.match(await page.locator('#upgrade-batch-diff').innerText(),/新内存展示名/);
+ await page.locator('#upgrade-batch-apply').click();await page.waitForFunction(()=>document.querySelector('#upgrade-batch-status').textContent.startsWith('已保存'));
+ for(const c of state.configs.slice(0,2)){assert.equal(c.parts[0].displayName,'新展示名');assert.equal(c.parts[3].displayName,'新内存展示名');}
+ await page.locator('#upgrade-batch-undo').click();await page.waitForFunction(()=>document.querySelector('#upgrade-batch-status').textContent.startsWith('已还原'));
  await page.evaluate(()=>{window.memoryProbe.close();window.memoryProbe.selectForTest(['c2']);});
  await page.locator('#link-upgrades').click();await part('验收CPU').check();await page.locator('#upgrade-batch-text').fill('当前链接CPU');
  await page.locator('#upgrade-batch-add-task').click();await page.locator('#upgrade-batch-scope').selectOption('selected');await part('验收内存').check();await page.locator('#upgrade-batch-text').fill('勾选配置内存');
@@ -80,5 +86,5 @@ try{
  await page.locator('#upgrade-batch-preview').click();assert.match(await page.locator('#upgrade-batch-status').innerText(),/2 条任务，将修改 3 套配置/);
  await page.locator('[data-upgrade-task="1"]').click();assert.equal(await page.locator('#upgrade-batch-scope').inputValue(),'selected');assert.equal(await page.locator('[data-upgrade-link]').inputValue(),'p1');
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({status:'passed',checks:['task drafts and selections preserved','two descriptions merged into one save','actual parts unchanged','undo all tasks','conflicting targets blocked','delete task','invalidate edited preview','link deselection preserved','1300/760px layout','display names unchanged','per-task link/selected scope preserved']}));
+ console.log(JSON.stringify({status:'passed',checks:['task drafts and selections preserved','two descriptions merged into one save','actual parts unchanged','undo all tasks','conflicting targets blocked','delete task','invalidate edited preview','link deselection preserved','1300/760px layout','display names multi-task save and undo','per-task link/selected scope preserved']}));
 }finally{await browser.close();}

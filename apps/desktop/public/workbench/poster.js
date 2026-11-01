@@ -1,3 +1,4 @@
+import {displayedAddon} from './hardware-upgrade.js';
 /** 配置图与 SKU 图共用 Canvas 渲染器：将配件、模块、文字及素材合成为最终画布。 */
 import {modelCanvasWidth,posterColumns} from './poster-width.js';
 import {ensurePosterFonts,withPosterFonts} from './poster-fonts.js';
@@ -16,7 +17,7 @@ const hasText=value=>!!String(value??'').trim();
 const partTitle=p=>String(p.name||'').trimEnd()+(Number(p.qty)>1?` ×${p.qty}`:'');
 const entryContent=entry=>typeof entry==='string'?hasText(entry):hasText(entry?.text)||hasText(entry?.note);
 /** 根据模块类型提取待绘制条目，统一处理模块内容来源。 */
-function moduleEntries(c,m){return (m.type==='addons'?c.addons:m.type==='benefits'?c.benefits:[{text:m.text||'',note:''}])?.map((entry,index)=>({entry,index})).filter(({entry})=>entryContent(entry))||[];}
+function moduleEntries(c,m){return (m.type==='addons'?c.addons:m.type==='benefits'?c.benefits:[{text:m.text||'',note:''}])?.map((entry,index)=>({entry:m.type==='addons'?displayedAddon(entry,c):entry,index})).filter(({entry})=>entryContent(entry))||[];}
 /** 根据配置版式确定默认绘图宽度。 */
 export function defaultPosterWidth(c){return c.layout==='square'?1400:1000;}
 /** 加载字体与素材并绘制海报；interactive 模式同时提供编辑器所需的区域信息。 */
@@ -182,7 +183,7 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
      const top=y,opStart=ops.length,key=`part.${p.slot}`,label=p.slot.startsWith('配件')?'配件':p.slot,inner=(unifiedPanel?(square?1:7):mobile?2:5)+stretch;
      const available=fullWidth;
      let h=block(key+'.name',`${p.slot} 型号`,m.id,partTitle(p),nameX,top+inner,available,requested*nameScale,weight,color,1.25,true);
-     if(c.showUpgrades&&displayUpgrade(p)){h+=space(3);h+=block(key+'.upgrade',`${p.slot} 升级说明`,m.id,displayUpgrade(p),nameX,top+inner+h,available,Number(c.upgradeSize||(unifiedPanel?16:14))*(unifiedPanel?(square?.9:1):mobile?.95:square?.76:.88),Number(c.upgradeWeight||400),doubleMemoryUpgrade(p)?(dark?'#ffcc66':'#b54708'):c.upgradeColor||colors.accent,1.25,true);}
+     if(c.showUpgrades&&displayUpgrade(p,c)){h+=space(3);h+=block(key+'.upgrade',`${p.slot} 升级说明`,m.id,displayUpgrade(p,c),nameX,top+inner+h,available,Number(c.upgradeSize||(unifiedPanel?16:14))*(unifiedPanel?(square?.9:1):mobile?.95:square?.76:.88),Number(c.upgradeWeight||400),doubleMemoryUpgrade(p)?(dark?'#ffcc66':'#b54708'):c.upgradeColor||colors.accent,1.25,true);}
      const labelBase=unifiedPanel?requested*nameScale:tightRows?Math.min(18,requested*nameScale):square?13:16;
      const labelSize=spec(key+'.label',labelBase,unifiedPanel?700:tightRows?400:600,colors.accent);
      measure.font=font(labelSize);

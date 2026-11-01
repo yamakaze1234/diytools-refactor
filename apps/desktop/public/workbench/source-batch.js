@@ -1,3 +1,5 @@
+import {attachAddonHardware} from './hardware-upgrade.js';
+import {validateHardware,copyHardware,hardwareFacts} from './component-hardware.js';
 import {validateCapacities,copyCapacity} from './component-capacity.js';
 /** 输出源批量保存规则：统一处理来源修改及依赖配置的跟随更新。 */
 import {shops} from './shops.js';
@@ -12,7 +14,7 @@ import {isSpecialComponent,normalizeSpecialComponent} from './special-components
 import {excludedComponent} from './component-policy.js';
 import {costRows,applyManualCosts} from './erp-sync.js';
 
-const fields=['capacityOverrides','goodsId','name','tax','upgrade','specialComponent','addonText','addonNote','addonGoodsId','addonPriceCents','addonQty','addonItems','addonOriginalQty','addonVariants','addonShowTogether','addonChoices'];
+const fields=['hardwareOverrides','hardwareFacts','erpSpec','erpModel','erpCategory','capacityOverrides','goodsId','name','tax','upgrade','specialComponent','addonText','addonNote','addonGoodsId','addonPriceCents','addonQty','addonItems','addonOriginalQty','addonVariants','addonShowTogether','addonChoices'];
 const view=row=>row?{...row,...sourceAddonFields(sourceAddon(row)),specialComponent:isSpecialComponent(row)}:null;
 const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 
@@ -48,7 +50,7 @@ export function sourceBatch(state,changes,at=new Date().toISOString()){
    validateAddon(sourceAddon(row),{required:!!row.addonText?.trim(),costs:next.costSource});
    if(index<0&&next.sourceCatalog.some(r=>r.shopId===row.shopId&&r.goodsId===row.goodsId))throw Error('该店铺 ERP ID 已存在，请编辑已有记录');
   }
-  row.capacityOverrides=validateCapacities(row.capacityOverrides);const desired=view(row),current=view(live),patch={};
+  row.hardwareOverrides=validateHardware(row.hardwareOverrides);row.hardwareFacts=hardwareFacts(row);row.capacityOverrides=validateCapacities(row.capacityOverrides);const desired=view(row),current=view(live),patch={};
   if(current&&!isSpecialComponent(live))current.tax=next.costSource.find(r=>r.goodsId===live.goodsId)?.tax??live.tax;
   for(const key of fields){
    if(before&&equal(before[key],desired[key]))continue;
@@ -85,7 +87,8 @@ export function sourceBatch(state,changes,at=new Date().toISOString()){
  }
  const configIds=taxes.size?applyManualCosts(next,[...taxes].map(([goodsId,tax])=>({goodsId,tax})),at):[];
  const capacityIds=new Set(),sourceMap=new Map(next.sourceCatalog.map(r=>[JSON.stringify([r.shopId||'intel',r.sourceId]),r]));
- for(const c of next.configs){if(c.deletedAt)continue;for(const p of [...(c.parts||[]),...(c.actualParts||[])]){const row=sourceMap.get(JSON.stringify([c.shopId||'intel',p.sourceId]));if(row&&row.goodsId===p.goodsId&&JSON.stringify(row.capacityOverrides)!==JSON.stringify(p.capacityOverrides)){copyCapacity(row,p);capacityIds.add(c.id);}}}
+ for(const c of next.configs){if(c.deletedAt)continue;for(const p of [...(c.parts||[]),...(c.actualParts||[])]){const row=sourceMap.get(JSON.stringify([c.shopId||'intel',p.sourceId]));if(row&&row.goodsId===p.goodsId&&JSON.stringify([row.capacityOverrides,row.hardwareOverrides,row.hardwareFacts,row.erpSpec,row.erpModel])!==JSON.stringify([p.capacityOverrides,p.hardwareOverrides,p.hardwareFacts,p.erpSpec,p.erpModel])){copyCapacity(row,p);copyHardware(row,p);capacityIds.add(c.id);}}}
  const followed=followSourceChanges(next.configs,state.sourceCatalog,next.sourceCatalog,{captureChanges:true});
+ for(const c of next.configs){const before=JSON.stringify(c.addons);attachAddonHardware(c,next.sourceCatalog);if(before!==JSON.stringify(c.addons))capacityIds.add(c.id);}
  return {next,configIds:[...new Set([...configIds,...erpIds,...capacityIds,...followed.configIds])],autoUpdatedFields:followed.count,autoChanges:followed.autoChanges,count:changes.length,skipped};
 }

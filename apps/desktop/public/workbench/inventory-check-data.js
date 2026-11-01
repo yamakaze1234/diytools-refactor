@@ -2,7 +2,8 @@
 import {actualParts} from './actual-parts.js';
 import {inventoryLinks} from './inventory-export.js';
 import {isSpecialComponent} from './special-components.js';
-import {replaceSourcePart} from './source.js';
+import {replaceBothParts} from './replace-both-parts.js';
+import {mergeTaskPlans} from './batch-task-plans.js';
 import {applyReplacement} from './global-batch.js';
 
 export function inventoryThreshold(value){
@@ -41,7 +42,7 @@ export function stockReplacementPlan(configs,costs,catalog,report,key,productIds
  const selected=new Set(productIds),changes=[];
  for(const config of configs.filter(c=>!c.deletedAt&&!c.emptyLinkDraft&&c.shopId===report.shopId)){
   const targets=original.sources.filter(s=>s.configId===config.id&&selected.has(s.productId));if(!targets.length)continue;
-  const after=structuredClone(config);for(const target of targets)replaceSourcePart(Array.isArray(after.actualParts)?{...after,parts:after.actualParts,addons:[]}:after,target.index,replacement);
+  const after=structuredClone(config);for(const target of targets)replaceBothParts(after,target.slot,replacement);
   if(JSON.stringify(config)!==JSON.stringify(after))changes.push({id:config.id,productId:targets[0].productId,product:config.product,name:config.name,before:structuredClone(config),after});
  }
  if(!changes.length)throw Error('所选链接没有需要替换的配件');
@@ -49,8 +50,16 @@ export function stockReplacementPlan(configs,costs,catalog,report,key,productIds
 }
 /** 确认报告、现有配置和候选商品仍匹配，防止应用过期替换计划。 */
 export function validateStockReplacement(plan,configs,costs,catalog){
+ if(plan.taskPlans){for(const taskPlan of plan.taskPlans)validateStockReplacement(taskPlan,configs,costs,catalog);applyReplacement(plan,structuredClone(configs));return;}
  const current=componentStock(plan.issue.goodsId,costs,plan.threshold);
  for(const key of ['value','status','updatedAt','reason'])if(current[key]!==plan.issue[key])throw Error('库存已变化，请重新检查');
  const row=catalog.find(r=>r.sourceId===plan.replacement.sourceId);if(JSON.stringify(row)!==JSON.stringify(plan.replacement))throw Error('新配件或绑定加购已变化，请重新预览');
  applyReplacement(plan,structuredClone(configs));
+}
+
+/** 库存任务共享同一报告，验证全部任务后才交给一次批量保存。 */
+export function stockReplacementTasksPlan(configs,costs,catalog,report,tasks){
+ if(!report)throw Error('请先重新检查库存');
+ const taskPlans=tasks.map((task,index)=>{try{return stockReplacementPlan(configs,costs,catalog,report,task.issueKey,task.productIds,task.sourceId);}catch(error){throw Error(`任务 ${index+1}：${error.message}`);}});
+ return {...mergeTaskPlans(taskPlans),taskPlans,replacements:taskPlans.map(plan=>plan.replacement)};
 }

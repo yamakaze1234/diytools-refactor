@@ -5,7 +5,7 @@ import {Badge} from '../components/reui/badge';
 
 export function LinkPartsPanel({model}:{model:Row}) {
  return <div className="link-parts-layout" data-reui-link-parts="">
-  <p className="text-sm text-muted-foreground"><strong>{model.product.name}</strong> · 可添加多条规则，按列表顺序执行。查找替换时，未选择新配件即删除原配件；统一预览后保存。</p>
+  <p className="text-sm text-muted-foreground"><strong>{model.product.name}</strong> · 可添加多条任务，按列表顺序执行。查找替换时，未选择新配件即删除原配件；统一预览后保存。</p>
   <section className="link-parts-scope" aria-label="修改范围">
    <label className="field">修改范围<Select id="link-part-scope" value="link"><option value="link">当前链接全部配置</option><option value="selected">按左侧勾选配置修改（本店，可跨链接）</option></Select></label>
    <div className="flex flex-wrap gap-4" role="group" aria-label="修改内容"><label className="flex items-center gap-2"><Input id="link-part-display" type="checkbox" checked/>展示配件</label><label className="flex items-center gap-2"><Input id="link-part-actual" type="checkbox" checked/>实际配件</label></div>
@@ -15,7 +15,7 @@ export function LinkPartsPanel({model}:{model:Row}) {
   <div className="flex flex-wrap gap-2"><Button type="button" id="link-part-add-replace">＋ 查找替换</Button><Button type="button" id="link-part-add-new">＋ 新增配件</Button></div>
   <div className="link-part-preview-bar flex flex-wrap items-center gap-3"><Button type="button" id="link-part-preview">预览全部修改</Button><Button type="button" id="link-part-apply" variant="default" disabled>应用到本链接</Button><label className="flex items-center gap-2"><Input id="link-part-show-all" type="checkbox"/>显示全部配件</label></div>
   <p id="link-part-status" role="status" aria-live="polite" className="text-sm"/>
-  <div id="link-part-diff"><p className="text-sm text-muted-foreground">设置规则后，点击“预览全部修改”查看各配置的修改前后总览。</p></div>
+  <div id="link-part-diff"><p className="text-sm text-muted-foreground">设置任务后，点击“预览全部修改”查看各配置的修改前后总览。</p></div>
   <section id="link-part-export-panel" className="hidden">
    <Frame spacing="sm"><FrameHeader><FrameTitle>导出本次修改的链接图片</FrameTitle></FrameHeader><FramePanel><div className="flex flex-col gap-3">
     <p id="link-part-export-summary" className="text-sm text-muted-foreground"/>
@@ -29,7 +29,7 @@ export function LinkPartsPanel({model}:{model:Row}) {
 
 export function LinkPartsRule({model}:{model:Row}) {
  const id=(name:string)=>`link-part-${name}${model.suffix}`;
- // 外层规则已提供边框，避免再嵌套容器和拉伸字段。
+ // 外层任务已提供边框，避免再嵌套容器和拉伸字段。
  return <>
   <header className="link-part-rule-heading"><strong data-rule-title=""/><Button type="button" data-rule-remove="">移除</Button></header>
   <div className="link-part-rule-grid">
@@ -46,7 +46,7 @@ export function LinkPartsOverview({model}:{model:Row}) {
  const partText=(part:Row|null)=>part&&(part.name||part.goodsId)?`${part.displayName||part.name||'未命名'} ×${part.qty??1}`:'空';
  return <div className="flex flex-col gap-3">
   <h3>修改结果总览</h3><p className="text-sm text-muted-foreground">{model.summary}</p>
-  <div className="flex flex-wrap gap-2">{model.rules.map((rule:Row,i:number)=><Badge key={i} variant="info-light">规则 {i+1} · {rule.mode==='add'?'新增':rule.mode==='delete'?'删除':'替换'} {rule.name}：{rule.count} 套</Badge>)}</div>
+  <div className="flex flex-wrap gap-2">{model.rules.map((rule:Row,i:number)=><Badge key={i} variant="info-light">任务 {i+1} · {rule.mode==='add'?'新增':rule.mode==='delete'?'删除':'替换'} {rule.name}：{rule.count} 套</Badge>)}</div>
   {model.rows.length?<div className="link-part-overview-wrap" tabIndex={0} aria-label="修改结果总览"><table className="link-part-overview"><thead><tr>{['配置','修改内容','槽位','修改前','修改后'].map(title=><th key={title}>{title}</th>)}</tr></thead><tbody>{model.rows.map((row:Row,index:number)=><tr key={`${row.id}:${row.field}:${row.slot}:${index}`} className={row.changed?'is-changed':''}><th scope="row">{row.name}<small>{row.product}</small></th><td>{row.field==='parts'?'展示配件':'实际配件'}</td><td>{row.slot}</td><td>{partText(row.before)}<small>{row.before?.goodsId?'ERP ID '+row.before.goodsId:''}</small></td><td>{row.after?partText(row.after):'删除'}<small>{row.after?.goodsId?'ERP ID '+row.after.goodsId:''}{row.changed?' · 已修改':''}</small></td></tr>)}</tbody></table></div>:<p className="text-sm text-muted-foreground">没有需要修改的配件。可勾选“显示全部配件”查看当前配置。</p>}
  </div>;
 }

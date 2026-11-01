@@ -479,7 +479,7 @@
    border-color: var(--ef-rule) !important; border-radius: 0 !important; box-shadow: none !important;
  }
  html[data-workbench-design] #dialog :is(.source-batch-bar .hint,.source-new-shops small,.source-diff-item span,.source-diff-item del) { color: var(--ef-ink-2) !important; }
- html[data-workbench-design] #dialog-body :is(.source-toolbar,.source-diff-controls,.source-review,.source-review-footer,.source-description-group,.shop-addon-common,.source-sync-top,.source-auto-follow-panel,#source-capacity) {
+ html[data-workbench-design] #dialog-body :is(.source-toolbar,.source-diff-controls,.source-review,.source-review-footer,.source-description-group,.shop-addon-common,.source-sync-top,.source-auto-follow-panel,#source-capacity,#source-hardware) {
    background: var(--ef-panel) !important; color: var(--ef-ink) !important;
    border-color: var(--ef-rule) !important; border-radius: 0 !important; box-shadow: none !important;
  }
@@ -488,8 +488,8 @@
    background: var(--ef-paper) !important; color: var(--ef-ink) !important;
    border-color: var(--ef-rule) !important; border-radius: 0 !important;
  }
- html[data-workbench-design] #dialog :is(.source-review .source-option-change span,#source-capacity legend) { color: var(--ef-ink) !important; }
- html[data-workbench-design] #dialog :is(.source-review .hint,.source-review small,.source-review-pagination,.source-review .source-description-heading span,.source-review .source-option-change > b,.source-review-tabs button,.source-change-entry span,.source-auto-follow-panel h4 span,#source-capacity small) { color: var(--ef-ink-2) !important; }
+ html[data-workbench-design] #dialog :is(.source-review .source-option-change span,#source-capacity legend,#source-hardware legend) { color: var(--ef-ink) !important; }
+ html[data-workbench-design] #dialog :is(.source-review .hint,.source-review small,.source-review-pagination,.source-review .source-description-heading span,.source-review .source-option-change > b,.source-review-tabs button,.source-change-entry span,.source-auto-follow-panel h4 span,#source-capacity small,#source-hardware small,#source-hardware .hardware-intro) { color: var(--ef-ink-2) !important; }
  html[data-workbench-design] #dialog :is(.shop-addon-card.is-selected,.source-description-group.is-selected,.source-review-tabs button[aria-pressed=true]) { border-color: var(--ef-trace) !important; }
  html[data-workbench-design] #dialog .source-cost-override-warning { background: var(--ef-signal) !important; color: var(--ef-on-signal) !important; border-color: var(--ef-trace) !important; border-radius: 0 !important; }
 }
@@ -783,13 +783,13 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:rela
  html[data-workbench-design] #dialog .batch-description-toolbar { display:flex !important; align-items:end !important; gap:12px !important; justify-content:space-between !important; }
  html[data-workbench-design] #dialog .batch-description-toolbar>.field { width:260px !important; max-width:100% !important; }
  html[data-workbench-design] #dialog #upgrade-batch-shortcuts button { padding:6px 10px !important; font-size:12px !important; }
- #upgrade-batch-tasks { display:grid; gap:8px; min-width:0; }
- #upgrade-batch-task-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:8px; max-height:170px; overflow:auto; }
- #upgrade-batch-task-list .upgrade-task { display:flex; min-width:0; border:1px solid var(--ef-rule,#d9d9d9); }
- #upgrade-batch-task-list [data-upgrade-task] { flex:1; min-width:0; display:grid; gap:4px; padding:9px 10px; text-align:left; }
- #upgrade-batch-task-list [data-upgrade-task] :is(strong,small) { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
- html[data-workbench-design] #dialog #upgrade-batch-task-list [data-upgrade-task][aria-pressed=true] { box-shadow:inset 3px 0 currentColor !important; background:var(--ef-paper,#f3f3f3) !important; }
- #upgrade-batch-task-list [data-upgrade-task-delete] { flex:0 0 32px; padding:5px; }
+ :is(#upgrade-batch-tasks,#global-tasks,#stock-tasks) { display:grid; gap:8px; min-width:0; }
+ :is(#upgrade-batch-task-list,#global-task-list,#stock-task-list) { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr)); gap:8px; max-height:170px; overflow:auto; }
+ :is(#upgrade-batch-task-list,#global-task-list,#stock-task-list) .upgrade-task { display:flex; min-width:0; border:1px solid var(--ef-rule,#d9d9d9); }
+ :is(#upgrade-batch-task-list,#global-task-list,#stock-task-list) :is([data-upgrade-task],[data-global-task],[data-stock-task]) { flex:1; min-width:0; display:grid; gap:4px; padding:9px 10px; text-align:left; }
+ :is(#upgrade-batch-task-list,#global-task-list,#stock-task-list) :is([data-upgrade-task],[data-global-task],[data-stock-task]) :is(strong,small) { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+ html[data-workbench-design] #dialog :is(#upgrade-batch-task-list,#global-task-list,#stock-task-list) :is([data-upgrade-task],[data-global-task],[data-stock-task])[aria-pressed=true] { box-shadow:inset 3px 0 currentColor !important; background:var(--ef-paper,#f3f3f3) !important; }
+ :is(#upgrade-batch-task-list,#global-task-list,#stock-task-list) :is([data-upgrade-task-delete],[data-global-task-delete],[data-stock-task-delete]) { flex:0 0 32px; padding:5px; }
  html[data-workbench-design] #dialog .batch-description-filters { display:grid !important; grid-template-columns:160px minmax(0,1fr) minmax(0,1fr) !important; gap:12px !important; }
  html[data-workbench-design] #dialog .batch-description-filters:not(:has(#upgrade-batch-slot)) { grid-template-columns:minmax(0,1fr) !important; }
  html[data-workbench-design] #dialog .batch-description-body { display:grid !important; grid-template-columns:minmax(260px,.9fr) minmax(0,1.3fr) !important; gap:16px !important; align-items:start !important; }
