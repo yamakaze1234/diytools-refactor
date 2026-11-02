@@ -64,6 +64,7 @@ function replacement(state,request){
 
 /** 按完整配置生成可审查快照；不会修改 state、request 或输出源。 */
 export function buildAgentPlan(state,request){
+ if(request?.action?.type==='configFields')return buildConfigFieldsPlan(state,request);
  requestInput(request);
  if(!state||!Number.isSafeInteger(state.revision)||state.revision<0||!Array.isArray(state.configs))fail('工作区版本或配置无效');
  const action=request.action,groups=new Map();
@@ -109,6 +110,44 @@ export function buildAgentPlan(state,request){
   if(!same(before,after))changes.push({id:before.id,productId:before.productId,name:before.name,product:before.product,before:copy(before),after,targets:copy(targets)});
  }
  return transportPlan({baseRevision:state.revision,shopId:request.shopId,request:copy(request),changes,sources:source?[copy(source.effective)]:[],sourceBaselines:source?[copy(source.baseline)]:[],baselines,summary:{action:action.type,targetCount:request.targets.length,configCount:groups.size,changedConfigCount:changes.length}});
+}
+
+/** 定点维护到手价和 SKU；不运行配件归一化或自动简称生成。 */
+function buildConfigFieldsPlan(state,request){
+ object(request,['shopId','targets','action'],'请求');text(request.shopId,'shopId');
+ object(request.action,['type'],'操作');
+ if(!Array.isArray(request.targets)||!request.targets.length||request.targets.length>64)fail('每次必须选择 1 至 64 个目标');
+ if(!state||!Number.isSafeInteger(state.revision)||state.revision<0||!Array.isArray(state.configs))fail('工作区版本或配置无效');
+ const seen=new Set(),changes=[],baselines=[],replacements=new Map();
+ for(const target of request.targets){
+  object(target,['configId','expected','changes'],'目标');text(target.configId,'configId');
+  if(seen.has(target.configId))fail('目标配置重复');seen.add(target.configId);
+  object(target.expected,['spu','shortName','price','skuId'],'原值');
+  for(const key of ['spu','shortName'])text(target.expected[key],key);
+  object(target.changes,['price','skuId'],'变更');
+  if(!Object.keys(target.changes).length)fail('变更不能为空');
+  const matches=state.configs.filter(c=>c.id===target.configId);
+  if(matches.length!==1)fail('目标配置不存在或不唯一');
+  const before=matches[0];
+  if(before.deletedAt||(before.shopId||'intel')!==request.shopId||before.__workbenchSummary)fail('配置已删除、跨店铺或尚未完整加载');
+  for(const key of Object.keys(target.changes)){
+   if(!Object.hasOwn(target.expected,key))fail('缺少待修改字段原值');
+   const value=target.changes[key];
+   if(key==='price'&&(typeof value!=='number'||!Number.isFinite(value)||value<0||!Number.isSafeInteger(Math.round(value*100))||Math.abs(value*100-Math.round(value*100))>1e-7))fail('到手价必须是非负金额，最多两位小数');
+   if(key==='skuId'&&(typeof value!=='string'||!/^\d{1,64}$/.test(value)))fail('SKU 必须是 1 至 64 位数字字符串');
+  }
+  for(const [key,value] of Object.entries(target.expected))if(!same(before[key]??null,value))fail(`配置 ${key} 原值已变化，请重新读取`);
+  const after={...copy(before),...copy(target.changes)};
+  baselines.push({id:before.id,before:copy(before)});replacements.set(before.id,after);
+  if(!same(before,after))changes.push({id:before.id,productId:before.productId,name:before.name,product:before.product,before:copy(before),after,targets:[copy(target)]});
+ }
+ // 只检查本批写入的 SKU，既有无关重复不阻止价格修改。
+ for(const target of request.targets.filter(t=>Object.hasOwn(t.changes,'skuId'))){
+  const after=replacements.get(target.configId);
+  const matches=state.configs.map(c=>replacements.get(c.id)||c).filter(c=>!c.deletedAt&&(c.shopId||'intel')===request.shopId&&c.spu===after.spu&&c.skuId===after.skuId);
+  if(matches.length!==1)fail('同店铺 SPU 下 SKU 重复');
+ }
+ return transportPlan({baseRevision:state.revision,shopId:request.shopId,request:copy(request),changes,sources:[],sourceBaselines:[],baselines,summary:{action:'configFields',targetCount:seen.size,configCount:seen.size,changedConfigCount:changes.length}});
 }
 
 /** 保存前拒绝版本、界面配置、输出源或预览计划本身的任何变化。 */

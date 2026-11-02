@@ -28,7 +28,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let store = workbench_store::initialize(
         &review.join("workbench.sqlite"),
-        &root.join("migration-review/20261011/source-state.json"),
+        &if review.join("source.json").is_file() { review.join("source.json") } else { root.join("migration-review/20261011/source-state.json") },
         &assets,
     )
     .map_err(std::io::Error::other)?;
@@ -43,6 +43,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         // Development-only local checkpoint probe; no transport, member login or
         // network. The directory gate above prevents using a production store.
         let result = match input["probe"].as_str() {
+            Some("version-hashes") => {
+                let file=review.join(input["file"].as_str().ok_or("Missing isolated database file")?).canonicalize()?;
+                if !file.starts_with(review.canonicalize()?) || file.extension().and_then(|v|v.to_str())!=Some("sqlite") {
+                    return Err("Version audit must stay inside the isolated review directory".into());
+                }
+                workbench_store::review_version_hashes(&file,&input["ids"])
+            }
             Some("cloud-load") => workbench_store::cloud_checkpoint_load(&store),
             Some("cloud-commit") => workbench_store::cloud_checkpoint_commit(&store, &input["payload"]),
             Some("cloud-status") => workbench_store::cloud_checkpoint_status(&store).map(|value| workbench_store::ApiResponse { status: 200, body: value.to_string() }),

@@ -37,6 +37,16 @@ test('普通批量命名按链接分别编号，保留配置号，重名链接�
  assert.equal(numberedImageEntries([{name:'自定义',productId:'a'}],'square')[0].name,'1_配置1.png');
 });
 
+test('跨链接双图导出的路径符合原生单层子目录契约',async()=>{
+ const rows=configs().map((c,i)=>({...c,productId:'link'+i,product:'链接'+i}));let task;
+ const context={chosen:()=>rows,clone:structuredClone,imageExportOptions:()=>({kind:'both',skuMode:'padded',width:0}),defaultPosterWidth:()=>1000,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{}};
+ await vm.runInNewContext(body+'\nbatchExportFull()',context);
+ assert.equal(task.entries.length,4);
+ assert.equal(new Set(task.entries.map(e=>e.name)).size,4);
+ assert.ok(task.entries.every(e=>e.name.split('/').length===2));
+ assert.deepEqual(Array.from(task.entries,e=>e.name),['链接0_配置图/1_配置1.png','链接1_配置图/1_配置2.png','链接0_sku图/1_配置1.png','链接1_sku图/1_配置2.png']);
+});
+
 test('仅勾选一套的批量入口也用统一文件名且保留该套主题',async()=>{
  const row=configs()[1];let saved;
  const context={chosen:()=>[row],current:()=>configs()[0],clone:structuredClone,imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1000}),$:()=>({value:'1000'}),defaultPosterWidth:()=>1000,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,

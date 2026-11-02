@@ -19,7 +19,7 @@ export function BatchDescription({model}:{model:Row}){
    <details open><summary>选择影响的链接</summary><label className="global-all"><Input id="upgrade-batch-all" type="checkbox" checked/>全选关联链接</label><div id="upgrade-batch-links" className="global-list"/></details>
    <label className="field">新的配件加购描述<Textarea id="upgrade-batch-text" rows={3} placeholder="留空可清除所选配件的说明"/></label>
    <div className="batch-description-export"><label className="global-export"><Input id="upgrade-batch-export" type="checkbox"/>保存后导出配置清单图和 SKU 图</label>
-   <label className="field">导出范围<Select id="upgrade-batch-export-scope" value="all"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></Select></label>
+   <label className="field">导出范围<Select id="upgrade-batch-export-scope" value="all"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></Select></label><label className="field">SKU 图样式<Select id="upgrade-batch-sku-mode" value="padded"><option value="dedicated">缩略图（专用 SKU 排版）</option><option value="padded">详情图补白至 1:1</option></Select></label>
    </div><p className="hint">保留各套主题；桌面版保存到文件夹，网页版下载 ZIP。</p>
    <details id="upgrade-batch-diff-details"><summary>查看修改明细</summary><pre id="upgrade-batch-diff"/></details>
    <div className="compact-tool-actions"><Button id="upgrade-batch-preview" type="button">预览修改</Button><Button id="upgrade-batch-apply" type="button" variant="default" disabled>应用修改</Button></div>

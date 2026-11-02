@@ -121,7 +121,7 @@ export function createLinkPartsExportSession(api){
     return savedScope;
    }catch(error){if(saved)error.saved=true;throw error;}finally{saving=false;}
   },
-  async export(kind,status,range='changed'){
+  async export(kind,status,range='changed',skuMode='padded'){
    if(closed)throw cancelled();
    if(saving||exportController)throw Error('请等待当前操作完成');
    if(!savedScope)throw Error('请先保存有变动的配置');
@@ -133,7 +133,7 @@ export function createLinkPartsExportSession(api){
    selectedScope.exportConfigIds=range==='changed'?[...savedScope.changedConfigIds]:[...savedScope.exportConfigIds];
    const controller=new AbortController();exportController=controller;
    try{
-    const result=await api.exportImages(selectedScope,kind,message=>{if(!closed&&!controller.signal.aborted)status(message);},{signal:controller.signal});
+    const result=await api.exportImages(selectedScope,kind,message=>{if(!closed&&!controller.signal.aborted)status(message);},{signal:controller.signal,skuMode});
     // 原生保存完成后迟到的取消不能推翻任务中心的实际交付回执。
     if(controller.signal.aborted&&!['completed','partial'].includes(result?.phase))throw controller.signal.reason||cancelled();
     return result;
@@ -149,7 +149,7 @@ export function createLinkPartsExportSession(api){
 export function openLinkParts(api){
  const {product,openDialog,esc,getConfigs,getCatalog,getCosts=()=>[],apply,toast}=api;
  const price=value=>value===null||value===undefined||String(value).trim()===''||!Number.isFinite(Number(value))?'未知':'¥'+Number(value).toLocaleString('zh-CN',{maximumFractionDigits:2});
- openDialog('链接内配件批量修改',`<p class="hint">${esc(product.name)} · 可添加多条任务，按列表顺序执行。查找替换时，未选择新配件即删除原配件；统一预览后保存。</p><label class="field">修改范围<select id="link-part-scope"><option value="link">当前链接全部配置</option><option value="selected">按左侧勾选配置修改（本店，可跨链接）</option></select></label><div class="actions" role="group" aria-label="修改内容"><label><input id="link-part-display" type="checkbox" checked> 展示配件</label><label><input id="link-part-actual" type="checkbox" checked> 实际配置</label></div><p id="link-part-scope-summary" class="hint"></p><div id="link-part-rules"></div><div class="actions"><button id="link-part-add-replace">＋ 查找替换</button><button id="link-part-add-new">＋ 新增配件</button></div><div class="link-part-preview-bar actions"><button id="link-part-preview">预览全部修改</button><button id="link-part-apply" class="primary" disabled>应用到本链接</button><label><input id="link-part-show-all" type="checkbox"> 显示全部配件</label></div><p id="link-part-status" role="status" aria-live="polite"></p><div id="link-part-diff"><p class="hint">设置任务后，点击“预览全部修改”查看各配置的修改前后总览。</p></div><section id="link-part-export-panel" class="hidden"><h3>导出本次修改的链接图片</h3><p id="link-part-export-summary" class="hint"></p><div class="actions"><label class="field">导出范围<select id="link-part-export-scope"><option value="changed" selected>仅本次有变动的配置</option><option value="all">有变动链接内全部配置</option></select></label><label class="field">图片类型<select id="link-part-export-kind"><option value="long">配置清单图</option><option value="square">SKU 图</option><option value="both" selected>配置清单图和 SKU 图</option></select></label><button id="link-part-export">导出已保存配置图片</button><button id="link-part-export-cancel" class="hidden">取消导出</button></div><p class="hint">按所选范围导出已保存配置，默认仅导出本次有变动的配置。后续编辑不影响本次导出；图片保留链接内序号。可重新选择范围和类型再次导出。</p></section>`);
+ openDialog('链接内配件批量修改',`<p class="hint">${esc(product.name)} · 可添加多条任务，按列表顺序执行。查找替换时，未选择新配件即删除原配件；统一预览后保存。</p><label class="field">修改范围<select id="link-part-scope"><option value="link">当前链接全部配置</option><option value="selected">按左侧勾选配置修改（本店，可跨链接）</option></select></label><div class="actions" role="group" aria-label="修改内容"><label><input id="link-part-display" type="checkbox" checked> 展示配件</label><label><input id="link-part-actual" type="checkbox" checked> 实际配置</label></div><p id="link-part-scope-summary" class="hint"></p><div id="link-part-rules"></div><div class="actions"><button id="link-part-add-replace">＋ 查找替换</button><button id="link-part-add-new">＋ 新增配件</button></div><div class="link-part-preview-bar actions"><button id="link-part-preview">预览全部修改</button><button id="link-part-apply" class="primary" disabled>应用到本链接</button><label><input id="link-part-show-all" type="checkbox"> 显示全部配件</label></div><p id="link-part-status" role="status" aria-live="polite"></p><div id="link-part-diff"><p class="hint">设置任务后，点击“预览全部修改”查看各配置的修改前后总览。</p></div><section id="link-part-export-panel" class="hidden"><h3>导出本次修改的链接图片</h3><p id="link-part-export-summary" class="hint"></p><div class="actions"><label class="field">导出范围<select id="link-part-export-scope"><option value="changed" selected>仅本次有变动的配置</option><option value="all">有变动链接内全部配置</option></select></label><label class="field">SKU 图样式<select id="link-part-sku-mode"><option value="dedicated">缩略图（专用 SKU 排版）</option><option value="padded" selected>详情图补白至 1:1</option></select></label><label class="field">图片类型<select id="link-part-export-kind"><option value="long">配置清单图</option><option value="square">SKU 图</option><option value="both" selected>配置清单图和 SKU 图</option></select></label><button id="link-part-export">导出已保存配置图片</button><button id="link-part-export-cancel" class="hidden">取消导出</button></div><p class="hint">按所选范围导出已保存配置，默认仅导出本次有变动的配置。后续编辑不影响本次导出；图片保留链接内序号。可重新选择范围和类型再次导出。</p></section>`);
  api.render?.({product});
  const root=document.querySelector('#link-part-status'),dialog=root.closest('dialog'),$=s=>dialog.querySelector(s);
  let plan=null,busy=false,phase='',serial=0;const rules=[];
@@ -235,7 +235,7 @@ export function openLinkParts(api){
   const kind=$('#link-part-export-kind').value,range=$('#link-part-export-scope').value;lock(true);phase='exporting';
   $('#link-part-export-cancel').classList.remove('hidden');$('#link-part-export-cancel').disabled=false;
   dialog.querySelector('form[method="dialog"] button.close')?.removeAttribute('disabled');
-  try{await session.export(kind,status,range);}
+  try{await session.export(kind,status,range,$('#link-part-sku-mode').value);}
   catch(error){if(active())status(error.name==='AbortError'?'修改已保存，已取消图片导出。可重新导出。':'修改已保存，导出未完成：'+error.message);}
   finally{phase='';lock(false);if(active()){$('#link-part-export-cancel').classList.add('hidden');if(!plan)$('#link-part-apply').disabled=true;}}
  };

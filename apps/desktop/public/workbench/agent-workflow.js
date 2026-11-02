@@ -17,6 +17,11 @@ function appliedResult(plan,baseline,rawReceipt){
  if(!receipt||!Number.isSafeInteger(receipt.revision)||receipt.revision<plan.baseRevision||!Array.isArray(receipt.configs))fail('SAVE_UNCONFIRMED','保存回执未确认，请按原 operationId 查询任务');
  const saved=new Map(receipt.configs.map(c=>[c.id,c]));
  if(saved.size!==receipt.configs.length||plan.changes.some(change=>!saved.has(change.id)))fail('SAVE_UNCONFIRMED','保存回执缺少目标配置，请按原 operationId 查询任务');
+ if(plan.request?.action?.type==='configFields'){
+  for(const change of plan.changes)for(const key of Object.keys(change.targets[0].changes)){
+   if(saved.get(change.id)[key]!==change.after[key])fail('SAVE_UNCONFIRMED','价格或 SKU 保存回执与计划不一致，请按原 operationId 查询任务');
+  }
+ }
  const configs=baseline.configs.map(c=>structuredClone(saved.get(c.id)||c));
  return {localSave:'saved',revision:receipt.revision,receipt,snapshot:{configs,revision:receipt.revision,configIds:baseline.configIds}};
 }

@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn config_fields_protocol_validates_prices_skus_and_guards() {
+    let valid = json!({"operationId":operation(),"request":{"shopId":"intel","action":{"type":"configFields"},"targets":[{"configId":"c1","expected":{"spu":"123","shortName":"配置1","price":100,"skuId":""},"changes":{"price":99.99,"skuId":"90071992547409931234"}}]}});
+    assert!(validate("changes.preview", &valid).is_ok());
+    for changes in [json!({"price":-1}),json!({"price":1.001}),json!({"price":"1"}),json!({"skuId":123}),json!({"skuId":""}),json!({"skuId":"abc"}),json!({"name":"x"}),json!({})] {
+        let mut bad=valid.clone();bad["request"]["targets"][0]["changes"]=changes;
+        assert!(validate("changes.preview", &bad).is_err());
+    }
+    let mut bad=valid.clone();bad["request"]["targets"][0]["expected"].as_object_mut().unwrap().remove("price");
+    assert!(validate("changes.preview", &bad).is_err());
+    let mut bad=valid.clone();bad["request"]["targets"]=json!(vec![valid["request"]["targets"][0].clone();65]);
+    assert!(validate("changes.preview", &bad).is_err());
+}
+
+#[test]
 fn completion_ack_can_be_retried_after_persist_without_blocking_next_task() {
     let (folder, _, jobs) = fixture();
     let session = operation();

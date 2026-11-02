@@ -136,9 +136,11 @@ pub(super) fn check_factory_empty(c: &Connection) -> Result<()> {
         let mut q = c.prepare("SELECT document FROM workbench_history").map_err(|e| e.to_string())?;
         q.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?.collect::<std::result::Result<_,_>>().map_err(|e| e.to_string())?
     };
-    if histories.len() != 1 { return Err(reject.into()); }
-    let imported: Value = serde_json::from_str(&histories[0]).map_err(|e| e.to_string())?;
+    if histories.len() > 1 { return Err(reject.into()); }
+    if let Some(history) = histories.first() {
+    let imported: Value = serde_json::from_str(history).map_err(|e| e.to_string())?;
     if imported["type"] != "import" || imported["configCount"] != 0 || imported["logCount"] != 0 { return Err(reject.into()); }
+    }
     // 检查所有其他持久表，包含恢复草稿、历史版本、ERP预览和未来新增的业务表。
     // 只放行明确的投影/缓存维护元数据，不能仅凭 configs=[] 认定新库。
     let tables: Vec<String> = {
@@ -147,7 +149,7 @@ pub(super) fn check_factory_empty(c: &Connection) -> Result<()> {
     };
     for table in tables {
         // v3 根元数据已在上面的聚合正文比较中核对，配置实体仍须逐表检查为空。
-        if ["workbench_metadata","workbench_state","workbench_log_archive","workbench_history","workbench_state_header","workbench_config_projection_meta","workbench_cache_maintenance"].contains(&table.as_str()) { continue; }
+        if ["workbench_metadata","workbench_state","workbench_log_archive","workbench_history","workbench_state_header","workbench_config_projection_meta","workbench_cache_maintenance","workbench_history_retention"].contains(&table.as_str()) { continue; }
         let sql = format!("SELECT EXISTS(SELECT 1 FROM \"{}\")", table.replace('"', "\"\""));
         if c.query_row(&sql, [], |r| r.get::<_, bool>(0)).map_err(|e| e.to_string())? { return Err(reject.into()); }
     }

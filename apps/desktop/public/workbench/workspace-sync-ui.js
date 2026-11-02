@@ -10,6 +10,7 @@ import {mountCloudConflicts} from './cloud-conflict-view.js';
 export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMember,renderPanel}){
  const $=selector=>document.querySelector(selector),button=$('#workspace-sync'),label=$('#workspace-sync-status'),operator=$('#operator-open');
  const history=bindVersionHistory({flush,receive,openDialog,esc,toast,runMutation}),legacy=bindLegacyHistory({flush,receive,openDialog,esc,toast,runMutation});
+ let nextMaintenance=0;
  let available=true,phase='',timer,maintenanceTimer,lastSyncedAt=null,wasRunning=false,leaving=false,cleaning=false;
  const blocked=()=>Boolean(window.workbenchAgentBusy||window.parent.workbenchClosePending||window.parent.workbenchUpdatePending);
  const localOnly=view=>view.configured===false||view.session.configured===false;
@@ -92,11 +93,15 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
  const cacheSize=bytes=>`${(Number(bytes||0)/1024/1024).toFixed(2)} MiB`;
  const cacheResultText=result=>`已清理 ${Number(result.cleared.images?.count||0)} 张旧生成图（${cacheSize(result.cleared.images?.bytes)}）、${Number(result.cleared.updates?.count||0)} 个历史更新备份（${cacheSize(result.cleared.updates?.bytes)}）；${Number(result.cleared.index?.count??result.cleared.count)} 套配置索引已清理，需要时重建。`;
  async function maintainCache(){
-  if(!available||cleaning||blocked()||leaving||controller.status().running||window.workbenchSourceEditor?.hasPending())return;
-  cleaning=true;
-  try{await flush();if(blocked()||leaving||controller.status().running)return;const result=await cacheRequest('maintain');if(!result.skipped&&result.cleared?.count)toast(cacheResultText(result));}
+  if(Date.now()<nextMaintenance||!available||cleaning||blocked()||leaving||controller.status().running||window.workbenchHasPendingChanges?.()||$('#dialog')?.open||document.activeElement?.matches('input,textarea,select')||window.workbenchSourceEditor?.hasPending())return;
+  cleaning=true;let releaseMaintenance;
+  try{await flush();if(blocked()||leaving||controller.status().running||window.workbenchHasPendingChanges?.())return;
+   window.workbenchMaintenancePromise=new Promise(resolve=>{releaseMaintenance=resolve;});
+   const retention=await fetch('/api/versions/maintain',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+   const retained=await retention.json();if(!retention.ok)throw Error(retained.error||'历史清理未完成');if(retained.reason==='busy')return;
+   const result=await cacheRequest('maintain');if(!result.skipped&&result.cleared?.count)toast(cacheResultText(result));nextMaintenance=Math.max(Date.now()+60*1000,Date.parse(retained.nextCheckAt)||Date.now()+60*60*1000);}
   catch(error){showError(error);}
-  finally{cleaning=false;render(controller.status());}
+  finally{releaseMaintenance?.();window.workbenchMaintenancePromise=null;cleaning=false;render(controller.status());}
  }
  async function openCache(){
   // 缓存统计只读取已保存数据，不触发保存，也不抢占正在运行的同步。
@@ -105,7 +110,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   const marker=$('#cache-message');
   let plan;try{plan=await cacheRequest();}catch(error){if($('#cache-message')===marker)marker.textContent=error.message;return;}
   if($('#cache-message')!==marker||!$('#dialog')?.open)return;
-  openDialog('清理本机缓存',`<p>每 3 天自动清理一次；关闭期间到期，下次启动后补做。</p>${(plan.categories||[]).map(c=>`<p>${esc(c.label)}：${Number(c.count||0)} 项，约 ${cacheSize(c.bytes)}。</p>`).join('')}<p>过期且无引用的旧生成图会直接删除；每套配置各版式的最新生成图、配置、历史记录、恢复草稿和原图均保留。</p><p>历史更新备份只保留最近一次可回退备份，更早的成功更新目录直接删除；失败或尚未确认的更新保留。更新成功后也会自动清理，未完成的清理在下次启动时重试。</p><p class="hint">配置索引需要时重建，空间供数据库复用，数据库文件不会立即缩小。</p><p>下次自动清理：${plan.nextCleanupAt?esc(new Date(plan.nextCleanupAt).toLocaleString('zh-CN')):'首次运行后开始计时'}</p><p id="cache-message" role="status"></p><div class="actions"><button id="cache-clear" class="primary" ${plan.count?'':'disabled'}>清理缓存</button><button id="cache-shops">删除所选店铺数据</button><button id="cache-back">返回数据与同步</button></div>`);
+  openDialog('清理本机缓存',`<p>每 3 天自动清理一次；关闭期间到期，下次启动后补做。</p>${(plan.categories||[]).map(c=>`<p>${esc(c.label)}：${Number(c.count||0)} 项，约 ${cacheSize(c.bytes)}。</p>`).join('')}<p>本次缓存清理会删除过期且无引用的旧生成图；每套配置各版式的最新生成图、当前配置、历史记录、恢复草稿和原图不受本次缓存清理影响。</p><p><strong>历史记录独立自动清理：</strong>普通历史和恢复草稿按创建时间保留最近 7 天；命名版本长期保留，直到主动删除。保存、同步或还原期间暂缓清理，无需点击“清理缓存”触发。</p><p>历史更新备份只保留最近一次可回退备份，更早的成功更新目录直接删除；失败或尚未确认的更新保留。更新成功后也会自动清理，未完成的清理在下次启动时重试。</p><p class="hint">配置索引需要时重建，空间供数据库复用，数据库文件不会立即缩小。</p><p>下次自动清理：${plan.nextCleanupAt?esc(new Date(plan.nextCleanupAt).toLocaleString('zh-CN')):'首次运行后开始计时'}</p><p id="cache-message" role="status"></p><div class="actions"><button id="cache-clear" class="primary" ${plan.count?'':'disabled'}>清理缓存</button><button id="cache-shops">删除所选店铺数据</button><button id="cache-back">返回数据与同步</button></div>`);
   $('#cache-back').onclick=guard(open);
   $('#cache-shops').onclick=guard(openShopCleanup);
   const clearButton=$('#cache-clear'),message=$('#cache-message');
@@ -173,7 +178,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
    <div class="cloud-main-actions"><div class="actions"><button id="cloud-sync-now" class="primary" data-cloud-idle>立即同步</button><button id="cloud-pause">${view.automatic?'暂停同步':'继续同步'}</button><button id="cloud-conflicts" data-cloud-idle ${conflictCount(view)?'':'hidden'}>处理冲突</button></div><span id="cloud-auto-note" class="cloud-auto-note">${view.automatic?'每 2 小时自动同步':'自动同步已暂停'}</span></div>`}
    <p id="cloud-message" class="error" role="status"></p>
    <p class="cloud-background-note">同步在后台进行，可关闭此窗口继续编辑。</p>
-   <details class="cloud-tools"><summary>历史、缓存与诊断</summary><p class="hint">本机缓存每 3 天自动清理；还原和清理需等待本轮同步完成。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-diagnostics">导出诊断日志</button><button id="cloud-diagnostic-text">查看诊断文本</button></div></details>
+   <details class="cloud-tools"><summary>历史、缓存与诊断</summary><p class="hint">普通历史及恢复草稿保留 7 天，命名版本长期保留；本机缓存每 3 天清理。保存、同步或还原期间暂缓清理。</p><div class="actions"><button id="local-cache">清理本机缓存</button><button id="offline-history">本机历史版本</button><button id="offline-restore">还原配置</button><button id="offline-legacy-history">旧版历史归档</button><button id="cloud-diagnostics">导出诊断日志</button><button id="cloud-diagnostic-text">查看诊断文本</button></div></details>
    <div class="cloud-footer">${!localOnly(view)&&available&&view.session.authenticated?'<button id="cloud-logout" class="cloud-signout">退出登录</button>':'<span></span>'}<button id="cloud-close">关闭</button></div></section>`);
   // Mount once per open, before binding the existing handlers. Status leaves and
   // native control properties below remain owned by render(view), not React state.
@@ -200,7 +205,8 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   if(selectedShops.length)Promise.resolve().then(()=>controller.start()).catch(showError).then(maintainCache);
   else void maintainCache();
   }else void maintainCache();
-  maintenanceTimer=setInterval(maintainCache,60*60*1000);
+  // 每分钟仅检查是否已到期/空闲；成功处理后至少一小时才再次调用维护接口。
+  maintenanceTimer=setInterval(maintainCache,60*1000);
  }
  $('#dialog').addEventListener('close',()=>{setTimeout(()=>controller.deliver().catch(showError),0);});
  window.workbenchPauseCloud=()=>controller.stop();

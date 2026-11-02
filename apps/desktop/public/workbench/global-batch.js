@@ -116,7 +116,7 @@ export function openUpgradeDescriptionBatch(api){
  const {openDialog,apply,esc}=api,isName=api.field==='displayName';
  const getConfigs=(scope=$('#upgrade-batch-scope')?.value)=>api.getConfigs().filter(c=>!c.deletedAt&&(!api.productId||(scope==='selected'?(api.getSelectedIds?.()||[]).includes(c.id):c.productId===api.productId)));
  const descriptionQuery=()=>isName?'':$('#upgrade-batch-description-query').value;
- openDialog(isName?'批量修改配件展示名称':api.productId?'批量修改加购描述':'批量修改全店加购说明',`${api.productId?'<label class="field">修改范围<select id="upgrade-batch-scope"><option value="link">当前链接全部配置</option><option value="selected">勾选配置（本店，可跨链接）</option></select></label>':''}<p class="hint">按配件或加购描述查找，只修改范围内符合搜索条件的逐项升级说明。手动添加的“加购与选配”、实际配置和输出源均保留。</p><label class="field">查找原配件<input id="upgrade-batch-query" placeholder="输入配件名称或 ERP ID"></label><label class="field">只搜索加购描述<input id="upgrade-batch-description-query" placeholder="输入逐项升级说明关键词，可单独搜索"></label><div id="upgrade-batch-candidates" class="global-list"></div><div id="upgrade-batch-work" class="hidden"><details open><summary>选择影响的链接</summary><label class="global-all"><input id="upgrade-batch-all" type="checkbox" checked> 全选关联链接</label><div id="upgrade-batch-links" class="global-list"></div></details><label class="field">新的配件加购描述<textarea id="upgrade-batch-text" rows="3" placeholder="留空可清除所选配件的说明"></textarea></label><label class="global-export"><input id="upgrade-batch-export" type="checkbox"> 保存后导出对应修改链接的配置清单图和 SKU 图</label><label class="field">导出范围<select id="upgrade-batch-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><p class="hint">每套导出配置图和 SKU 图，保留各套主题；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="upgrade-batch-preview">预览修改</button><button id="upgrade-batch-apply" class="primary" disabled>应用修改</button></div><details id="upgrade-batch-diff-details"><summary>查看修改明细</summary><pre id="upgrade-batch-diff"></pre></details></div><p id="upgrade-batch-status" role="status"></p><button id="upgrade-batch-retry" class="hidden">导出刚修改的链接图片</button><button id="upgrade-batch-undo" class="hidden">一键还原本次修改</button>`);
+ openDialog(isName?'批量修改配件展示名称':api.productId?'批量修改加购描述':'批量修改全店加购说明',`${api.productId?'<label class="field">修改范围<select id="upgrade-batch-scope"><option value="link">当前链接全部配置</option><option value="selected">勾选配置（本店，可跨链接）</option></select></label>':''}<p class="hint">按配件或加购描述查找，只修改范围内符合搜索条件的逐项升级说明。手动添加的“加购与选配”、实际配置和输出源均保留。</p><label class="field">查找原配件<input id="upgrade-batch-query" placeholder="输入配件名称或 ERP ID"></label><label class="field">只搜索加购描述<input id="upgrade-batch-description-query" placeholder="输入逐项升级说明关键词，可单独搜索"></label><div id="upgrade-batch-candidates" class="global-list"></div><div id="upgrade-batch-work" class="hidden"><details open><summary>选择影响的链接</summary><label class="global-all"><input id="upgrade-batch-all" type="checkbox" checked> 全选关联链接</label><div id="upgrade-batch-links" class="global-list"></div></details><label class="field">新的配件加购描述<textarea id="upgrade-batch-text" rows="3" placeholder="留空可清除所选配件的说明"></textarea></label><label class="global-export"><input id="upgrade-batch-export" type="checkbox"> 保存后导出对应修改链接的配置清单图和 SKU 图</label><label class="field">导出范围<select id="upgrade-batch-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><label class="field">SKU 图样式<select id="upgrade-batch-sku-mode"><option value="dedicated">缩略图（专用 SKU 排版）</option><option value="padded" selected>详情图补白至 1:1</option></select></label><p class="hint">每套导出配置图和 SKU 图，保留各套主题；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="upgrade-batch-preview">预览修改</button><button id="upgrade-batch-apply" class="primary" disabled>应用修改</button></div><details id="upgrade-batch-diff-details"><summary>查看修改明细</summary><pre id="upgrade-batch-diff"></pre></details></div><p id="upgrade-batch-status" role="status"></p><button id="upgrade-batch-retry" class="hidden">导出刚修改的链接图片</button><button id="upgrade-batch-undo" class="hidden">一键还原本次修改</button>`);
  api.render?.({hasScope:Boolean(api.productId),multiTask:true});
  const $=s=>document.querySelector(s);
  if(isName){
@@ -131,7 +131,7 @@ export function openUpgradeDescriptionBatch(api){
  let lockedControls=[];
  const lock=value=>{busy=value;if(value){lockedControls=[...dialog.querySelectorAll('input,textarea,select,button')].map(el=>({el,disabled:el.disabled}));lockedControls.forEach(({el})=>el.disabled=true);}else{lockedControls.forEach(({el,disabled})=>{if(el.isConnected)el.disabled=disabled;});lockedControls=[];}};
  const controller=new AbortController();dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();},{signal:controller.signal});dialog.addEventListener('close',()=>{controller.abort();dialog.classList.remove('global-batch-dialog');},{once:true,signal:controller.signal});
- const exportOptions=ids=>({configIds:$('#upgrade-batch-export-scope').value==='changed'?ids:null});
+ const exportOptions=ids=>({configIds:$('#upgrade-batch-export-scope').value==='changed'?ids:null,skuMode:$('#upgrade-batch-sku-mode').value});
  const exportImages=()=>exportBatchImages(api,exportIds,status,exportOptions(changedConfigIds));
  const invalidate=()=>{plan=null;$('#upgrade-batch-apply').disabled=true;$('#upgrade-batch-diff').textContent='';};
  const updateAll=()=>{const rows=[...dialog.querySelectorAll('[data-upgrade-link]')],count=rows.filter(el=>el.checked).length;$('#upgrade-batch-all').checked=rows.length>0&&count===rows.length;$('#upgrade-batch-all').indeterminate=count>0&&count<rows.length;invalidate();};
@@ -192,6 +192,7 @@ export function openUpgradeDescriptionBatch(api){
  $('#upgrade-batch-text').oninput=()=>{invalidate();captureTask();renderTasks();};
  $('#upgrade-batch-export').onchange=invalidate;
  $('#upgrade-batch-export-scope').onchange=invalidate;
+ $('#upgrade-batch-sku-mode').onchange=invalidate;
  $('#upgrade-batch-preview').onclick=()=>{try{
   $('#upgrade-batch-diff-details').open=true;
   captureTask();plan=upgradeDescriptionTasksPlan(api.getConfigs(),tasks.map(task=>({...task,configIds:getConfigs(task.scope).map(c=>c.id)})),isName?'displayName':'upgrade');
@@ -231,7 +232,7 @@ export function replacementDiff(plan){
 }
 const safe=s=>String(s).replace(/[<>:"/\\|?*\x00-\x1f]/g,'_').replace(/[. ]+$/g,'').slice(0,90)||'未命名';
 /** 根据图片种类和链接范围列出导出任务，并按需处理重复文件名。 */
-export function exportEntries(configs,productIds,imageKind='both',{configIds=null}={}){
+export function exportEntries(configs,productIds,imageKind='both',{configIds=null,skuMode=null}={}){
  // 先按完整链接编号再筛选，增量导图与全量导图使用同一个文件名。
  const selected=configIds===null?null:new Set(configIds);
  const layouts=imageKind==='both'?['long','square']:['long','square'].includes(imageKind)?[imageKind]:null;
@@ -239,7 +240,7 @@ export function exportEntries(configs,productIds,imageKind='both',{configIds=nul
  const groups=productGroups(configs.filter(c=>!c.deletedAt)).filter(g=>productIds.includes(g.id)),entries=[],folders=new Set(),paths=new Set();
  for(const g of groups){if(g.configs.some(c=>(!selected||selected.has(c.id))&&!/^\d+$/.test(c.spu||'')))throw Error(`“${g.name}”缺少有效 SPU，请先补齐，或取消自动导出`);// 同名链接保留独立目录，比较时忽略大小写以符合 Windows 文件系统。
  let folder=safe(g.name).slice(0,80),base=folder,n=1;while(folders.has(folder.toLowerCase()))folder=`${base}_${++n}`;folders.add(folder.toLowerCase());
-  g.configs.forEach((c,i)=>{if(selected&&!selected.has(c.id))return;for(const layout of layouts){const base=`${imageFolderName(folder,layout)}/${imageConfigFilename(c,i).slice(0,-4)}`;let name=base+'.png',duplicate=1;while(paths.has(name))name=base+'_'+(++duplicate)+'.png';paths.add(name);entries.push({name,config:{...clone(c),layout}});}});
+  g.configs.forEach((c,i)=>{if(selected&&!selected.has(c.id))return;for(const layout of layouts){const base=`${imageFolderName(folder,layout)}/${imageConfigFilename(c,i).slice(0,-4)}`;let name=base+'.png',duplicate=1;while(paths.has(name))name=base+'_'+(++duplicate)+'.png';paths.add(name);entries.push({name,config:{...clone(c),layout,...(layout==='square'&&skuMode?{skuMode:skuMode==='padded'?'padded':'dedicated'}:{})}});}});
  }return entries;
 }
 
@@ -247,13 +248,13 @@ export function exportEntries(configs,productIds,imageKind='both',{configIds=nul
 export function openGlobalBatch(api){
  const {openDialog,esc,toast,getConfigs,getCatalog,apply,save,download}=api;
  const slots=[...new Set(getConfigs().flatMap(c=>(c.parts||[]).map(p=>p.slot)).filter(Boolean))];
- openDialog('批量修改配件与导图',`<div class="global-entry-bar"><p class="hint">按配件汇总当前店铺。选择配件后，每条任务勾选要修改的链接，统一预览与保存。</p><button id="global-addons">只修改加购描述</button></div><section id="global-tasks"></section><div class="global-search-bar"><input id="global-query" type="search" placeholder="搜索配件名称、ERP ID、链接或 SPU" aria-label="查找原配件"><select id="global-slot" aria-label="按配件部位筛选"><option value="">全部配件部位</option>${slots.map(slot=>`<option>${esc(slot)}</option>`).join('')}</select></div><div id="global-candidates" class="global-usage-list"></div><div id="global-work" class="hidden"><div class="global-entry-bar"><strong id="global-original"></strong><button id="global-back">返回配件汇总</button></div><details id="global-link-details" open><summary>选择影响的链接 <span id="global-summary"></span></summary><label class="global-all"><input id="global-all" type="checkbox" checked> 全选关联链接</label><div id="global-links" class="global-list"></div></details><div id="global-product-search"></div><label class="field">统一数量（留空保留原数量）<input id="global-qty" type="number" min="1" step="1" placeholder="保留原数量"></label></div><div class="global-batch-footer"><label class="global-export"><input id="global-export" type="checkbox"> 保存后导出配置清单图和 SKU 图</label><label class="field">导出范围<select id="global-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><p class="hint">展示配件与实际配置的对应槽位同步替换。图片按链接及类型分文件夹；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="global-preview">预览全部任务</button><button id="global-apply" class="primary" disabled>应用全部修改</button></div><details id="global-diff-details"><summary>查看修改明细</summary><div id="global-diff" class="hint"></div></details></div><p id="global-status" role="status" class="hint"></p><button id="global-retry" class="hidden">导出刚修改的链接图片</button><button id="global-undo" class="hidden">一键还原本次修改</button>`);
+ openDialog('批量修改配件与导图',`<div class="global-entry-bar"><p class="hint">按配件汇总当前店铺。选择配件后，每条任务勾选要修改的链接，统一预览与保存。</p><button id="global-addons">只修改加购描述</button></div><section id="global-tasks"></section><div class="global-search-bar"><input id="global-query" type="search" placeholder="搜索配件名称、ERP ID、链接或 SPU" aria-label="查找原配件"><select id="global-slot" aria-label="按配件部位筛选"><option value="">全部配件部位</option>${slots.map(slot=>`<option>${esc(slot)}</option>`).join('')}</select></div><div id="global-candidates" class="global-usage-list"></div><div id="global-work" class="hidden"><div class="global-entry-bar"><strong id="global-original"></strong><button id="global-back">返回配件汇总</button></div><details id="global-link-details" open><summary>选择影响的链接 <span id="global-summary"></span></summary><label class="global-all"><input id="global-all" type="checkbox" checked> 全选关联链接</label><div id="global-links" class="global-list"></div></details><div id="global-product-search"></div><label class="field">统一数量（留空保留原数量）<input id="global-qty" type="number" min="1" step="1" placeholder="保留原数量"></label></div><div class="global-batch-footer"><label class="global-export"><input id="global-export" type="checkbox"> 保存后导出配置清单图和 SKU 图</label><label class="field">导出范围<select id="global-export-scope"><option value="all">所选链接全部配置</option><option value="changed">仅本次有变动的配置</option></select></label><label class="field">SKU 图样式<select id="global-sku-mode"><option value="dedicated">缩略图（专用 SKU 排版）</option><option value="padded" selected>详情图补白至 1:1</option></select></label><p class="hint">展示配件与实际配置的对应槽位同步替换。图片按链接及类型分文件夹；桌面版保存到文件夹，网页版下载 ZIP。</p><div class="actions"><button id="global-preview">预览全部任务</button><button id="global-apply" class="primary" disabled>应用全部修改</button></div><details id="global-diff-details"><summary>查看修改明细</summary><div id="global-diff" class="hint"></div></details></div><p id="global-status" role="status" class="hint"></p><button id="global-retry" class="hidden">导出刚修改的链接图片</button><button id="global-undo" class="hidden">一键还原本次修改</button>`);
  const $=selector=>document.querySelector(selector),root=$('#global-status'),dialog=root.closest('dialog');dialog.classList.add('global-batch-dialog');
  let partKey='',groups=[],plan=null,busy=false,exportIds=null,changedConfigIds=null,undoRecords=null,occurrences=null;
  const controller=new AbortController();dialog.addEventListener('cancel',event=>{if(busy)event.preventDefault();},{signal:controller.signal});dialog.addEventListener('close',()=>{controller.abort();dialog.classList.remove('global-batch-dialog');},{once:true,signal:controller.signal});
  const status=message=>{if(root.isConnected)root.textContent=message;};
  const invalidate=()=>{plan=null;$('#global-apply').disabled=true;$('#global-diff').textContent='';};
- const exportOptions=ids=>({configIds:$('#global-export-scope').value==='changed'?ids:null});
+ const exportOptions=ids=>({configIds:$('#global-export-scope').value==='changed'?ids:null,skuMode:$('#global-sku-mode').value});
  const picked=()=>[...dialog.querySelectorAll('[data-global-link]:checked')].map(el=>el.value);
  const updateSummary=()=>{const chosen=groups.filter(group=>picked().includes(group.id));$('#global-summary').textContent=`${chosen.length} 个链接 · ${chosen.reduce((n,g)=>n+g.matches.length,0)} 套命中配置`;$('#global-all').checked=chosen.length===groups.length;$('#global-all').indeterminate=chosen.length>0&&chosen.length<groups.length;invalidate();};
  const selectPart=row=>{
@@ -283,7 +284,7 @@ export function openGlobalBatch(api){
   }
  });
  $('#global-qty').oninput=invalidate;
- for(const id of ['global-qty','global-export','global-export-scope'])$('#'+id).onchange=invalidate;
+ for(const id of ['global-qty','global-export','global-export-scope','global-sku-mode'])$('#'+id).onchange=invalidate;
  $('#global-preview').onclick=()=>{try{
   plan=replacementTasksPlan(getConfigs(),tasks.snapshot());
   if($('#global-export').checked)exportEntries(getConfigs(),plan.productIds,'both',exportOptions(plan.changes.map(c=>c.id)));
@@ -318,7 +319,7 @@ export async function exportBatchImages(api,exportIds,status=()=>{},options={}){
  const active=()=>{if(options.signal?.aborted)throw options.signal.reason||new DOMException('图片导出已取消','AbortError');};
  // 保存可能与继续编辑并行，先固定本次点击的完整输入。
  active();const snapshots=clone(options.snapshots||api.getConfigs());if(!options.snapshots)await api.save?.();active();
- const entries=exportEntries(snapshots,exportIds,options.imageKind||'both',{configIds:options.configIds??null});
+ const entries=exportEntries(snapshots,exportIds,options.imageKind||'both',{configIds:options.configIds??null,skuMode:options.skuMode});
  if(!entries.length)throw Error('本次没有可导出的链接配置');
  const directories=[...new Set(entries.map(entry=>entry.name.split('/')[0]))];
  const name=directories.length===1?directories[0]:`批量导出图片_${Date.now()}`;

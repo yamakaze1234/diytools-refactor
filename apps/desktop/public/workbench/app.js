@@ -127,7 +127,7 @@ function fitPartText(input){input.style.height='auto';input.style.height=Math.ma
 // 用短时状态提示反馈结果；复用同一节点和计时器，避免消息层堆积。
 function toast(message){const el=$('#toast');el.textContent=message;el.setAttribute('popover','manual');el.setAttribute('role','status');el.setAttribute('aria-live','polite');el.classList.remove('hidden');if(el.matches(':popover-open'))el.hidePopover();el.showPopover();clearTimeout(toast.timer);toast.timer=setTimeout(()=>{el.hidePopover();el.classList.add('hidden');},4500);}
 // 统一 JSON 请求、超时及登录失效通知；保留 HTTP 状态码供冲突恢复判断。
-async function request(url,options={}){try{const r=await fetch(url,{signal:AbortSignal.timeout(options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)?120000:45000),...options,headers:{'Content-Type':'application/json',...options.headers}}),j=await r.json();if(!r.ok){const e=Error(j.error||'请求失败');e.status=r.status;if(r.status===401)window.dispatchEvent(new CustomEvent('workspace-auth-error',{detail:e.message}));throw e;}return j;}catch(error){if(error?.name==='TimeoutError'&&options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)){throw Object.assign(Error('本机保存等待超时，尚未确认是否写入。当前输入已保留，请勿关闭；可查看诊断文本。'),{name:'TimeoutError'});}throw error;}}
+async function request(url,options={}){if(options.method==='POST'&&typeof window!=='undefined')await window.workbenchMaintenancePromise;try{const r=await fetch(url,{signal:AbortSignal.timeout(options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)?120000:45000),...options,headers:{'Content-Type':'application/json',...options.headers}}),j=await r.json();if(!r.ok){const e=Error(j.error||'请求失败');e.status=r.status;if(r.status===401)window.dispatchEvent(new CustomEvent('workspace-auth-error',{detail:e.message}));throw e;}return j;}catch(error){if(error?.name==='TimeoutError'&&options.method==='POST'&&['/api/state','/api/configs/batch','/api/configs/patch'].includes(url)){throw Object.assign(Error('本机保存等待超时，尚未确认是否写入。当前输入已保留，请勿关闭；可查看诊断文本。'),{name:'TimeoutError'});}throw error;}}
 const lazyWorkspace=createLazyWorkspace({request});
 let fullWorkspace=false,workspaceLoad=null,activationGeneration=0,fullActionBusy=0;
 const loadedIds=()=>state.configs.map(c=>c.id);
@@ -470,6 +470,7 @@ async function applyBatchChanges(plan,message,agentOptions=null){
  changed(message,ids,false,new Map(plan.changes.map(c=>[c.id,c.before])),!displayChanged);renderAll();clearTimeout(timer);
  const sent=cloneEditorState(state),base=new Map(acceptedState.configs.map(c=>[c.id,c])),intents=new Map(plan.changes.map(c=>[c.id,c]));
  const payload={operationId:agentOptions?.operationId||crypto.randomUUID(),baseRevision:acceptedState.revision,operator,message,
+  ...(plan.request?.action?.type==='configFields'?{mode:'configFields'}:{}),
   changes:ids.map(id=>{const intent=intents.get(id),saved=base.get(id),local=clone(intent.after),live=byId.get(id);
    if(live.shortName!==intent.before.shortName)local.shortName=live.shortName;
    if(live.emptyLinkDraft!==intent.before.emptyLinkDraft){if(Object.hasOwn(live,'emptyLinkDraft'))local.emptyLinkDraft=live.emptyLinkDraft;else delete local.emptyLinkDraft;}
@@ -795,7 +796,8 @@ async function batchExportFull(){
 }
 async function exportConfiguredImages(configs,batch){
  const {kind,skuMode,width}=imageExportOptions(),layouts=kind==='both'?['long','square']:[kind];
- const entries=layouts.flatMap(layout=>numberedImageEntries(configs,layout).map(({config,name})=>({config:{...clone(config),layout,...(layout==='square'?{skuMode}:{})},name:layouts.length>1?(layout==='long'?'配置图/':'SKU图/')+name:batch?name:filename({...config,layout})})));
+ // 多链接条目已含链接和图种目录；不再套图种目录，保持原生导出支持的一层子目录。
+ const entries=layouts.flatMap(layout=>numberedImageEntries(configs,layout).map(({config,name})=>({config:{...clone(config),layout,...(layout==='square'?{skuMode}:{})},name:layouts.length>1&&!name.includes('/')?(layout==='long'?'配置图/':'SKU图/')+name:batch?name:filename({...config,layout})})));
  const draft=dirty||!!savePromise||conflict,revision=state.revision,shopId=activeShopId,shopName=currentShop().name;
  exportJobs++;
  try{
@@ -863,9 +865,9 @@ function openLinkPartsDialogFull(){
    try{const prepared=await prepareWorkspaceState(acceptedState,baseCatalog);const configs=prepared.state.configs.filter(c=>c.shopId===openedShop);for(const c of configs){c.modules=posterModules(c);c.upgradeWeight??=400;}return {configs};}
    catch(error){error.saved=true;throw error;}
   },
-  exportImages:async(scope,kind,status,{signal})=>{
+  exportImages:async(scope,kind,status,{signal,skuMode})=>{
    exportJobs++;clearTimeout(imageTimer);
-   try{return await exportBatchImages({download:downloadBlob,renderImage:(c,width)=>imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}))},scope.productIds,status,{imageKind:kind,signal,snapshots:scope.snapshots,configIds:scope.exportConfigIds,deduplicateNames:true});}
+   try{return await exportBatchImages({download:downloadBlob,renderImage:(c,width)=>imageRenderGate.run(({beforeDraw})=>renderPoster(c,width,{beforeDraw}))},scope.productIds,status,{imageKind:kind,skuMode,signal,snapshots:scope.snapshots,configIds:scope.exportConfigIds,deduplicateNames:true});}
    finally{exportJobs--;scheduleImageSave();}
   }
  });
@@ -988,7 +990,7 @@ try{const [index,base,memberSession]=await Promise.all([lazyWorkspace.refresh(),
 window.workbenchAgentExecute=createAgentWorkflow({
  state:()=>state,
  savedState:()=>acceptedState,
- blocked:()=>!window.workbenchReady||workspaceLoad||fullActionBusy||detailLoads.size>0||dirty||savePromise||ordinaryPending||batchPromise||batchPending||conflict||Boolean($('#dialog')?.open)||Boolean(window.workbenchSourceEditor?.hasPending())||Boolean(workspaceSyncUi?.status().running)||Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending),
+ blocked:()=>!!window.workbenchMaintenancePromise||!window.workbenchReady||workspaceLoad||fullActionBusy||detailLoads.size>0||dirty||savePromise||ordinaryPending||batchPromise||batchPending||conflict||Boolean($('#dialog')?.open)||Boolean(window.workbenchSourceEditor?.hasPending())||Boolean(workspaceSyncUi?.status().running)||Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending),
  load:ensureFullWorkspace,
  lock:blockSync=>{const roots=[document.documentElement,window.parent.document.documentElement],previous=roots.map(root=>root.inert);roots.forEach(root=>root.inert=true);window.workbenchAgentBusy=blockSync;return()=>{roots.forEach((root,i)=>root.inert=previous[i]);window.workbenchAgentBusy=false;};},
  apply:(plan,operationId,baseline)=>applyBatchChanges(plan,'Agent 修改配置',{operationId,baseline}),

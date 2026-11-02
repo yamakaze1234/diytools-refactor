@@ -786,6 +786,35 @@ fn validate(method: &str, params: &Value) -> Result<()> {
                 .filter(|a| !a.is_empty() && a.len() <= 10000)
                 .ok_or_else(|| error("INVALID_PARAMS", "targets 必须包含 1 至 10000 项"))?;
             for target in targets {
+                if request["action"]["type"] == "configFields" {
+                    fields(target, &["configId", "expected", "changes"], &["configId", "expected", "changes"])?;
+                    text(target, "configId")?;
+                    let expected = &target["expected"];
+                    let changes = &target["changes"];
+                    fields(expected, &["spu", "shortName", "price", "skuId"], &["spu", "shortName"])?;
+                    text(expected, "spu")?;
+                    text(expected, "shortName")?;
+                    fields(changes, &["price", "skuId"], &[])?;
+                    if changes.as_object().unwrap().is_empty() || targets.len() > 64 {
+                        return Err(error("INVALID_PARAMS", "变更不能为空，每批最多 64 个配置"));
+                    }
+                    for key in changes.as_object().unwrap().keys() {
+                        if expected.get(key).is_none() {
+                            return Err(error("INVALID_PARAMS", "缺少待修改字段原值"));
+                        }
+                    }
+                    if let Some(value) = changes.get("price") {
+                        if !value.as_f64().is_some_and(|v| v.is_finite() && v >= 0.0 && v * 100.0 <= 9007199254740991.0 && (v * 100.0 - (v * 100.0).round()).abs() <= 1e-7) {
+                            return Err(error("INVALID_PARAMS", "到手价必须是非负金额，最多两位小数"));
+                        }
+                    }
+                    if let Some(value) = changes.get("skuId") {
+                        if !value.as_str().is_some_and(|v| !v.is_empty() && v.len() <= 64 && v.bytes().all(|b| b.is_ascii_digit())) {
+                            return Err(error("INVALID_PARAMS", "SKU 必须是 1 至 64 位数字字符串"));
+                        }
+                    }
+                    continue;
+                }
                 fields(
                     target,
                     &[
@@ -813,6 +842,9 @@ fn validate(method: &str, params: &Value) -> Result<()> {
                 &["type"],
             )?;
             match action["type"].as_str() {
+                Some("configFields") => {
+                    fields(action, &["type"], &["type"])?;
+                }
                 Some("displayName" | "upgrade") => {
                     fields(action, &["type", "value"], &["type", "value"])?;
                     if !action["value"].as_str().is_some_and(|s| s.len() <= 4096) {

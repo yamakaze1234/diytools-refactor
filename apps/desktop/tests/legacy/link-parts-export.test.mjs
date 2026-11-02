@@ -132,3 +132,17 @@ test('默认仅导出变动配置，切换全部与三种图种保留原序号�
  await assert.rejects(session.export('both',()=>{},'invalid'),/导出范围/);
  assert.equal(saves,1);assert.deepEqual(session.scope().exportConfigIds,['1','2']);
 });
+
+for(const skuMode of ['dedicated','padded'])test('批量修改与重试按所选SKU样式渲染且不修改保存快照：'+skuMode,async()=>{
+ const rows=[config('1'),config('2')],before=structuredClone(rows),rendered=[];
+ await exportBatchImages({renderImage:async c=>{rendered.push(c);return renderer(c);},saveFolder:async()=>({directory:'测试'})},['a'],()=>{},{snapshots:rows,skuMode,configIds:['2']});
+ assert.equal(rendered.length,2);assert.equal(rendered.find(c=>c.layout==='square').skuMode,skuMode);
+ assert.equal(rendered.find(c=>c.layout==='long').skuMode,rows[1].skuMode);assert.deepEqual(rows,before);
+});
+
+test('链接批量导出再次选择样式传递到实际导出入口',async()=>{
+ const rows=[config('1')],modes=[];
+ const session=createLinkPartsExportSession({getConfigs:()=>rows,apply:async plan=>applyReplacement(plan,rows),exportImages:async(scope,kind,status,options)=>modes.push(options.skuMode)});
+ await session.save(batch(rows));await session.export('both',()=>{},'changed','padded');await session.export('square',()=>{},'all','dedicated');
+ assert.deepEqual(modes,['padded','dedicated']);
+});

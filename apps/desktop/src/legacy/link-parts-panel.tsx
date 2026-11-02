@@ -19,7 +19,7 @@ export function LinkPartsPanel({model}:{model:Row}) {
   <section id="link-part-export-panel" className="hidden">
    <Frame spacing="sm"><FrameHeader><FrameTitle>导出本次修改的链接图片</FrameTitle></FrameHeader><FramePanel><div className="flex flex-col gap-3">
     <p id="link-part-export-summary" className="text-sm text-muted-foreground"/>
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="field">导出范围<Select id="link-part-export-scope" value="changed"><option value="changed">仅本次有变动的配置</option><option value="all">有变动链接内全部配置</option></Select></label><label className="field">图片类型<Select id="link-part-export-kind" value="both"><option value="long">配置清单图</option><option value="square">SKU 图</option><option value="both">配置清单图和 SKU 图</option></Select></label></div>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><label className="field">导出范围<Select id="link-part-export-scope" value="changed"><option value="changed">仅本次有变动的配置</option><option value="all">有变动链接内全部配置</option></Select></label><label className="field">SKU 图样式<Select id="link-part-sku-mode" value="padded"><option value="dedicated">缩略图（专用 SKU 排版）</option><option value="padded">详情图补白至 1:1</option></Select></label><label className="field">图片类型<Select id="link-part-export-kind" value="both"><option value="long">配置清单图</option><option value="square">SKU 图</option><option value="both">配置清单图和 SKU 图</option></Select></label></div>
     <div className="flex flex-wrap gap-2"><Button type="button" id="link-part-export">导出已保存配置图片</Button><Button type="button" id="link-part-export-cancel" className="hidden">取消导出</Button></div>
     <p className="text-sm text-muted-foreground">按所选范围导出已保存配置，默认仅导出本次有变动的配置。后续编辑不影响本次导出；图片保留链接内序号。可重新选择范围和类型再次导出。</p>
    </div></FramePanel></Frame>

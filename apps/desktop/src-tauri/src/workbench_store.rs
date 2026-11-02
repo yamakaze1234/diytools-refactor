@@ -38,6 +38,8 @@ mod lazy_workspace;
 mod entities;
 #[cfg(test)]
 pub(crate) use entities::replace_fixture;
+#[path = "workbench_store/retention.rs"]
+mod retention;
 #[path = "workbench_store/cache.rs"]
 mod cache;
 #[path = "workbench_store/image_cache.rs"]
@@ -324,6 +326,7 @@ pub fn initialize(path: &Path, source: &Path, assets: &Path) -> Result<Workbench
         .map_err(|e| e.to_string())?;
         tx.execute("INSERT INTO workbench_history(at,revision,document) VALUES(?1,?2,?3)",params![now(),revision(&imported),json!({"type":"import","sourceHash":format!("{:x}",Sha256::digest(raw.as_bytes())),"configCount":imported["configs"].as_array().unwrap().len(),"logCount":archive.as_array().unwrap().len()}).to_string()]).map_err(|e|e.to_string())?;
     }
+    retention::schema(&tx)?;
     entities::initialize(&tx)?;
     lazy_workspace::initialize_projection(&tx)?;
     tx.commit().map_err(|e| e.to_string())?;
@@ -774,8 +777,10 @@ fn save_batch(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse> {
         .as_array()
         .filter(|r| !r.is_empty() && r.len() <= 1000)
         .ok_or("批量配置数量无效，最多 1000 套")?;
+    let config_fields = input["mode"] == "configFields";
     let ordinary = match input.get("mode").and_then(Value::as_str) {
         None => false,
+        Some("configFields") => false,
         Some("ordinary") => true,
         _ => return Ok(failure(400, "配置增量模式无效")),
     };
@@ -807,6 +812,21 @@ fn save_batch(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse> {
         return Ok(failure(409, "批量基线版本无效"));
     }
     let rebased = base_revision != revision(&before);
+    if config_fields {
+        if rebased { return Ok(failure(409, "配置字段计划版本已变化，请重新预览")); }
+        if rows.len() > 64 { return Ok(failure(400, "配置字段每批最多 64 套")); }
+        allowed = ["price", "skuId"].into_iter().collect();
+        for row in rows {
+            let base = &row["base"];
+            let desired = &row["after"];
+            if base.get("price") != desired.get("price") && !desired["price"].as_f64().is_some_and(|v| v.is_finite() && v >= 0.0 && v*100.0 <= 9007199254740991.0 && (v*100.0-(v*100.0).round()).abs() <= 1e-7) {
+                return Ok(failure(400, "到手价必须是非负金额，最多两位小数"));
+            }
+            if base.get("skuId") != desired.get("skuId") && !desired["skuId"].as_str().is_some_and(|v| !v.is_empty() && v.len()<=64 && v.bytes().all(|b| b.is_ascii_digit())) {
+                return Ok(failure(400, "SKU 必须是数字字符串"));
+            }
+        }
+    }
     let before_revision = before.get("revision").cloned();
     let before_updated_at = before.get("updatedAt").cloned();
     let order_before = before["configs"].as_array().unwrap().iter().map(|c| c["id"].clone()).collect();
@@ -862,6 +882,14 @@ fn save_batch(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse> {
                 saved.push(current.clone());
             }
             _ => return Ok(failure(409, "同一字段已被修改，请重新预览")),
+        }
+    }
+    if config_fields {
+        for row in rows.iter().filter(|row| row["base"].get("skuId") != row["after"].get("skuId")) {
+            let desired = &row["after"];
+            let shop = desired["shopId"].as_str().unwrap_or("intel");
+            let count = configs.iter().filter(|c| c.get("deletedAt").is_none_or(|v| v.is_null() || v=="") && c["shopId"].as_str().unwrap_or("intel")==shop && c["spu"]==desired["spu"] && c["skuId"]==desired["skuId"]).count();
+            if count != 1 { return Ok(failure(409, "同店铺 SPU 下 SKU 重复")); }
         }
     }
     profile_expr!("state_validate", validate(&after))?;
@@ -988,50 +1016,61 @@ fn reconstruct(c: &Connection, sequence: i64) -> Result<Value> {
     {
         let change: Value =
             serde_json::from_str(&record.map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-        for row in change["configs"].as_array().ok_or("历史配置差异无效")? {
-            let configs = snapshot["configs"].as_array_mut().unwrap();
-            let position = configs.iter().position(|c| c["id"] == row["id"]);
-            if row["before"].is_null() {
-                if let Some(i) = position {
-                    configs.remove(i);
-                }
-            } else if let Some(i) = position {
-                configs[i] = row["before"].clone();
-            } else {
-                configs.push(row["before"].clone());
-            }
-        }
-        if let Some(order) = change["orderBefore"].as_array() {
-            let positions: HashMap<_, _> = order
-                .iter()
-                .enumerate()
-                .filter_map(|(i, id)| id.as_str().map(|id| (id, i)))
-                .collect();
-            snapshot["configs"]
-                .as_array_mut()
-                .unwrap()
-                .sort_by_key(|c| {
-                    positions
-                        .get(c["id"].as_str().unwrap())
-                        .copied()
-                        .unwrap_or(usize::MAX)
-                });
-        }
-        for (key, field) in change["fields"].as_object().ok_or("历史字段差异无效")? {
-            if field["beforePresent"] == false {
-                snapshot.as_object_mut().unwrap().remove(key);
-            } else {
-                snapshot[key] = field["before"].clone();
-            }
-        }
+        reverse_change(&mut snapshot, &change)?;
     }
     validate(&snapshot)?;
     Ok(snapshot)
 }
+fn reverse_change(snapshot: &mut Value, change: &Value) -> Result<()> {
+    // 同一差异批次用 ID 索引定位，避免完整配件同步时逐行扫描整份配置。
+    let configs = snapshot["configs"].as_array_mut().ok_or("历史配置列表无效")?;
+    let mut positions: HashMap<String, usize> = configs.iter().enumerate()
+        .map(|(i,c)|c["id"].as_str().map(|id|(id.to_owned(),i)).ok_or("历史配置 ID 无效"))
+        .collect::<std::result::Result<_,_>>()?;
+    for row in change["configs"].as_array().ok_or("历史配置差异无效")? {
+        let id=row["id"].as_str().ok_or("历史配置 ID 无效")?;
+        let position=positions.get(id).copied();
+        if row["before"].is_null() {
+            if let Some(i)=position {
+                configs.remove(i); positions.remove(id);
+                for position in positions.values_mut() { if *position>i { *position-=1; } }
+            }
+        } else if let Some(i)=position {
+            configs[i]=row["before"].clone();
+        } else {
+            positions.insert(id.to_owned(),configs.len());
+            configs.push(row["before"].clone());
+        }
+    }
+    if let Some(order) = change["orderBefore"].as_array() {
+        let positions: HashMap<_, _> = order
+            .iter()
+            .enumerate()
+            .filter_map(|(i, id)| id.as_str().map(|id| (id, i)))
+            .collect();
+        snapshot["configs"]
+            .as_array_mut()
+            .unwrap()
+            .sort_by_key(|c| {
+                positions
+                    .get(c["id"].as_str().unwrap())
+                    .copied()
+                    .unwrap_or(usize::MAX)
+            });
+    }
+    for (key, field) in change["fields"].as_object().ok_or("历史字段差异无效")? {
+        if field["beforePresent"] == false {
+            snapshot.as_object_mut().unwrap().remove(key);
+        } else {
+            snapshot[key] = field["before"].clone();
+        }
+    }
+    Ok(())
+}
 // 计算目标历史内容及差异供确认，真正恢复时仍需再次检查当前版本。
 fn version_preview(c: &Connection, input: &Value) -> Result<Value> {
     let id = input["id"].as_str().ok_or("历史版本 ID 无效")?;
-    let target = reconstruct(c, version_sequence(c, id)?)?;
+    let target = retention::version(c, id)?;
     let current = state(c)?;
     let raw = target.to_string();
     let hash = format!("{:x}", Sha256::digest(raw.as_bytes()));
@@ -1053,6 +1092,20 @@ fn version_preview(c: &Connection, input: &Value) -> Result<Value> {
     Ok(
         json!({"id":id,"revision":target["revision"],"baseRevision":current["revision"],"hash":hash,"changes":changes}),
     )
+}
+// 隔离宿主只读核验清理前备份，不初始化或复制大库，也不返回业务正文。
+#[cfg(feature = "review-host")]
+pub fn review_version_hashes(path: &Path, ids: &Value) -> Result<ApiResponse> {
+    let ids=ids.as_array().filter(|v|v.len()<=64).ok_or("版本清单无效")?;
+    let mut c=Connection::open_with_flags(path,rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e|e.to_string())?;
+    let tx=c.transaction().map_err(|e|e.to_string())?;
+    let mut hashes=serde_json::Map::new();
+    for id in ids {
+        let id=id.as_str().ok_or("版本 ID 无效")?;
+        let value=retention::version(&tx,id)?;
+        hashes.insert(id.to_owned(),json!({"revision":value["revision"],"sha256":format!("{:x}",Sha256::digest(value.to_string().as_bytes()))}));
+    }
+    Ok(response(200,json!({"hashes":hashes,"readOnly":true})))
 }
 // 处理历史列表、标记、预览和还原；还原须以当前基线执行新的保存事务。
 fn versions(
@@ -1083,7 +1136,7 @@ fn versions(
                 let (seq, at, rev) = item.map_err(|e| e.to_string())?;
                 items.push(json!({"id":format!("v-{seq}"),"at":at,"revision":rev,"reason":if seq==1{"首次导入离线快照"}else{"本机事务保存"},"pinned":false}));
             }
-            let mut query=c.prepare("SELECT n.id,n.name,n.at,h.revision FROM workbench_named_versions n JOIN workbench_history h ON h.sequence=n.sequence WHERE n.deleted=0 ORDER BY n.at DESC").map_err(|e|e.to_string())?;
+            let mut query=c.prepare("SELECT n.id,n.name,n.at,COALESCE(s.revision,h.revision) FROM workbench_named_versions n LEFT JOIN workbench_named_snapshots s ON s.id=n.id LEFT JOIN workbench_history h ON h.sequence=n.sequence WHERE n.deleted=0 ORDER BY n.at DESC").map_err(|e|e.to_string())?;
             for item in query
                 .query_map([], |r| {
                     Ok((
@@ -1101,32 +1154,9 @@ fn versions(
             Ok(response(200, json!({"versions":items})))
         }
         ("GET", "/api/versions/status") => {
-            let count: i64 = c
-                .query_row("SELECT COUNT(*) FROM workbench_history", [], |r| r.get(0))
-                .map_err(|e| e.to_string())?;
-            let named: i64 = c
-                .query_row(
-                    "SELECT COUNT(*) FROM workbench_named_versions WHERE deleted=0",
-                    [],
-                    |r| r.get(0),
-                )
-                .map_err(|e| e.to_string())?;
-            let live: i64 = c
-                .query_row(
-                    "SELECT COALESCE(SUM(LENGTH(document)),0) FROM workbench_history",
-                    [],
-                    |r| r.get(0),
-                )
-                .map_err(|e| e.to_string())?;
-            let bytes = fs::metadata(&store.path).map(|m| m.len()).unwrap_or(0);
-            let wal = fs::metadata(format!("{}-wal", store.path.display()))
-                .map(|m| m.len())
-                .unwrap_or(0);
-            Ok(response(
-                200,
-                json!({"count":count,"named":named,"bytes":bytes,"liveBytes":live,"walBytes":wal,"reusableBytes":0,"limit":null,"lastCleanup":null,"pending":false,"error":null,"automaticCleanup":false,"cleanupAvailable":false}),
-            ))
+            Ok(response(200, retention::status(store, &c)?))
         }
+        ("POST", "/api/versions/maintain") => retention::maintain(store),
         ("POST", "/api/versions/name") => {
             let name = input["name"]
                 .as_str()
@@ -1136,7 +1166,7 @@ fn versions(
                 .transaction_with_behavior(TransactionBehavior::Immediate)
                 .map_err(|e| e.to_string())?;
             let seq: i64 = tx
-                .query_row("SELECT MAX(sequence) FROM workbench_history", [], |r| {
+                .query_row("SELECT COALESCE(MAX(sequence),0) FROM workbench_history", [], |r| {
                     r.get(0)
                 })
                 .map_err(|e| e.to_string())?;
@@ -1146,23 +1176,23 @@ fn versions(
                 params![id, seq, name, now()],
             )
             .map_err(|e| e.to_string())?;
+            retention::save_snapshot(&tx, &id, &state(&tx)?)?;
             tx.commit().map_err(|e| e.to_string())?;
             Ok(response(200, json!({"id":id})))
         }
         ("POST", "/api/versions/delete-named") => {
             let id = input["id"].as_str().ok_or("命名版本 ID 无效")?;
-            let changed = c
-                .execute(
-                    "UPDATE workbench_named_versions SET deleted=1 WHERE id=?1 AND deleted=0",
-                    [id],
-                )
-                .map_err(|e| e.to_string())?;
-            if changed == 0 {
-                return Ok(failure(404, "命名版本不存在"));
-            }
+            let tx = c.transaction_with_behavior(TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+            let changed = tx.execute("UPDATE workbench_named_versions SET deleted=1 WHERE id=?1 AND deleted=0", [id]).map_err(|e| e.to_string())?;
+            if changed == 0 { return Ok(failure(404, "命名版本不存在")); }
+            tx.execute("DELETE FROM workbench_named_snapshots WHERE id=?1", [id]).map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
             Ok(response(200, json!({"ok":true,"retainedHistory":true})))
         }
-        ("POST", "/api/versions/preview") => Ok(response(200, version_preview(&c, input)?)),
+        ("POST", "/api/versions/preview") => {
+            let tx = c.transaction().map_err(|e| e.to_string())?;
+            Ok(response(200, version_preview(&tx, input)?))
+        }
         ("POST", "/api/versions/restore") => {
             let tx = c
                 .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -1173,7 +1203,7 @@ fn versions(
                 return Ok(failure(409, "当前数据或历史版本已变化，请重新预览"));
             }
             let id = input["id"].as_str().unwrap();
-            let mut target = reconstruct(&tx, version_sequence(&tx, id)?)?;
+            let mut target = retention::version(&tx, id)?;
             let before = state(&tx)?;
             persist(
                 &tx,
@@ -1184,7 +1214,7 @@ fn versions(
             tx.commit().map_err(|e| e.to_string())?;
             Ok(response(200, json!({"revision":target["revision"]})))
         }
-        _ => Ok(failure(503, "历史清理尚未实现；现有恢复记录完整保留")),
+        _ => Ok(failure(503, "不支持此历史操作")),
     }
 }
 // 真实配件税价目录只来自当前安装的数据目录，不能编入可公开的程序资源。
@@ -1671,6 +1701,25 @@ mod tests {
                 .unwrap(),
             2
         );
+    }
+
+    #[test]
+    fn config_fields_save_is_scoped_atomic_and_idempotent() {
+        let (s, _) = fixture();
+        let old = state(&db(&s.path).unwrap()).unwrap();
+        let mut desired = old["configs"][0].clone();
+        desired["price"] = json!(99.99);desired["skuId"] = json!("90071992547409931234");
+        let body=json!({"operationId":"config-fields","mode":"configFields","baseRevision":old["revision"],"changes":[{"id":desired["id"],"base":old["configs"][0],"after":desired}]});
+        for (field,value) in [("price",json!(-1)),("price",json!(1.001)),("skuId",json!(123)),("spu",json!("changed")),("parts",json!([]))] {
+            let mut bad=body.clone();bad["changes"][0]["after"][field]=value;
+            if bad["changes"][0]["after"] == desired {continue;}
+            assert_eq!(call(&s,"POST","/api/configs/batch",bad).0,400);
+            assert_eq!(state(&db(&s.path).unwrap()).unwrap(),old);
+        }
+        let result=call(&s,"POST","/api/configs/batch",body.clone());assert_eq!(result.0,200);
+        assert_eq!(result.1["configs"][0],desired);
+        assert_eq!(call(&s,"POST","/api/configs/batch",body.clone()).1,result.1);
+        let mut stale=body;stale["operationId"]=json!("stale");assert_eq!(call(&s,"POST","/api/configs/batch",stale).0,409);
     }
     #[test]
     fn ordinary_presentation_fields_preserve_unknown_and_replay() {

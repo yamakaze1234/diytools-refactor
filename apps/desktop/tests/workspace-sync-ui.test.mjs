@@ -6,18 +6,19 @@ import {shops} from '../public/workbench/shops.js';
 const source=readFileSync(new URL('../public/workbench/workspace-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export async function bindWorkspaceSync','async function bindWorkspaceSync');
 function deferred(){let resolve;const promise=new Promise(done=>{resolve=done;});return{promise,resolve};}
 async function harness({diagnosticExport,diagnosticText,save=async()=>{},stop=async()=>{},start=async()=>{},authenticated=true,configured=true,maintenance=async()=>({skipped:true}),fetcher=async()=>{throw Error('unexpected fetch');}}={}){
- const elements=new Map(),calls=[],messages=[],posted=[],intervals=[],dialogs=[];let options,historyOptions,legacyOptions;
+ const elements=new Map(),calls=[],messages=[],posted=[],intervals=[],dialogs=[];let options,historyOptions,legacyOptions;let now=Date.now();
  const node=()=>({textContent:'',title:'',disabled:false,hidden:false,dataset:{},open:true,focus(){},select(){},addEventListener(){},close(){this.open=false;calls.push('close');}});
  for(const id of ['#workspace-sync','#workspace-sync-status','#operator-open','#dialog'])elements.set(id,node());
+ elements.get('#dialog').open=false;
  const view={session:{configured,authenticated,member:authenticated?{name:'成员'}:null},checkpoint:{initialized:true,conflicts:0},summary:{pending:2},running:false,automatic:true,error:null};
  const controller={status:()=>view,refresh:async()=>{calls.push('refresh');options.onChange(view);},start:async()=>{calls.push('start');await start();},tick:async()=>calls.push('tick'),run:async upload=>{calls.push(['run',upload]);view.automatic=true;options.onChange(view);},stop:async()=>{calls.push('stop');await stop();view.automatic=false;options.onChange(view);},logout:async()=>{calls.push('logout');view.session={authenticated:false,member:null};options.onChange(view);},pause:()=>{},deliver:async()=>{},conflicts:async()=>({rows:[],total:0})};
  const document={querySelector:selector=>elements.get(selector)||null,querySelectorAll:selector=>selector==='[data-cloud-idle]'?[...elements.values()].filter(n=>n.idle):[]};
  const parent={postMessage:(value,origin)=>posted.push({value,origin}),workbenchClosePending:false,workbenchUpdatePending:false};
- const context=vm.createContext({shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,workbenchDiagnosticText:diagnosticText,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
+ const context=vm.createContext({Date:class extends Date{static now(){return now;}},shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,workbenchDiagnosticText:diagnosticText,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
  vm.runInContext(source,context);
- const ui=await context.bindWorkspaceSync({flush:async()=>{calls.push('save');await save();},receive:async()=>true,esc:String,toast:text=>messages.push(text),openDialog:(title,html)=>{dialogs.push({title,html});for(const match of html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)){const element=node();element.idle=match[0].includes('data-cloud-idle');elements.set('#'+match[1],element);}}});
+ const ui=await context.bindWorkspaceSync({flush:async()=>{calls.push('save');await save();},receive:async()=>true,esc:String,toast:text=>messages.push(text),openDialog:(title,html)=>{elements.get('#dialog').open=true;dialogs.push({title,html});for(const match of html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)){const element=node();element.idle=match[0].includes('data-cloud-idle');elements.set('#'+match[1],element);}}});
  await new Promise(resolve=>setImmediate(resolve));
- return{ui,controller,view,options,elements,calls,messages,posted,intervals,dialogs,parent,historyOptions,legacyOptions};
+ return{ui,controller,view,options,elements,calls,messages,posted,intervals,dialogs,parent,historyOptions,legacyOptions,window:context.window,advance:ms=>now+=ms};
 }
 
 test('Agent 手动同步返回真实 pending 与冲突，未知 pending 不转换为零',async()=>{
@@ -36,7 +37,7 @@ test('startup sync is background work, 2-hour timer uses tick, panel has no manu
 
 test('unconfigured local workbench keeps history/cache and skips startup and periodic sync',async()=>{
  let maintenance=0;const env=await harness({configured:false,authenticated:false,maintenance:async()=>{maintenance++;return{skipped:true};}});
- assert(!env.calls.includes('start'));assert(!env.intervals.some(timer=>timer.ms===2*60*60*1000));assert.equal(maintenance,1);
+ assert(!env.calls.includes('start'));assert(!env.intervals.some(timer=>timer.ms===2*60*60*1000));assert.equal(maintenance,2);
  assert.equal(env.elements.get('#workspace-sync-status').textContent,'本机保存');
  assert.equal(env.elements.get('#operator-open').textContent,'本机工作台');
  await env.ui.open();const html=env.dialogs.at(-1).html;
@@ -64,7 +65,7 @@ test('cache preview is read-only; clear saves first and reports reusable index c
  const requests=[];const env=await harness({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>url.endsWith('preview')?{count:5,bytes:3145728,categories:[{id:'update-backups',label:'历史更新备份',count:2,bytes:2097152}]}:{cleared:{count:5,bytes:3145728,index:{count:3},updates:{count:2,bytes:2097152}}}};}});
  await env.ui.open();assert.match(env.dialogs.at(-1).html,/每 2 小时/);await env.elements.get('#local-cache').onclick();
  assert.equal(requests.length,1);assert(requests[0].url.endsWith('/preview'));assert(!requests[0].options.method);
- assert.match(env.dialogs.at(-1).html,/历史记录、恢复草稿和原图均保留/);assert.match(env.dialogs.at(-1).html,/不会立即缩小/);
+ assert.match(env.dialogs.at(-1).html,/历史记录、恢复草稿和原图不受本次缓存清理影响/);assert.match(env.dialogs.at(-1).html,/普通历史和恢复草稿按创建时间保留最近 7 天；命名版本长期保留/);assert.match(env.dialogs.at(-1).html,/不会立即缩小/);
  assert.match(env.dialogs.at(-1).html,/历史更新备份：2 项，约 2.00 MiB/);assert.match(env.dialogs.at(-1).html,/只保留最近一次可回退备份/);
  env.calls.length=0;await env.elements.get('#cache-clear').onclick();assert.deepEqual(env.calls,['save']);assert.equal(requests[1].options.method,'POST');assert.equal(requests[1].options.body,'{}');assert.match(env.elements.get('#cache-message').textContent,/3 套配置索引已清理/);
  assert.match(env.elements.get('#cache-message').textContent,/2 个历史更新备份（2.00 MiB）/);
@@ -86,15 +87,15 @@ test('cache request failure shows no success and permits retry',async()=>{
 
 test('cache maintenance checks on startup and hourly, skips active sync and close protection',async()=>{
  let checks=0;const env=await harness({maintenance:async()=>{checks++;return{skipped:true};}});
- assert.equal(checks,1);const timer=env.intervals.find(x=>x.ms===60*60*1000);assert(timer);
- env.view.running=true;await timer.fn();assert.equal(checks,1);env.view.running=false;env.parent.workbenchClosePending=true;await timer.fn();assert.equal(checks,1);
- env.parent.workbenchClosePending=false;await timer.fn();assert.equal(checks,2);
+ assert.equal(checks,2);const timer=env.intervals.find(x=>x.ms===60*1000);assert(timer);await timer.fn();assert.equal(checks,2);env.advance(60*60*1000);
+ env.view.running=true;await timer.fn();assert.equal(checks,2);env.view.running=false;env.parent.workbenchClosePending=true;await timer.fn();assert.equal(checks,2);
+ env.parent.workbenchClosePending=false;await timer.fn();assert.equal(checks,4);
 });
 
 
 test('failed startup sync does not prevent local scheduled cleanup checks',async()=>{
  let checks=0;const env=await harness({start:async()=>{throw Error('离线');},maintenance:async()=>{checks++;return{skipped:true};}});
- assert.equal(checks,1);assert(env.messages.includes('离线'));
+ assert.equal(checks,2);assert(env.messages.includes('离线'));
 });
 
 // 同步面板展示、浏览和收起不能依赖未结束的上传，也不能偷偷保存当前草稿。
@@ -227,4 +228,30 @@ test('diagnostic text opens while export hangs without waiting for save or cloud
  assert.equal(env.elements.get('#diagnostic-text').value,sample);
  assert(!env.calls.includes('save'));assert(!env.calls.includes('stop'));
  pending.resolve('cancelled');await exporting;
+});
+
+
+test('maintenance waits for pending edits and dialogs then retries when idle without forcing a save',async()=>{
+ let checks=0;const env=await harness({maintenance:async()=>{checks++;return {skipped:true};}});
+ const timer=env.intervals.find(x=>x.ms===60*1000);env.advance(60*60*1000);env.calls.length=0;
+ env.window.workbenchHasPendingChanges=()=>true;await timer.fn();assert.equal(checks,2);assert(!env.calls.includes('save'));
+ env.window.workbenchHasPendingChanges=()=>false;env.elements.get('#dialog').open=true;await timer.fn();assert.equal(checks,2);
+ env.elements.get('#dialog').open=false;await timer.fn();assert.equal(checks,4);
+});
+
+test('history cleanup displays the real retention scope, failed state and pending files',async()=>{
+ const env=historyHarness('version',{fetcher:async url=>url.endsWith('/status')?{bytes:100,liveBytes:50,count:2,named:1,reusableBytes:20,walBytes:0,pendingFiles:1,lastCleanup:null,nextCheckAt:'2026-11-01T12:00:00Z',error:'回收失败',result:{history:3,drafts:2}}:undefined});
+ await env.ui.manage();const html=env.dialogs.at(-1).html;assert.match(html,/所有店铺/);assert.match(html,/7×24/);assert.match(html,/回收失败/);assert.match(html,/1 个文件待回收/);assert.match(html,/尚未执行/);
+});
+
+
+test('new save requests wait for local maintenance before starting their request timeout',async()=>{
+ const app=readFileSync(new URL('../public/workbench/app.js',import.meta.url),'utf8');
+ const code=app.split('\n').find(line=>line.startsWith('async function request('));
+ const gate=deferred(),calls=[];const window={workbenchMaintenancePromise:gate.promise};
+ const context=vm.createContext({window,AbortSignal,fetch:async url=>{calls.push(url);return {ok:true,json:async()=>({revision:12})};}});
+ vm.runInContext(code,context);let completed=false;
+ const save=context.request('/api/configs/patch',{method:'POST'}).then(()=>{completed=true;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(completed,false);assert.equal(calls.length,0);
+ gate.resolve();await save;assert.equal(completed,true);assert.deepEqual(calls,['/api/configs/patch']);
 });

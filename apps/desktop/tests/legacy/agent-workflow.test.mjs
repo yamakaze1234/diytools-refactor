@@ -15,6 +15,18 @@ function fixture(){
 const job=(method,params={})=>({id:'job-1',method,params});
 const applyJob=plan=>job('changes.apply',{plan,operationId:'original-operation-001'});
 
+test('配置字段通过正式工作流保存并检查价格SKU回执，错误回执不报告成功',async()=>{
+ for(const corrupt of [false,true]){
+  const {f,api,run}=fixture();Object.assign(f.state.configs[0],{spu:'123',shortName:'配置1',price:100,skuId:''});
+  f.raw=copy(f.state);
+  const req={shopId:'intel',action:{type:'configFields'},targets:[{configId:'a',expected:{spu:'123',shortName:'配置1',price:100,skuId:''},changes:{price:99.99,skuId:'12345678901234567890'}}]};
+  const preview=await run(job('changes.preview',{request:req}));assert.equal(f.applies.length,0);
+  if(corrupt)api.apply=async plan=>({revision:8,configs:plan.changes.map(c=>({...c.after,price:1}))});
+  if(corrupt)await assert.rejects(run(applyJob(preview.plan)),e=>e.code==='SAVE_UNCONFIRMED');
+  else {const result=await run(applyJob(preview.plan));assert.equal(result.receipt.configs[0].skuId,'12345678901234567890');assert.equal(result.receipt.configs[0].price,99.99);assert.equal(f.applies.length,1);}
+ }
+});
+
 test('脏界面拒绝任务，不载入、不保存、不锁定',async()=>{
  const {f,run}=fixture();f.blocked=true;
  await assert.rejects(run(job('changes.preview',{request})),e=>e.code==='UI_BUSY');

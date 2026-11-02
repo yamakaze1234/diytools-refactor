@@ -41,6 +41,18 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 
 ## 输出和退出码
 
+### 配置到手价与 SKU 批量维护
+
+通过原有 `changes preview --input` / `changes apply --plan-id` 使用 `configFields` 操作；每批 1–64 套，各配置可设置不同值：
+
+```json
+{"shopId":"intel","action":{"type":"configFields"},"targets":[{"configId":"真实配置ID","expected":{"spu":"完整SPU","shortName":"完整配置简称","price":6999,"skuId":""},"changes":{"price":6899,"skuId":"12345678901234567890"}}]}
+```
+
+`changes` 只允许 `price` 和 `skuId`，可单独提供其中一个。`price` 是最终到手价，不再扣店铺券，非负且最多两位小数。SKU 必须是 1–64 位数字字符串，保留前导零和长整数，不接受数值或清空。`expected` 必须包含 SPU、完整简称和每个待改字段的原值；原字段缺失用 `null`，空 SKU 用 `""`，不混用。调用者先完成来源匹配，接口按配置 ID 定点修改，不进行模糊匹配。
+
+预览拒绝原值变化、跨店铺、删除/未加载配置、重复目标及同店铺同 SPU 下重复 SKU；保存复核完整计划与工作区版本。只改指定字段，保留配件、简称、样式和导入时间。保存任务必须查询最终回执，并回读配置；失败或结果未知时先按原 operationId 查询，不盲目重试。本机保存与云同步分开确认。旧版客户端不支持此 action，需要更新主程序；无需新增 CLI 子命令。
+
 普通成功输出为便于阅读的缩进数据；`doctor` 同时说明授权和数据范围。脚本使用 `--json`，stdout 只包含一个协议 envelope：`protocolVersion`、`requestId`、`ok`、`data`、`error`。`requestId` 为每次调用生成的 UUID。错误始终输出 JSON envelope，不向 stdout 混入日志。`--help` 和 `--version` 正常输出文字并成功退出。
 
 | 退出码 | 含义 |
