@@ -387,6 +387,12 @@ pub(super) fn validate_document(document: &Value, previous: &Value) -> Result<()
     if !previous.is_null() && cursor < previous["cursor"].as_i64().unwrap_or(0) {
         return Err("云同步游标不能回退".into());
     }
+    // 完整保存也核验输出源进度，防止重启或增量回退时丢失全局补拉位置。
+    if document.get("sourceCursor").is_some() || previous.get("sourceCursor").is_some() {
+        if document["sourceCursor"].as_i64().is_none_or(|n| n < 0 || n < previous["sourceCursor"].as_i64().unwrap_or(0)) {
+            return Err("输出源同步进度不能回退".into());
+        }
+    }
     let records = document["records"].as_array().ok_or("云同步记录须为数组")?;
     let mut ids = HashSet::new();
     for record in records {
@@ -483,6 +489,7 @@ fn patch_document(mut document: Value, patch: &Value) -> Result<Value> {
                 "uid",
                 "deviceId",
                 "cursor",
+                "sourceCursor",
                 "shopCursors",
                 "outbox",
                 "materializedProjection",
@@ -559,7 +566,9 @@ fn save_rows(c: &Connection, version:i64, document:&Value, patch:Option<&Value>)
 
 // 提取同步变更校验所需字段，供补丁提交复核不可变队列约束。
 fn transition_guard(previous: &Value) -> Value {
-    json!({"workspaceId":previous["workspaceId"],"uid":previous["uid"],"deviceId":previous["deviceId"],"cursor":previous["cursor"],"outbox":previous["outbox"]})
+    let mut guard = json!({"workspaceId":previous["workspaceId"],"uid":previous["uid"],"deviceId":previous["deviceId"],"cursor":previous["cursor"],"outbox":previous["outbox"]});
+    if let Some(cursor) = previous.get("sourceCursor") { guard["sourceCursor"] = cursor.clone(); }
+    guard
 }
 
 // 同时检查本机正文和云检查点版本；正文变化、历史及队列确认必须同成同败。
@@ -599,11 +608,13 @@ pub(super) fn commit(store: &WorkbenchStore, input: &Value) -> Result<ApiRespons
         if let Some(patch)=input.get("documentPatch") {
             let set=patch.get("set").and_then(Value::as_object);
             let empty=patch.get("records").is_none_or(|v|v.as_array().is_some_and(|a|a.is_empty()));
-            if patch.as_object().is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"set"|"records"))) && empty && set.is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"cursor"|"shopCursors"|"lastSyncedAt"))) {
+            if patch.as_object().is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"set"|"records"))) && empty && set.is_some_and(|o|o.keys().all(|k|matches!(k.as_str(),"cursor"|"sourceCursor"|"shopCursors"|"lastSyncedAt"))) {
                 let raw:String=tx.query_row("SELECT document FROM workbench_cloud_meta WHERE id=1",[],|r|r.get(0)).map_err(|e|e.to_string())?;
                 let mut meta:Value=serde_json::from_str(&raw).map_err(|e|e.to_string())?;
                 for (key,value) in set.unwrap() {
                     if key=="cursor" && value.as_i64().is_none_or(|n|n<meta["cursor"].as_i64().unwrap_or(0)) { return Err("云同步游标不能回退".into()); }
+                    // 全局输出源进度单调前进，不改变未选店铺的配置进度。
+                    if key=="sourceCursor" && value.as_i64().is_none_or(|n|n<0 || n<meta["sourceCursor"].as_i64().unwrap_or(0)) { return Err("输出源同步进度不能回退".into()); }
                     if key=="shopCursors" {
                         let scopes=value.as_object().ok_or("店铺同步进度无效")?;
                         for (scope,n) in scopes { if scope.is_empty() || scope.split('|').any(|v|!["intel","gigabyte","jonsbo"].contains(&v)) || n.as_i64().is_none_or(|v|v<0 || v<meta["shopCursors"][scope].as_i64().unwrap_or(0)) {return Err("店铺同步进度无效".into());} }
@@ -699,13 +710,15 @@ mod tests {
     fn progress_writes_no_rows_and_one_record_only_updates_its_row() {
         let store=fixture();let c=db(&store.path).unwrap();
         c.execute_batch("CREATE TABLE writes(kind TEXT,id TEXT); CREATE TRIGGER row_update AFTER UPDATE ON workbench_cloud_rows BEGIN INSERT INTO writes VALUES(NEW.kind,NEW.id); END; CREATE TRIGGER row_insert AFTER INSERT ON workbench_cloud_rows BEGIN INSERT INTO writes VALUES(NEW.kind,NEW.id); END; CREATE TRIGGER row_delete AFTER DELETE ON workbench_cloud_rows BEGIN INSERT INTO writes VALUES(OLD.kind,OLD.id); END;").unwrap();
-        let p=patch_input(&store,json!({"set":{"shopCursors":{"intel":10}}}));assert_eq!(commit(&store,&p).unwrap().status,200);
+        let p=patch_input(&store,json!({"set":{"sourceCursor":10,"shopCursors":{"intel":10}}}));assert_eq!(commit(&store,&p).unwrap().status,200);
         assert_eq!(c.query_row::<i64,_,_>("SELECT count(*) FROM writes",[],|r|r.get(0)).unwrap(),0);
         let mut row=document()["records"][0].clone();row["version"]=json!(3);
         assert_eq!(commit(&store,&patch_input(&store,json!({"records":[row]}))).unwrap().status,200);
         assert_eq!(c.query_row::<i64,_,_>("SELECT count(*) FROM writes",[],|r|r.get(0)).unwrap(),1);
         assert!(commit(&store,&patch_input(&store,json!({"set":{"shopCursors":{"intel":9}}}))).is_err());
         assert_eq!(stored(&c).unwrap().1["shopCursors"]["intel"],10);
+        assert!(commit(&store,&patch_input(&store,json!({"set":{"sourceCursor":9}}))).is_err());
+        assert_eq!(stored(&c).unwrap().1["sourceCursor"],10);
     }
 
     #[test]
@@ -714,6 +727,7 @@ mod tests {
         let c = db(&store.path).unwrap();
         let (_, mut doc) = stored(&c).unwrap();
         doc["shopCursors"] = json!({"intel":12,"jonsbo":8});
+        doc["sourceCursor"] = json!(12);
         let mut input = patch_input(&store, json!({}));
         input.as_object_mut().unwrap().remove("documentPatch");
         input["document"] = doc;
@@ -723,6 +737,7 @@ mod tests {
         let (_, saved) = stored(&reopened).unwrap();
         assert_eq!(saved["shopCursors"], json!({"intel":12,"jonsbo":8}));
         assert_eq!(saved["cursor"], 5);
+        assert_eq!(saved["sourceCursor"], 12);
         assert_eq!(saved["records"], document()["records"]);
     }
 

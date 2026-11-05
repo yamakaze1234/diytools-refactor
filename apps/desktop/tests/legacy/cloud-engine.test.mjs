@@ -14,7 +14,7 @@ function fixture(){
 }
 function harness({snapshot=fixture(),onCall,onCommit,uploadAssets,downloadAssets,onProgress}={}){
  let current=copy(snapshot),calls=[],commits=0,log=[],receipts=new Map(),remote=new Map(current.document?.records?.map(r=>[[r.type,r.id].join('|'),{type:r.type,id:r.id,version:r.version,data:copy(r.base)}])||[]);
- const api={get current(){return current;},get calls(){return calls;},get commits(){return commits;},edit(fn){fn(current.state);current.state.revision++;},change(fn){fn(current);},async load(){return copy(current);},async commit(request){commits++;if(onCommit)await onCommit(request,api);if(request.baseRevision!==current.state.revision||request.cloudVersion!==current.cloudVersion)throw Object.assign(Error('CAS'),{status:409});current={state:{...copy(request.state),revision:current.state.revision+1},cloudVersion:current.cloudVersion+1,document:copy(request.document)};return {revision:current.state.revision,cloudVersion:current.cloudVersion,activityDelta:[]};},async call(req){calls.push(copy(req));if(onCall){const result=await onCall(req,api);if(result!==undefined)return result;}if(req.action==='sync.pushBatch'){return {ok:true,results:req.payload.requests.map(item=>{const p=item.payload;if(receipts.has(p.mutationId))return copy(receipts.get(p.mutationId));const r=remote.get([p.entityType,p.entityId].join('|'));const row={type:p.entityType,id:p.entityId,version:(r?.version||0)+1,data:copy(p.after)};remote.set([row.type,row.id].join('|'),row);log.push({...copy(row),seq:1+log.length+1,mutationId:p.mutationId});const result={ok:true,mutationId:p.mutationId,record:row};receipts.set(p.mutationId,result);return copy(result);})};}if(req.action==='sync.pull'){const head=req.payload.headSeq??1+log.length,changes=log.filter(r=>r.seq>req.payload.cursor&&r.seq<=head);const next=changes.at(-1)?.seq??req.payload.cursor;return {ok:true,headSeq:head,nextCursor:next,hasMore:false,changes:copy(changes)};}throw Error('unexpected '+req.action);}};
+ const api={get current(){return current;},get calls(){return calls;},get commits(){return commits;},edit(fn){fn(current.state);current.state.revision++;},change(fn){fn(current);},async load(){return copy(current);},async commit(request){commits++;if(onCommit)await onCommit(request,api);if(request.baseRevision!==current.state.revision||request.cloudVersion!==current.cloudVersion)throw Object.assign(Error('CAS'),{status:409});current={state:{...copy(request.state),revision:current.state.revision+1},cloudVersion:current.cloudVersion+1,document:copy(request.document)};return {revision:current.state.revision,cloudVersion:current.cloudVersion,activityDelta:[]};},async call(req){calls.push(copy(req));if(onCall){const result=await onCall(req,api);if(result!==undefined)return req.payload.sourceScope==='global'&&result.ok?{sourceScope:'global',...result}:result;}if(req.action==='sync.pushBatch'){return {ok:true,results:req.payload.requests.map(item=>{const p=item.payload;if(receipts.has(p.mutationId))return copy(receipts.get(p.mutationId));const r=remote.get([p.entityType,p.entityId].join('|'));const row={type:p.entityType,id:p.entityId,version:(r?.version||0)+1,data:copy(p.after)};remote.set([row.type,row.id].join('|'),row);log.push({...copy(row),seq:1+log.length+1,mutationId:p.mutationId});const result={ok:true,mutationId:p.mutationId,record:row};receipts.set(p.mutationId,result);return copy(result);})};}if(req.action==='sync.pull'){const head=req.payload.headSeq??1+log.length,changes=log.filter(r=>r.seq>req.payload.cursor&&r.seq<=head);const next=changes.at(-1)?.seq??req.payload.cursor;return {ok:true,sourceScope:req.payload.sourceScope,headSeq:head,nextCursor:next,hasMore:false,changes:copy(changes)};}throw Error('unexpected '+req.action);}};
  api.engine=createCloudEngine({...api,load:api.load,commit:api.commit,call:api.call,uploadAssets,downloadAssets,onProgress});return api;
 }
 const rowData=h=>copy(h.current.document.records.find(r=>r.type==='configuration').draft);
@@ -454,7 +454,7 @@ test('server scoped pages skip foreign sequences only with matching scope receip
 test('combining already synced shops reuses each shops durable progress',async()=>{
  const snapshot=fixture();snapshot.document.shopCursors={intel:100,'gigabyte|jonsbo':80};
  const h=harness({snapshot,onCall:req=>{if(req.action==='sync.pull'){
-  assert.equal(req.payload.cursor,80);return {ok:true,shopIds:['intel','jonsbo'],headSeq:100,nextCursor:100,hasMore:false,changes:[]};
+  assert.equal(req.payload.cursor,1);return {ok:true,shopIds:['intel','jonsbo'],headSeq:100,nextCursor:100,hasMore:false,changes:[]};
  }}});
  await h.engine.run({member,upload:false,shopIds:['jonsbo','intel']});
  assert.equal(h.current.document.shopCursors.intel,100);assert.equal(h.current.document.shopCursors.jonsbo,100);
@@ -476,4 +476,55 @@ test('locally removed shop re-downloads from zero without sending cloud deletion
  assert.equal(h.calls.some(c=>c.action==='sync.pushBatch'),false);
  assert.equal(h.calls.filter(c=>c.action==='sync.pull'&&c.payload.shopIds.includes('intel'))[0].payload.cursor,0);
  assert.equal(h.current.document.shopCursors.gigabyte,80);
+});
+
+// 只选英特尔时，也必须上传其他店输出源，且不上传其他店配置。
+test('global sources upload while unselected configurations remain local',async()=>{
+ const h=harness();h.edit(s=>{
+  s.sourceCatalog.push({sourceId:'jonsbo:power',shopId:'jonsbo',goodsId:'93718',name:'电源',addonText:'新加购'});
+  s.configs.push({id:'other-config',shopId:'jonsbo',name:'不上传',price:100,parts:[],actualParts:[],addons:[]});
+ });
+ await h.engine.run({member,shopIds:['intel']});
+ const requests=h.calls.filter(r=>r.action==='sync.pushBatch').flatMap(r=>r.payload.requests);
+ assert.ok(requests.some(r=>r.payload.entityType==='source'&&r.payload.entityId==='jonsbo:power'));
+ assert.ok(!requests.some(r=>r.payload.entityId==='other-config'));
+ const row=h.current.document.records.find(r=>r.id==='jonsbo:power');assert.deepEqual(row.base,row.draft);
+ assert.equal(h.current.document.records.find(r=>r.id==='other-config').version,0);
+});
+// 老版本只同步过英特尔时，全局输出源从旧全店基线补拉，不能跳过旧变更。
+test('global source backfill keeps unselected configurations and their cursor untouched',async()=>{
+ const snapshot=fixture();snapshot.document.shopCursors={intel:100};let first=true;
+ const h=harness({snapshot,onCall:req=>{if(req.action!=='sync.pull')return;
+  if(first){assert.equal(req.payload.cursor,1);first=false;}
+  return {ok:true,shopIds:['intel'],sourceScope:'global',headSeq:100,nextCursor:100,hasMore:false,changes:req.payload.cursor<2?[
+   {seq:2,type:'source',id:'jonsbo:power',version:1,data:{sourceId:'jonsbo:power',shopId:'jonsbo',goodsId:'93718',name:'电源',addonText:'新加购'}},
+   {seq:3,type:'configuration',id:'other',version:1,data:{id:'other',shopId:'jonsbo',name:'不下载',priceCents:10000,parts:[],actualParts:[],addons:[]}}
+  ]:[]};
+ }});
+ await h.engine.run({member,upload:false,shopIds:['intel']});
+ assert.equal(h.current.state.sourceCatalog[0].addonText,'新加购');
+ assert.ok(!h.current.state.configs.some(c=>c.id==='other'));
+ assert.equal(h.current.document.sourceCursor,100);assert.equal(h.current.document.shopCursors.jonsbo,undefined);
+ const resumed=harness({snapshot:h.current,onCall:req=>{if(req.action==='sync.pull'){assert.equal(req.payload.cursor,100);return {ok:true,shopIds:['intel'],headSeq:100,nextCursor:100,hasMore:false,changes:[]};}}});
+ await resumed.engine.run({member,upload:false,shopIds:['intel']});
+});
+// 旧云端未明确支持全局范围时必须停止，不能保存虚假的全局进度。
+test('old server cannot acknowledge global source progress',async()=>{
+ const h=harness({onCall:req=>req.action==='sync.pull'?{ok:true,sourceScope:null,shopIds:['intel'],headSeq:100,nextCursor:100,hasMore:false,changes:[]}:undefined});
+ await assert.rejects(h.engine.run({member,upload:false,shopIds:['intel']}),/云端尚未支持/);
+ assert.equal(h.current.document.sourceCursor,undefined);assert.equal(h.current.document.shopCursors,undefined);
+});
+
+// 日志归档后必须从全局输出源检查点补齐，同时保持其他店配置不落地。
+test('global source checkpoint restores foreign sources without foreign configurations',async()=>{
+ const h=harness({onCall:req=>{
+  if(req.action==='sync.pull')return req.payload.cursor<100?{ok:false,code:'SNAPSHOT_REQUIRED'}:{ok:true,shopIds:['intel'],headSeq:100,nextCursor:100,hasMore:false,changes:[]};
+  if(req.action==='sync.snapshot')return {ok:true,shopIds:['intel'],checkpointSeq:100,hasMore:false,nextCursor:['source','jonsbo:power'],records:[
+   {type:'configuration',id:'other',version:1,data:{id:'other',shopId:'jonsbo',name:'不下载',priceCents:10000,parts:[],actualParts:[],addons:[]}},
+   {type:'source',id:'jonsbo:power',version:1,data:{sourceId:'jonsbo:power',shopId:'jonsbo',goodsId:'93718',name:'电源',addonText:'新加购'}}
+  ]};
+ }});
+ await h.engine.run({member,upload:false,shopIds:['intel']});
+ assert.equal(h.current.state.sourceCatalog[0].addonText,'新加购');
+ assert.ok(!h.current.state.configs.some(c=>c.id==='other'));assert.equal(h.current.document.sourceCursor,100);
 });

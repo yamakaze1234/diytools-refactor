@@ -47,6 +47,7 @@ function validateRequest(req,doc){
 function validateDocument(doc,member){
   if(!doc||doc.format!==1||typeof doc.workspaceId!=='string'||!doc.workspaceId||typeof doc.uid!=='string'||!doc.uid||typeof doc.deviceId!=='string'||!doc.deviceId||!safeInteger(doc.cursor)||!Array.isArray(doc.records)||!Array.isArray(doc.outbox)||!Array.isArray(doc.materializedProjection))throw fail('云端同步资料未初始化或格式无效');
   if(member&&(doc.workspaceId!==member.workspaceId||doc.uid!==member.uid))throw fail('当前成员与本机云端资料不一致','OWNER_MISMATCH');
+  if(doc.sourceCursor!==undefined&&!safeInteger(doc.sourceCursor))throw fail('输出源同步进度无效');
   if(doc.shopCursors&&Object.values(doc.shopCursors).some(v=>!safeInteger(v)))throw fail('店铺同步进度无效');
   const seen=new Set();for(const r of doc.records){validateCloudRecord(r.type,r.id,r.draft);if(r.base!==null)validateCloudRecord(r.type,r.id,r.base);if(!safeInteger(r.version)||r.version===0&&r.base!==null||r.version>0&&r.base===null)throw fail('云端记录基线版本无效');const key=recordKey(r.type,r.id);if(seen.has(key))throw fail('云端同步资料含重复记录');seen.add(key);if(r.conflict){const remote=validateRemote(r.conflict.remote);if(remote.type!==r.type||remote.id!==r.id||!Array.isArray(r.conflict.fields))throw fail('云端冲突版本无效');}}
   const mutations=new Set(),entities=new Set();for(const req of doc.outbox){validateRequest(req,doc);const p=req.payload,key=recordKey(p.entityType,p.entityId);if(mutations.has(p.mutationId)||entities.has(key))throw fail('云端队列含重复提交');mutations.add(p.mutationId);entities.add(key);}
@@ -129,9 +130,10 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
   let uploadedRecords=0,uploadBatchLimit=50,activeShops=null,scopeKey=null,independentCosts=false;
   // 各范围独立保存日志位置；未选店铺不推进，日后选中仍能补齐。
   const shopCursor=(doc,shop)=>Math.max(doc.cursor,...Object.entries(doc.shopCursors??{}).filter(([key])=>key.split('|').includes(shop)).map(([,value])=>value));
-  const cursorOf=doc=>activeShops?Math.min(...activeShops.map(shop=>shopCursor(doc,shop))):doc.cursor;
-  const setCursor=(doc,value)=>{if(activeShops){doc.shopCursors={...doc.shopCursors};for(const shop of activeShops)doc.shopCursors[shop]=Math.max(shopCursor(doc,shop),value);}else doc.cursor=value;};
-  const selected=row=>{if(independentCosts&&(row.type??row.payload?.entityType)==='component')return false;if(!activeShops)return true;const data=row.data??row.draft??row.payload?.after;const type=row.type??row.payload?.entityType;const id=row.id??row.payload?.entityId;const shop=type==='settings'?id:data?.shopId;return !shop||activeShops.includes(shop);};
+  // 输出源独立记录全局进度；旧客户端从全店基线补拉，不能沿用某一家店较新的进度。
+  const cursorOf=doc=>activeShops?Math.min(doc.sourceCursor??doc.cursor,...activeShops.map(shop=>shopCursor(doc,shop))):doc.cursor;
+  const setCursor=(doc,value)=>{doc.sourceCursor=Math.max(doc.sourceCursor??doc.cursor,value);if(activeShops){doc.shopCursors={...doc.shopCursors};for(const shop of activeShops)doc.shopCursors[shop]=Math.max(shopCursor(doc,shop),value);}else doc.cursor=value;};
+  const selected=row=>{if(independentCosts&&(row.type??row.payload?.entityType)==='component')return false;if((row.type??row.payload?.entityType)==='source'||!activeShops)return true;const data=row.data??row.draft??row.payload?.after;const type=row.type??row.payload?.entityType;const id=row.id??row.payload?.entityId;const shop=type==='settings'?id:data?.shopId;return !shop||activeShops.includes(shop);};
   const queued=doc=>doc.outbox.filter(selected);
   const boundary=()=>{if(stopRequested)throw fail('同步已暂停，本机修改和待确认提交已保留','SYNC_STOPPED');};
   // load supplies a detached native snapshot. cloudVersion guards all document
@@ -229,13 +231,14 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
         boundary();
         const snapshot=await transact(activeMember);if(queued(snapshot.document).length)throw fail('待确认提交不能跳过检查点');
         onProgress({phase:'checkpoint-request',page:i+1,received:rows.length,attempt:attempt+1});
-        const part=await call(envelope('sync.snapshot',{cursor,limit:100,...(activeShops?{shopIds:activeShops}:{}),...(seq===undefined?{}:{checkpointSeq:seq})}));
+        const part=await call(envelope('sync.snapshot',{cursor,limit:100,...(activeShops?{shopIds:activeShops,sourceScope:'global'}:{}),...(seq===undefined?{}:{checkpointSeq:seq})}));
         // 首次快照只是加速路径；尚未生成检查点时从原游标重放保留日志。
         // 已开始分页或服务端明确要求检查点时不能降级，避免跳过已归档数据。
         if(optional&&i===0&&part?.ok===false&&part.code==='SNAPSHOT_UNAVAILABLE')return;
         if(part?.code==='SNAPSHOT_UNAVAILABLE')throw fail('云端同步快照不可用，请联系管理员检查同步检查点；本机修改已保留','SNAPSHOT_UNAVAILABLE');
         if(part?.code==='SNAPSHOT_CHANGED'){restart=true;break;}
         if(!part?.ok||!safeInteger(part.checkpointSeq)||!Array.isArray(part.records)||typeof part.hasMore!=='boolean'||seq!==undefined&&seq!==part.checkpointSeq)throw fail(part?.message||part?.code||'云端检查点分页无效');
+        if(activeShops&&part.sourceScope!=='global')throw fail('云端尚未支持输出源全局同步，请先更新云端服务','SOURCE_SCOPE_UNSUPPORTED');
         seq??=part.checkpointSeq;if(seq<cursorOf(snapshot.document))throw fail('云端检查点版本回退');
         let previous=cursor;
         for(const input of part.records){const row=validateRemote(input),key=[row.type,row.id];if(typeof row.type!=='string'||typeof row.id!=='string'||previous&&(row.type<previous[0]||row.type===previous[0]&&row.id<=previous[1])||keys.has(recordKey(row.type,row.id)))throw fail('云端检查点记录重复或顺序无效');keys.add(recordKey(row.type,row.id));previous=key;rows.push(copy(row));}
@@ -263,8 +266,9 @@ export function createCloudEngine({load,commit,call,uploadAssets,downloadAssets,
       boundary();
       const snapshot=await transact(activeMember),cursor=cursorOf(snapshot.document);
       onProgress({phase:'download-request',page:i+1,received,cursor});
-      const page=await call(envelope('sync.pull',{cursor,limit:100,...(activeShops?{shopIds:activeShops}:{}),...(head===undefined?{}:{headSeq:head})}));
+      const page=await call(envelope('sync.pull',{cursor,limit:100,...(activeShops?{shopIds:activeShops,sourceScope:'global'}:{}),...(head===undefined?{}:{headSeq:head})}));
       if(page?.code==='SNAPSHOT_REQUIRED'){await checkpoint();head=undefined;continue;}
+      if(page?.ok&&activeShops&&page.sourceScope!=='global')throw fail('云端尚未支持输出源全局同步，请先更新云端服务','SOURCE_SCOPE_UNSUPPORTED');
       validatePage(page,cursor,head,activeShops);head??=page.headSeq;
       await ensureDownloads(snapshot,page.changes.filter(selected));
       await transact(activeMember,doc=>{if(cursorOf(doc)!==cursor){if(cursorOf(doc)>=page.nextCursor)return;throw fail('请求期间同步游标已变化');}for(const row of page.changes.filter(selected))receive(doc,row);setCursor(doc,page.nextCursor);});

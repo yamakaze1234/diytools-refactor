@@ -29,6 +29,6 @@ test('copy-on-write commit sends only changed records and omits unchanged busine
 test('selected shop cursor commits stay sparse',async()=>{
  let submitted;
  const cache=createCloudCheckpointCache(async(action,input)=>{if(action==='load')return {state:{revision:7},cloudVersion:2,document:{uid:'u',workspaceId:'w',records:[],outbox:[],materializedProjection:[]}};submitted=input;return{revision:7,cloudVersion:3};},{patch:true});
- const snapshot=await cache.load();await cache.commit({...snapshot,baseRevision:7,document:{...snapshot.document,shopCursors:{intel:1000}}});
- assert.deepEqual(submitted.documentPatch,{set:{shopCursors:{intel:1000}},records:[]});assert.equal(submitted.document,undefined);assert.equal(submitted.state,undefined);
+ const snapshot=await cache.load();await cache.commit({...snapshot,baseRevision:7,document:{...snapshot.document,sourceCursor:1000,shopCursors:{intel:1000}}});
+ assert.deepEqual(submitted.documentPatch,{set:{sourceCursor:1000,shopCursors:{intel:1000}},records:[]});assert.equal(submitted.document,undefined);assert.equal(submitted.state,undefined);
 });

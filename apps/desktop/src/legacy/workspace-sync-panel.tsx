@@ -13,13 +13,13 @@ export function WorkspaceSyncPanel({model:m}:{model:Row}){
   {m.mode==='expired'&&<Frame><FramePanel className="flex flex-col items-start gap-3"><p>登录已失效，当前输入仍保留。</p><Button type="button" id="cloud-logout" variant="default">保存并重新登录</Button></FramePanel></Frame>}
   {authenticated&&<>
    <Frame><FramePanel>
-    <fieldset className="min-w-0"><legend className="mb-2 font-medium">同步店铺 <span id="cloud-shop-count" className="ml-2 text-xs font-normal text-muted-foreground" aria-live="polite">已选 {m.selectedShops.length} 家</span></legend>
-     <p id="cloud-selection-help" className="mb-3 text-xs text-muted-foreground">可多选，手动与自动同步使用同一选择。</p>
+    <fieldset className="min-w-0"><legend className="mb-2 font-medium">配置同步店铺 <span id="cloud-shop-count" className="ml-2 text-xs font-normal text-muted-foreground" aria-live="polite">已选 {m.selectedShops.length} 家</span></legend>
+     <p id="cloud-selection-help" className="mb-3 text-xs text-muted-foreground">仅控制配置、模板和店铺设置；手动与自动同步使用同一选择。</p>
      <div className="grid gap-2 sm:grid-cols-3">{m.shops.map((shop:Row)=><label key={shop.id} className="flex cursor-pointer items-start gap-2 rounded-md border border-border p-3 has-[:checked]:border-primary has-[:checked]:bg-accent">
       <Input type="checkbox" data-cloud-shop={shop.id} data-cloud-idle aria-describedby="cloud-selection-help" checked={m.selectedShops.includes(shop.id)}/>
       <span className="flex min-w-0 flex-col gap-1"><strong className="text-sm">{shop.shortName}</strong><span className="text-xs text-muted-foreground">{shop.name}</span></span>
      </label>)}</div>
-    </fieldset><p className="mt-3 text-xs text-muted-foreground">公用配件成本和图库随同步更新。</p>
+    </fieldset><p className="mt-3 text-xs text-muted-foreground">所有店铺的输出源全局同步，不受以上勾选限制；公用配件成本和图库随同步更新。</p>
    </FramePanel></Frame>
    <Frame><FramePanel className="grid gap-3 sm:grid-cols-3">
     <div className="flex flex-col gap-1"><span className="text-xs text-muted-foreground">最近同步</span><strong id="cloud-recent" className="text-sm"/></div>
