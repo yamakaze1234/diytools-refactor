@@ -1,3 +1,4 @@
+import {skuImageConfig} from '../../public/workbench/sku-image-mode.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -9,10 +10,18 @@ const source=readFileSync(new URL('../../public/workbench/app.js',import.meta.ur
 const body=source.slice(source.indexOf('async function batchExportFull(){'),source.indexOf('// 使用完整配置和本机成本数据执行利润检查。'));
 const configs=()=>['light','dark'].map((theme,i)=>({id:String(i),name:`配置${i+1}`,productId:'link',product:'测试链接',shopId:'intel',spu:'123',theme,layout:'long',skuMode:i?'padded':'dedicated',palette:{bg:i?'#111111':'#ffffff'}}));
 
+// 模拟保存等待期间继续编辑或切店，导出必须使用点击时的内容和店铺。
+test('保存样式期间的后续输入不进入本次导出',async()=>{
+ const rows=configs();let task;
+ const context={skuImageConfig,chosen:()=>rows,clone:structuredClone,imageExportOptions:()=>({kind:'square',skuMode:'dedicated',width:1400}),defaultPosterWidth:()=>1400,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:context.activeShopId}),exportJobs:0,startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{},saveSkuMode:async()=>{rows[0].name='点击之后修改';context.activeShopId='other';}};
+ await vm.runInNewContext(body+'\nbatchExportFull()',context);
+ assert.equal(task.entries[0].config.name,'配置1');assert.equal(task.entries[0].config.skuMode,'dedicated');assert.equal(task.report.shopId,'intel');assert.equal(task.report.shop,'intel');
+});
+
 for(const activeTheme of ['light','dark'])test(`批量入口当前选中${activeTheme}，每套保留主题并使用本次选择的SKU样式`,async()=>{
  const rows=configs(),before=structuredClone(rows);let task;
- const context={chosen:()=>rows,current:()=>({...rows.find(c=>c.theme===activeTheme),layout:'square'}),clone:structuredClone,
-  imageExportOptions:()=>({kind:'square',skuMode:'padded',width:1400}),$:()=>({value:'1400'}),defaultPosterWidth:()=>1400,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,
+ const context={skuImageConfig,saveSkuMode:async()=>{},chosen:()=>rows,current:()=>({...rows.find(c=>c.theme===activeTheme),layout:'square'}),clone:structuredClone,
+  imageExportOptions:()=>({kind:'square',skuMode:'padded',width:1400}),$:()=>({value:'1400'}),defaultPosterWidth:()=>1400,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1,configs:typeof rows!=='undefined'?rows:[row]},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,
   startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},downloadBlob:()=>{},toast:message=>{assert.doesNotMatch(message,/Error/);},scheduleImageSave:()=>{}};
  await vm.runInNewContext(body+'\nbatchExportFull()',context);
  assert.ok(task);task={...task,entries:structuredClone(task.entries),report:structuredClone(task.report)};
@@ -39,7 +48,7 @@ test('普通批量命名按链接分别编号，保留配置号，重名链接�
 
 test('跨链接双图导出的路径符合原生单层子目录契约',async()=>{
  const rows=configs().map((c,i)=>({...c,productId:'link'+i,product:'链接'+i}));let task;
- const context={chosen:()=>rows,clone:structuredClone,imageExportOptions:()=>({kind:'both',skuMode:'padded',width:0}),defaultPosterWidth:()=>1000,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{}};
+ const context={skuImageConfig,saveSkuMode:async()=>{},chosen:()=>rows,clone:structuredClone,imageExportOptions:()=>({kind:'both',skuMode:'padded',width:0}),defaultPosterWidth:()=>1000,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1,configs:typeof rows!=='undefined'?rows:[row]},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{}};
  await vm.runInNewContext(body+'\nbatchExportFull()',context);
  assert.equal(task.entries.length,4);
  assert.equal(new Set(task.entries.map(e=>e.name)).size,4);
@@ -49,7 +58,7 @@ test('跨链接双图导出的路径符合原生单层子目录契约',async()=>
 
 test('仅勾选一套的批量入口也用统一文件名且保留该套主题',async()=>{
  const row=configs()[1];let saved;
- const context={chosen:()=>[row],current:()=>configs()[0],clone:structuredClone,imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1000}),$:()=>({value:'1000'}),defaultPosterWidth:()=>1000,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,
+ const context={skuImageConfig,saveSkuMode:async()=>{},chosen:()=>[row],current:()=>configs()[0],clone:structuredClone,imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1000}),$:()=>({value:'1000'}),defaultPosterWidth:()=>1000,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1,configs:typeof rows!=='undefined'?rows:[row]},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,
  imageRenderGate:{run:fn=>fn({})},renderPoster:async c=>{assert.equal(c.theme,'dark');return {canvas:{}};},toBlob:async()=>new Blob(['png']),exportSingleImage:async(blob,name)=>{saved=name;return 'saved';},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{}};
  await vm.runInNewContext(body+'\nbatchExportFull()',context);
  assert.equal(saved,'1_配置2.png');
@@ -65,7 +74,7 @@ test('批量修改后全部与仅变动导出均保留深色配置',()=>{
 
 for(const skuMode of ['dedicated','padded'])test('双图导出隔离快照、路径和默认尺寸：'+skuMode,async()=>{
  const rows=configs(),before=structuredClone(rows);let task;const rendered=[];
- const context={chosen:()=>rows,current:()=>rows[0],clone:structuredClone,imageExportOptions:()=>({kind:'both',skuMode,width:0}),defaultPosterWidth:c=>c.layout==='long'?1000:1400,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},imageRenderGate:{run:fn=>fn({})},renderPoster:async(c,width)=>{rendered.push([c.layout,c.skuMode,width]);return {canvas:{}};},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{}};
+ const context={skuImageConfig,saveSkuMode:async()=>{},chosen:()=>rows,current:()=>rows[0],clone:structuredClone,imageExportOptions:()=>({kind:'both',skuMode,width:0}),defaultPosterWidth:c=>c.layout==='long'?1000:1400,numberedImageEntries,imageArchiveName,dirty:false,savePromise:null,conflict:false,state:{revision:1,configs:typeof rows!=='undefined'?rows:[row]},activeShopId:'intel',currentShop:()=>({name:'测试'}),exportJobs:0,startImageExportTask:options=>{task=options;return {done:Promise.resolve()};},imageRenderGate:{run:fn=>fn({})},renderPoster:async(c,width)=>{rendered.push([c.layout,c.skuMode,width]);return {canvas:{}};},downloadBlob:()=>{},toast:()=>{},scheduleImageSave:()=>{}};
  await vm.runInNewContext(body+'\nbatchExportFull()',context);
  assert.equal(task.entries.length,4);assert.equal(new Set(task.entries.map(e=>e.name)).size,4);
  assert.ok(task.entries.filter(e=>e.config.layout==='long').every(e=>e.name.startsWith('配置图/')));

@@ -65,7 +65,7 @@ test('cache preview is read-only; clear saves first and reports reusable index c
  const requests=[];const env=await harness({fetcher:async(url,options)=>{requests.push({url,options});return {ok:true,json:async()=>url.endsWith('preview')?{count:5,bytes:3145728,categories:[{id:'update-backups',label:'历史更新备份',count:2,bytes:2097152}]}:{cleared:{count:5,bytes:3145728,index:{count:3},updates:{count:2,bytes:2097152}}}};}});
  await env.ui.open();assert.match(env.dialogs.at(-1).html,/每 2 小时/);await env.elements.get('#local-cache').onclick();
  assert.equal(requests.length,1);assert(requests[0].url.endsWith('/preview'));assert(!requests[0].options.method);
- assert.match(env.dialogs.at(-1).html,/历史记录、恢复草稿和原图不受本次缓存清理影响/);assert.match(env.dialogs.at(-1).html,/普通历史和恢复草稿按创建时间保留最近 7 天；命名版本长期保留/);assert.match(env.dialogs.at(-1).html,/不会立即缩小/);
+ assert.match(env.dialogs.at(-1).html,/历史记录、恢复草稿和原图不受本次缓存清理影响/);assert.match(env.dialogs.at(-1).html,/普通历史和恢复草稿按创建时间保留最近 7 天，过期恢复草稿直接删除、不进入回收站；命名版本长期保留/);assert.match(env.dialogs.at(-1).html,/不会立即缩小/);
  assert.match(env.dialogs.at(-1).html,/历史更新备份：2 项，约 2.00 MiB/);assert.match(env.dialogs.at(-1).html,/只保留最近一次可回退备份/);
  env.calls.length=0;await env.elements.get('#cache-clear').onclick();assert.deepEqual(env.calls,['save']);assert.equal(requests[1].options.method,'POST');assert.equal(requests[1].options.body,'{}');assert.match(env.elements.get('#cache-message').textContent,/3 套配置索引已清理/);
  assert.match(env.elements.get('#cache-message').textContent,/2 个历史更新备份（2.00 MiB）/);
@@ -254,4 +254,14 @@ test('new save requests wait for local maintenance before starting their request
  const save=context.request('/api/configs/patch',{method:'POST'}).then(()=>{completed=true;});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(completed,false);assert.equal(calls.length,0);
  gate.resolve();await save;assert.equal(completed,true);assert.deepEqual(calls,['/api/configs/patch']);
+});
+
+// 使用虚拟时钟验证失败后不会每分钟重复提示，到期后仍会重试。
+test('自动清理失败后一小时再重试',async()=>{
+ let attempts=0;
+ const env=await harness({maintenance:async()=>{attempts++;throw Error('synthetic cleanup failure');}});
+ assert.equal(attempts,1);
+ const timer=env.intervals.find(x=>x.ms===60*1000);
+ env.advance(60*1000);await timer.fn();assert.equal(attempts,1);
+ env.advance(59*60*1000);await timer.fn();assert.equal(attempts,2);
 });

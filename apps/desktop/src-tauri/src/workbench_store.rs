@@ -710,6 +710,7 @@ const ORDINARY_PRESENTATION_FIELDS: &[&str] = &[
     "shop",
     "layout",
     "skuMode",
+    "skuExportMode",
     "posterDesignVersion",
     "previousSquareLayout",
     "autoWidth",
@@ -1727,7 +1728,7 @@ mod tests {
         let old = state(&db(&s.path).unwrap()).unwrap();
         let mut desired = old["configs"][0].clone();
         let presentation = json!({
-            "shop":"图片店铺标题", "layout":"long", "skuMode":"dedicated",
+            "shop":"图片店铺标题", "layout":"long", "skuMode":"dedicated", "skuExportMode":"dedicated",
             "posterDesignVersion":1, "previousSquareLayout":{"textTransforms":{"header":{"x":12}}},
             "autoWidth":false, "theme":"light", "productTheme":"light", "palette":{"text":"#123456"},
             "themePalettes":{"dark":{"bg":"#000000"}}, "fontFamily":"阿里巴巴普惠体",

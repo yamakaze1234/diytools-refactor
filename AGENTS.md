@@ -2,6 +2,10 @@
 
 Windows Tauri 工作台。源码结构和构建测试见 [开发说明](docs/DEVELOPMENT.md)，签名与发行约定见 [发布说明](docs/PUBLIC-RELEASE.md)。
 
+本地提交、基础检查、候选包准备及失败恢复先读 [本地流程](docs/LOCAL-WORKFLOW.md)。不启用 Actions；本地准备使用 `-PrepareOnly`，发布授权仍按下方规则。
+
+后续 MCP 开发与兼容性修复统一使用 `codex/workbench-development` 分支，继续维护该分支面向 `main` 的未合并 PR。用户另行指定隔离或拆分时再建其他功能分支；本次推送授权不代表授权后续自动推送、合并或发布。
+
 - 修改后运行与影响范围相称的检查，关键逻辑使用中文注释。
 - README 面向用户，docs 保留当前有效的产品与维护文档；开发过程记录保存在仓库外，版本变化维护在 Releases。
 - 业务数据、凭据、连接配置、私有运行时、草稿和签名私钥仅留本机，不进入提交或附件。

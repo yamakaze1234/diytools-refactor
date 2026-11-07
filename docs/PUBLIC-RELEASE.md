@@ -1,5 +1,7 @@
 # Windows 签名发布
 
+本地提交、检查和不上传的候选包准备见 [本地流程](LOCAL-WORKFLOW.md)。`publish-gitea-release.ps1 -PrepareOnly` 在附件本地验证后返回；省略该开关仍执行下文真实发布流程。当前不使用 Actions。
+
 主仓库为 [CoreStudio/diy-tools-refactor](https://gitea.cq360.top/CoreStudio/diy-tools-refactor)，GitHub 为备用发行源。版本标签使用 `refactor-vX.Y.Z`；软件从固定标签 `refactor-updates` 读取 `diytools-refactor-windows-x86_64.json`，清单指向对应版本的程序附件。
 
 ## 发布前准备

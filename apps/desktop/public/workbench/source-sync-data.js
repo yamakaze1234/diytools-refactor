@@ -1,3 +1,4 @@
+import {skuImageConfig} from './sku-image-mode.js';
 /** 输出源同步计划：逐字段展示配置差异，核验后应用，并提取受影响的图片导出任务。 */
 import {numberedImageEntries,imageFolderName} from './image-export-order.js';
 import {sourceDiff,syncSource} from './source.js';
@@ -44,7 +45,7 @@ export function sourceImageEntries(configs,configIds=null,skuMode=null){
  const selected=configIds===null?null:new Set(configIds);
  const groups=new Map(),folders=new Set();
  for(const c of configs){const key=JSON.stringify([c.shopId,c.productId||c.product||c.spu||'']);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(c);}
- return [...groups.values()].flatMap(rows=>{const first=rows[0],base=safe(first.product);let folder=base,n=2;while(folders.has(folder.toLowerCase()))folder=base+'_'+n++;folders.add(folder.toLowerCase());return numberedImageEntries(rows).filter(({config:c})=>!selected||selected.has(c.id)).flatMap(({config:c,name})=>['long','square'].map(layout=>({name:`${imageFolderName(folder,layout)}/${name}`,config:{...structuredClone(c),layout,...(layout==='square'&&skuMode?{skuMode}: {})}})));});
+ return [...groups.values()].flatMap(rows=>{const first=rows[0],base=safe(first.product);let folder=base,n=2;while(folders.has(folder.toLowerCase()))folder=base+'_'+n++;folders.add(folder.toLowerCase());return numberedImageEntries(rows).filter(({config:c})=>!selected||selected.has(c.id)).flatMap(({config:c,name})=>['long','square'].map(layout=>({name:`${imageFolderName(folder,layout)}/${name}`,config:{...(layout==='square'?skuImageConfig(c,skuMode):structuredClone(c)),layout}})));});
 }
 
 /** 全部范围限定为本次涉及的链接；仅变动模式仍沿用链接内原编号。 */

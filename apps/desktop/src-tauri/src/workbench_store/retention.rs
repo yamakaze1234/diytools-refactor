@@ -1,10 +1,11 @@
-//! 本机历史按创建时间保留七天；命名快照独立恢复，文件回收失败可重试。
+//! 本机历史按创建时间保留七天；命名快照独立恢复，过期草稿直接删除，失败可重试。
 use super::*;
 
 pub(super) const KEEP_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const CHECK_MS: i64 = 60 * 60 * 1000;
 
 pub(super) fn schema(c: &Connection) -> Result<()> {
+    // 沿用旧清理队列表名和结果字段，兼容已存在的待处理草稿，无需迁移数据库。
     c.execute_batch("CREATE TABLE IF NOT EXISTS workbench_named_snapshots(id TEXT PRIMARY KEY,revision INTEGER NOT NULL,document TEXT NOT NULL,hash TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workbench_history_retention(id INTEGER PRIMARY KEY CHECK(id=1),document TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS workbench_recovery_recycle(name TEXT PRIMARY KEY,bytes INTEGER NOT NULL);")
@@ -208,7 +209,7 @@ fn backup(store: &WorkbenchStore) -> Result<PathBuf> {
     Ok(path)
 }
 
-// 数据库删除和文件回收队列同事务提交；任何 SQL 错误都保留全部原记录/原文件。
+// 数据库删除和文件清理队列同事务提交；任何 SQL 错误都保留全部原记录/原文件。
 fn clean(tx: &Transaction, store: &WorkbenchStore, at: i64) -> Result<Value> {
     let cutoff = at.checked_sub(KEEP_MS).ok_or("维护时间无效")?;
     let history: Vec<(i64, String)> = tx
@@ -346,37 +347,20 @@ fn clean(tx: &Transaction, store: &WorkbenchStore, at: i64) -> Result<Value> {
     Ok(result)
 }
 
-fn recycle(path: &Path) -> Result<()> {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // 文件路径通过环境传入，不拼接脚本；只使用回收站，失败不降级永久删除。
-        // Shell 回收站不接受 canonicalize 返回的扩展路径前缀；转换后仍指向已核验的同一文件。
-        let raw = path.to_string_lossy();
-        let shell_path = if let Some(unc) = raw.strip_prefix(r"\\?\UNC\") {
-            format!(r"\\{unc}")
-        } else {
-            raw.strip_prefix(r"\\?\").unwrap_or(&raw).to_owned()
-        };
-        let output=std::process::Command::new("pwsh.exe").args(["-NoProfile","-NonInteractive","-Command",
-            "$ErrorActionPreference='Stop'; Add-Type -AssemblyName Microsoft.VisualBasic.Core; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($env:DIYTOOLS_RECYCLE_FILE,[Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,[Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin,[Microsoft.VisualBasic.FileIO.UICancelOption]::ThrowException)"])
-            .env("DIYTOOLS_RECYCLE_FILE",shell_path).creation_flags(0x08000000).output().map_err(|e|format!("无法放入回收站，文件保留：{e}"))?;
-        if !output.status.success() {
-            return Err("恢复草稿未能移入回收站，待下次重试；没有永久删除".into());
-        }
-        Ok(())
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = path;
-        Err("此平台尚未接入回收站，草稿文件保留".into())
+fn delete_expired_draft(path: &Path) -> Result<()> {
+    // 用户授权过期草稿直接删除；调用前已校验目录、文件名及链接，只处理过期队列。
+    // 使用 Rust 文件接口，无需外部 PowerShell；失败仍保留队列，供后续重试。
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("过期恢复草稿清理失败，保留待处理记录：{error}")),
     }
 }
 
 fn finish_files(
     c: &Connection,
     store: &WorkbenchStore,
-    recycle_file: &impl Fn(&Path) -> Result<()>,
+    delete_file: &impl Fn(&Path) -> Result<()>,
 ) -> Result<usize> {
     let names: Vec<String> = c
         .prepare("SELECT name FROM workbench_recovery_recycle ORDER BY name")
@@ -388,9 +372,9 @@ fn finish_files(
     for name in &names {
         let path = draft_path(store, name)?;
         if path.exists() {
-            recycle_file(&path)?;
+            delete_file(&path)?;
             if path.exists() {
-                return Err("文件回收未完成，保留待处理记录".into());
+                return Err("文件清理未完成，保留待处理记录".into());
             }
         }
         c.execute(
@@ -403,13 +387,17 @@ fn finish_files(
 }
 
 pub(super) fn maintain(store: &WorkbenchStore) -> Result<ApiResponse> {
-    maintain_at(store, chrono::Utc::now().timestamp_millis(), &recycle)
+    maintain_at(
+        store,
+        chrono::Utc::now().timestamp_millis(),
+        &delete_expired_draft,
+    )
 }
 
 fn maintain_at(
     store: &WorkbenchStore,
     at: i64,
-    recycle_file: &impl Fn(&Path) -> Result<()>,
+    delete_file: &impl Fn(&Path) -> Result<()>,
 ) -> Result<ApiResponse> {
     static MAINTENANCE: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let Ok(_guard) = MAINTENANCE.try_lock() else {
@@ -470,14 +458,14 @@ fn maintain_at(
             return Ok(response(500, json!({"error":error,"status":result})));
         }
     };
-    // 文件阶段也持有数据库写锁，另一实例不能同时处理同一回收队列。
+    // 文件阶段也持有数据库写锁，另一实例不能同时处理同一清理队列。
     c.busy_timeout(Duration::from_secs(30))
         .map_err(|e| e.to_string())?;
     let file_tx = c
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
     let mut result = saved(&file_tx)?;
-    match finish_files(&file_tx, store, recycle_file) {
+    match finish_files(&file_tx, store, delete_file) {
         Ok(count) => {
             result["phase"] = json!("complete");
             result["lastCleanup"] = json!(stamp(at)?);

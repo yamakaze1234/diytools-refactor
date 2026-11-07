@@ -11,9 +11,12 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {randomUUID,createHash} from 'node:crypto';
 import {blankConfig} from '../apps/desktop/public/workbench/core.js';
 import {normalizeWorkspaceState} from '../apps/desktop/public/workbench/shops.js';
+import {verifyMcpExports} from './agent-mcp-export-acceptance.mjs';
 
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'..'),publicRoot=resolve(root,'apps/desktop/public');
-assert.equal(process.argv.length,4,'node tools/agent-full-smoke.mjs HOST_EXE CLI_EXE');
+const exportCheck=process.argv[4]==='--mcp-export';
+const useMcp=process.argv[4]==='--mcp'||exportCheck;
+assert.ok(process.argv.length===4||(process.argv.length===5&&useMcp),'node tools/agent-config-fields-smoke.mjs HOST_EXE CLI_EXE [--mcp|--mcp-export]');
 const hostPath=resolve(process.argv[2]),cliPath=resolve(process.argv[3]);
 const directory=resolve(root,'sandbox',`agent-full-smoke-${Date.now()}`);await mkdir(directory,{recursive:true});
 const make=(id,name)=>{
@@ -22,11 +25,14 @@ const make=(id,name)=>{
  c.parts=[{slot:'CPU',name:'合成测试 CPU',sourceId:'src-cpu',goodsId:'00001',qty:1,erp:100,tax:110,upgrade:'INITIAL_DESC'},{slot:'内存',name:'合成 DDR5 16GB',sourceId:'src-ram',goodsId:'00002',qty:2,erp:150,tax:160,upgrade:''}];
  c.actualParts=structuredClone(c.parts);c.actualParts[0].name='实际 BOM CPU';return c;
 };
-const seed=normalizeWorkspaceState({dataVersion:3,revision:7,updatedAt:'2026-01-01T00:00:00Z',configs:[make('synthetic-first','配置1'),make('synthetic-selected','配置2')],templates:[],sourceCatalog:[],costSource:[],logs:[],caseGallery:[]});
+// 混合旧 SKU 样式，验收导出不会继承专属排版或改写保存配置。
+const configs=[make('synthetic-first','配置1'),make('synthetic-selected','配置2')];
+if(exportCheck){configs[0].skuMode='dedicated';configs[1].skuMode='padded';configs.push(make('synthetic-unset','配置3'));delete configs[2].skuMode;}
+const seed=normalizeWorkspaceState({dataVersion:3,revision:7,updatedAt:'2026-01-01T00:00:00Z',configs,templates:[],sourceCatalog:[],costSource:[],logs:[],caseGallery:[]});
 await writeFile(resolve(directory,'source-state.json'),JSON.stringify(seed,null,2));
 const report={directory,checks:[],pageErrors:[],httpErrors:[],cliCalls:[],jobs:[],scope:'Only isolated sandbox host, synthetic official-store database, original workbench bootstrap/app and Edge; no installed application or production data.'};
 const host=spawn(hostPath,[directory,'--tasks'],{cwd:directory,windowsHide:true,stdio:['pipe','pipe','pipe']});
-let diagnostics='',browser,server,readyResolve,readyReject,fault=null;
+let diagnostics='',browser,server,readyResolve,readyReject,fault=null,mcp,mcpLines;
 const uiSession=randomUUID();let activeClaim=null;
 const readyPromise=new Promise((a,b)=>{readyResolve=a;readyReject=b;}),pending=[];
 host.stderr.on('data',chunk=>diagnostics+=chunk);
@@ -43,7 +49,33 @@ const raw=async(method,path,body=null)=>rpc({action:'request',method,path,body:b
 const api=async(method,path,body=null)=>{const response=await raw(method,path,body);assert.equal(response.status,200,`${path}: ${response.body}`);return JSON.parse(response.body);};
 try{
  const ready=await Promise.race([readyPromise,new Promise((_,reject)=>{const timer=setTimeout(()=>reject(Error(`Host startup timeout: ${diagnostics}`)),20000);timer.unref();})]);report.instance=ready.instance;
+ // 可选 MCP 路径复用下方同一组真实 UI 与 SQLite 断言，不复制业务测试。
+ let mcpRequest;
+ if(useMcp){
+  mcp=spawn(cliPath,['--instance',ready.instance,'mcp','--allow-writes',...(exportCheck?['--allow-export']:[])],{cwd:directory,windowsHide:true,stdio:['pipe','pipe','pipe']});
+  let counter=0;const requests=new Map();let mcpDiagnostics='';
+  mcp.stderr.on('data',chunk=>mcpDiagnostics+=chunk);
+  mcpLines=createInterface({input:mcp.stdout});
+  mcpLines.on('line',line=>{const reply=JSON.parse(line),pending=requests.get(reply.id);if(pending){requests.delete(reply.id);clearTimeout(pending.timer);reply.error?pending.reject(Error(JSON.stringify(reply.error))):pending.resolve(reply.result);}});
+  const failAll=error=>{for(const pending of requests.values()){clearTimeout(pending.timer);pending.reject(error);}requests.clear();};
+  mcp.on('error',failAll);mcp.on('exit',code=>failAll(Error(`MCP exited ${code}: ${mcpDiagnostics}`)));
+  mcpRequest=(method,params)=>new Promise((resolve,reject)=>{const id=++counter,timer=setTimeout(()=>{requests.delete(id);reject(Error(`MCP timeout: ${method}`));},15000);requests.set(id,{resolve,reject,timer});mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+  const initialized=await mcpRequest('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'isolated-workbench-test',version:'1'}});
+  assert.equal(initialized.protocolVersion,'2025-11-25');mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+  const tools=await mcpRequest('tools/list',{});assert.equal(tools.tools.length,exportCheck?8:7);report.transport='mcp-stdio-to-windows-pipe';
+ }
  const cli=async args=>{
+  if(useMcp){
+   const option=name=>args[args.indexOf(name)+1];let name,argumentsValue;
+   if(args[0]==='changes'&&args[1]==='preview'){name='workbench_changes_preview';argumentsValue={request:JSON.parse(await readFile(option('--input'),'utf8')),operationId:option('--operation-id')};}
+   else if(args[0]==='changes'&&args[1]==='apply'){name='workbench_changes_apply';argumentsValue={planId:option('--plan-id'),operationId:option('--operation-id')};}
+   else if(args[0]==='jobs'){name='workbench_jobs_status';argumentsValue={operationId:option('--operation-id')};}
+   else if(args[0]==='configs'&&args[1]==='get'){name='workbench_configs_get';argumentsValue={configId:option('--config-id')};}
+   else if(args[0]==='export'){name='workbench_export_start';argumentsValue={...JSON.parse(await readFile(option('--input'),'utf8')),operationId:option('--operation-id')};}
+   else throw Error(`Unmapped smoke command: ${args}`);
+   const result=await mcpRequest('tools/call',{name,arguments:argumentsValue});assert.equal(result.isError,false,JSON.stringify(result));
+   const envelope=JSON.parse(result.content[0].text);assert.equal(envelope.ok,true);report.cliCalls.push({transport:'mcp',name,arguments:argumentsValue,response:envelope});return envelope.data;
+  }
   const {stdout,stderr}=await exec(cliPath,['--json','--instance',ready.instance,...args],{cwd:directory,windowsHide:true,timeout:15000});assert.equal(stderr,'');const envelope=JSON.parse(stdout);assert.equal(envelope.ok,true,stdout);report.cliCalls.push({args,response:envelope});return envelope.data;
  };
  server=createServer(async(req,res)=>{
@@ -91,6 +123,7 @@ try{
   report.jobs.push(final);assert.equal(final.status,expected,JSON.stringify(final));return final;
  };
 
+ if(exportCheck)await verifyMcpExports({task,cli,api,frame,directory,report});
  const before=await api('GET','/api/state?logs=none');
  const selected=before.configs.find(c=>c.id==='synthetic-selected');
  const input=resolve(directory,'price-sku.json'),op=randomUUID();
@@ -110,9 +143,11 @@ try{
  const readback=await cli(['configs','get','--config-id',selected.id]);
  report.readback=readback;report.beforeRevision=before.revision;report.afterRevision=after.revision;
  assert.ok(JSON.stringify(readback).includes('90071992547409931234'));
+ if(exportCheck){assert.equal((await api('GET','/api/state?logs=none')).configs.find(c=>c.id===selected.id).skuExportMode,'padded');report.checks.push('saved_sku_style_survives_reload');}
  assert.deepEqual(report.pageErrors,[]);report.checks.push('configFields_cli_preview_apply','official_sqlite_price_sku_readback','all_other_fields_and_configs_unchanged','same_operation_id_no_duplicate_save','reload_and_cli_readback');report.ok=true;
 }catch(error){report.ok=false;report.error=error.stack;throw error;}
 finally{
+ if(mcp){mcp.stdin.end();await Promise.race([new Promise(resolveExit=>mcp.once('exit',resolveExit)),new Promise(resolveWait=>setTimeout(resolveWait,3000))]);if(mcp.exitCode===null)mcp.kill();mcpLines.close();}
  await browser?.close();if(server)await new Promise(resolveClose=>server.close(resolveClose));
  host.stdin.end();await Promise.race([new Promise(resolveExit=>host.once('exit',resolveExit)),new Promise(resolveWait=>setTimeout(resolveWait,3000))]);if(host.exitCode===null)host.kill();lines.close();
  report.hostDiagnostics=diagnostics;await writeFile(resolve(directory,'completion.json'),JSON.stringify(report,null,2));console.log(JSON.stringify({ok:report.ok,directory,checks:report.checks,error:report.error}));

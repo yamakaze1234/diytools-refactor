@@ -1,5 +1,7 @@
 # 本机 AI 与 CLI 操作入口
 
+支持 MCP 的本地 AI 客户端也可通过源码 CLI 的 `mcp` 子命令接入。构建、连接配置、工具权限和任务回执见 [MCP 本机接入](MCP.md)；已安装版本是否支持以该 CLI 的 `--help` 为准。
+
 正式 Windows 版本随主 EXE 内置配套 CLI。首次启动及升级重启时，在程序目录准备 `diytools-agent.exe`，并更新 `agent-connection.json`。直接运行工作台即可，不需要源码、Python、Node.js、PowerShell 启动脚本或手动设置启用变量。
 
 入口只允许本机当前 Windows 用户和系统访问，按用户与实例隔离。AI 需要能够执行本机命令；网页聊天本身不能直接调用本机程序。CLI 经工作台现有业务接口操作，不直接打开数据库，不接受任意 SQL 或脚本执行。

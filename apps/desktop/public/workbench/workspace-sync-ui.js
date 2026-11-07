@@ -100,7 +100,10 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
    const retention=await fetch('/api/versions/maintain',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
    const retained=await retention.json();if(!retention.ok)throw Error(retained.error||'历史清理未完成');if(retained.reason==='busy')return;
    const result=await cacheRequest('maintain');if(!result.skipped&&result.cleared?.count)toast(cacheResultText(result));nextMaintenance=Math.max(Date.now()+60*1000,Date.parse(retained.nextCheckAt)||Date.now()+60*60*1000);}
-  catch(error){showError(error);}
+  catch(error){
+   // 后台清理失败后延迟一小时重试，避免每分钟重复打扰配置编辑。
+   nextMaintenance=Date.now()+60*60*1000;showError(error);
+  }
   finally{releaseMaintenance?.();window.workbenchMaintenancePromise=null;cleaning=false;render(controller.status());}
  }
  async function openCache(){
@@ -110,7 +113,7 @@ export async function bindWorkspaceSync({flush,receive,openDialog,esc,toast,onMe
   const marker=$('#cache-message');
   let plan;try{plan=await cacheRequest();}catch(error){if($('#cache-message')===marker)marker.textContent=error.message;return;}
   if($('#cache-message')!==marker||!$('#dialog')?.open)return;
-  openDialog('清理本机缓存',`<p>每 3 天自动清理一次；关闭期间到期，下次启动后补做。</p>${(plan.categories||[]).map(c=>`<p>${esc(c.label)}：${Number(c.count||0)} 项，约 ${cacheSize(c.bytes)}。</p>`).join('')}<p>本次缓存清理会删除过期且无引用的旧生成图；每套配置各版式的最新生成图、当前配置、历史记录、恢复草稿和原图不受本次缓存清理影响。</p><p><strong>历史记录独立自动清理：</strong>普通历史和恢复草稿按创建时间保留最近 7 天；命名版本长期保留，直到主动删除。保存、同步或还原期间暂缓清理，无需点击“清理缓存”触发。</p><p>历史更新备份只保留最近一次可回退备份，更早的成功更新目录直接删除；失败或尚未确认的更新保留。更新成功后也会自动清理，未完成的清理在下次启动时重试。</p><p class="hint">配置索引需要时重建，空间供数据库复用，数据库文件不会立即缩小。</p><p>下次自动清理：${plan.nextCleanupAt?esc(new Date(plan.nextCleanupAt).toLocaleString('zh-CN')):'首次运行后开始计时'}</p><p id="cache-message" role="status"></p><div class="actions"><button id="cache-clear" class="primary" ${plan.count?'':'disabled'}>清理缓存</button><button id="cache-shops">删除所选店铺数据</button><button id="cache-back">返回数据与同步</button></div>`);
+  openDialog('清理本机缓存',`<p>每 3 天自动清理一次；关闭期间到期，下次启动后补做。</p>${(plan.categories||[]).map(c=>`<p>${esc(c.label)}：${Number(c.count||0)} 项，约 ${cacheSize(c.bytes)}。</p>`).join('')}<p>本次缓存清理会删除过期且无引用的旧生成图；每套配置各版式的最新生成图、当前配置、历史记录、恢复草稿和原图不受本次缓存清理影响。</p><p><strong>历史记录独立自动清理：</strong>普通历史和恢复草稿按创建时间保留最近 7 天，过期恢复草稿直接删除、不进入回收站；命名版本长期保留，直到主动删除。保存、同步或还原期间暂缓清理，无需点击“清理缓存”触发。</p><p>历史更新备份只保留最近一次可回退备份，更早的成功更新目录直接删除；失败或尚未确认的更新保留。更新成功后也会自动清理，未完成的清理在下次启动时重试。</p><p class="hint">配置索引需要时重建，空间供数据库复用，数据库文件不会立即缩小。</p><p>下次自动清理：${plan.nextCleanupAt?esc(new Date(plan.nextCleanupAt).toLocaleString('zh-CN')):'首次运行后开始计时'}</p><p id="cache-message" role="status"></p><div class="actions"><button id="cache-clear" class="primary" ${plan.count?'':'disabled'}>清理缓存</button><button id="cache-shops">删除所选店铺数据</button><button id="cache-back">返回数据与同步</button></div>`);
   $('#cache-back').onclick=guard(open);
   $('#cache-shops').onclick=guard(openShopCleanup);
   const clearButton=$('#cache-clear'),message=$('#cache-message');

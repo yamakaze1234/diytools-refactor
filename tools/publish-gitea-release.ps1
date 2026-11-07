@@ -6,7 +6,9 @@ param(
     [Parameter(Mandatory = $true)][string]$NotesPath,
     [Alias('ArtifactsPath')][string]$ArtifactsDirectory,
     [switch]$CreateRepository,
-    [switch]$PublicRepository
+    [switch]$PublicRepository,
+    # 只构建、签名及验证本地附件；在读取发布凭据和网络写入之前返回。
+    [switch]$PrepareOnly
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -202,6 +204,10 @@ try {
         }
     } finally { $zip.Dispose() }
     if (@(git status --porcelain).Count -gt 0) { throw '构建后源码有未提交变化，发布已停止。' }
+    if ($PrepareOnly) {
+        Write-Output "本地发行包准备完成，未推送、未上传、未更新通道。附件位于 $ArtifactsDirectory"
+        return
+    }
     $credential = Get-DIYGiteaCredential
     $handler = [Net.Http.HttpClientHandler]::new()
     $handler.AllowAutoRedirect = $false

@@ -10,7 +10,7 @@ import {syncPosterShortName} from '../../public/workbench/short-name-poster.js';
 test('generated short names reach preview and export in both formats and all headers',async t=>{
  canvasDOM(t);
  for(const layout of ['long','square','centered']){
-  const c=config(layout==='square'?'square':'long');c.skuMode='dedicated';c.modules=modulesDefault('intel','light');
+  const c=config(layout==='square'?'square':'long');c.skuMode='dedicated';c.skuExportMode='dedicated';c.modules=modulesDefault('intel','light');
   if(layout==='centered')c.freeCanvasLayouts={long:{base:668,compact:true,centeredHeader:true}};
   c.posterSubtitle='旧摘要';c.textStyles={'header.subtitle':{text:'旧长图',size:18,color:'#123456'}};c.skuTextStyles={'header.subtitle':{text:'旧方图',size:16}};
   c.textTransforms={long:{'header.subtitle':{x:8,y:9}}};
@@ -74,7 +74,7 @@ test('very long preview is bounded without changing layout coordinates or clippi
 test('dedicated and padded readonly squares retain square export and readonly behavior',async t=>{
  canvasDOM(t);
  for(const skuMode of ['dedicated','padded']){
-  const c={...config('square'),skuMode},preview=await renderPreviewPoster(c,{displayWidth:400,devicePixelRatio:1.5}),exported=await renderPoster(c,1400);
+  const c={...config('square'),skuMode,skuExportMode:skuMode},preview=await renderPreviewPoster(c,{displayWidth:400,devicePixelRatio:1.5}),exported=await renderPoster(c,1400);
   assert.equal(preview.canvas.width,600);assert.equal(preview.canvas.height,600);assert.equal(preview.exportWidth,1400);assert.equal(exported.canvas.width,1400);assert.equal(exported.canvas.height,1400);
   if(skuMode==='padded'){assert.equal(preview.readOnly,true);assert.deepEqual(preview.textRegions,[]);assert.deepEqual(preview.regions,[]);assert.equal(preview.redrawImages,undefined);}else assert.deepEqual(geometry(preview),geometry(exported));
  }

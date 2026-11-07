@@ -5,6 +5,8 @@ use diytools_agent_core::{
 use serde_json::{json, Map, Value};
 use std::{fs::File, io::Read, path::PathBuf, process::ExitCode};
 
+mod mcp;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "diytools-agent",
@@ -24,6 +26,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// 以标准输入输出提供 MCP 工具，复用当前用户的本机 Agent 接口
+    Mcp(mcp::Options),
     /// 查询实例与已保存快照状态
     Status,
     /// 通过 status 检查连接并说明当前能力边界
@@ -171,6 +175,7 @@ fn input_object(path: &PathBuf) -> Result<Value, AgentError> {
 
 fn command_request(command: &Command) -> Result<Request, AgentError> {
     match command {
+        Command::Mcp(_) => Err(AgentError::new("INVALID_ARGUMENT", "MCP 使用独立会话入口")),
         Command::Changes {
             command:
                 ChangesCommand::Preview {
@@ -312,6 +317,10 @@ fn main() -> ExitCode {
             )
         }
     };
+    // MCP 的 stdout 只能包含 JSON-RPC；连接错误在工具结果中返回。
+    if let Command::Mcp(options) = &cli.command {
+        return mcp::run(options, cli.instance.as_deref());
+    }
     let diagnostic_request = request("cli", json!({}));
     let instance = match cli
         .instance

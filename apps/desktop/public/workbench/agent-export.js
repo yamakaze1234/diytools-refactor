@@ -50,6 +50,7 @@ export async function exportAgentSnapshot({configs,revision,params={},writeFile,
  if(ids.size!==snapshot.length||snapshot.some(c=>typeof c.id!=='string'||!c.id))throw Error('快照配置 ID 必须为非空且唯一');
  if(options.configIds!==undefined&&(!Array.isArray(options.configIds)||!options.configIds.length||options.configIds.some(id=>!ids.has(id))))throw Error('configIds 必须选择快照中的配置');
  const selected=options.configIds===undefined?snapshot:snapshot.filter(c=>options.configIds.includes(c.id));
+ // AI 与手动导出读取同一固定样式；未明确选择时默认详情图补白。
  const entries=sourceImageEntries(normalizeProducts(copy(snapshot)),options.configIds??null).filter(e=>images==='both'||e.config.layout===images),files=[];
  for(const [index,entry] of entries.entries()){
   await progress({phase:'rendering',completed:index,total:entries.length,name:entry.name});

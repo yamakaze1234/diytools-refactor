@@ -213,7 +213,7 @@ fn file_requests_wrap_preview_and_merge_export_without_raw_write_escape() {
         }),
     )
     .unwrap();
-    let path = std::env::temp_dir().join(format!("cli-job-input-{}.json", uuid::Uuid::new_v4()));
+    let path = fixture_path();
     std::fs::write(
         &path,
         r#"{"shopId":"intel","targets":[],"action":{"type":"quantity","quantity":2}}"#,
@@ -261,7 +261,7 @@ fn file_requests_wrap_preview_and_merge_export_without_raw_write_escape() {
     assert_eq!(envelope["data"]["received"]["operationId"], operation);
     std::fs::write(&path, r#"{"operationId":"hidden"}"#).unwrap();
     assert_eq!(error_code(&run(&args)), "INVALID_INPUT");
-    std::fs::remove_file(path).unwrap();
+    // 与其他夹具一致，留在隔离 sandbox，收尾统一移入回收站。
     drop(server);
 }
 

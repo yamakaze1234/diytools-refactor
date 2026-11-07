@@ -12,6 +12,18 @@ function fixture(){
  };
 }
 
+test('AI 双图及仅 SKU 导出统一详情图补白，不继承旧样式或修改保存配置',async()=>{
+ for(const images of ['both','square']){
+  const f=fixture(),configs=['dedicated','padded',undefined].map((skuMode,i)=>({...config(String(i),`配置${i}`),skuMode,theme:i===0?'dark':'light',posterOverrides:{long:{title:{text:'保留详情排版'}}}}));
+  const before=structuredClone(configs),seen=[];
+  await exportAgentSnapshot({...f,configs,revision:1,params:{images},render:async(c,width)=>{seen.push(structuredClone(c));return f.render(c,width);}});
+  const squares=seen.filter(c=>c.layout==='square');
+  assert.equal(squares.length,3);assert.ok(squares.every(c=>c.skuMode==='padded'));
+  for(const c of seen){const original=before.find(item=>item.id===c.id);assert.equal(c.theme,original.theme);assert.deepEqual(c.posterOverrides,original.posterOverrides);if(c.layout==='long')assert.equal(c.skuMode,original.skuMode);}
+  assert.deepEqual(configs,before);assert.equal(f.writes.length,images==='both'?6:3);
+ }
+});
+
 test('报告读取真实 ERP 与核算价及匹配手工覆盖，未知不猜测，特殊项保持零成本',async()=>{
  const f=fixture(),c=config('a','成本核验');
  c.parts=[{slot:'CPU',name:'展示成本',goodsId:'0001',qty:1,erp:12.34,tax:23.45,cost:999,costCents:88888,upgrade:'FIRST_DESC_SENTINEL <升级> & "原样"'}];

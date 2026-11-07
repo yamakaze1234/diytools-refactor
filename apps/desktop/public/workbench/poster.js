@@ -1,3 +1,4 @@
+import {skuImageMode} from './sku-image-mode.js';
 import {displayedAddon} from './hardware-upgrade.js';
 /** 配置图与 SKU 图共用 Canvas 渲染器：将配件、模块、文字及素材合成为最终画布。 */
 import {modelCanvasWidth,posterColumns} from './poster-width.js';
@@ -23,6 +24,7 @@ export function defaultPosterWidth(c){return c.layout==='square'?1400:1000;}
 /** 加载字体与素材并绘制海报；interactive 模式同时提供编辑器所需的区域信息。 */
 export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=false,beforeDraw}={}){
  c=productPosterConfig(c);
+ c={...c,skuMode:skuImageMode(c)};
  await ensurePosterFonts();
  c=withPosterFonts(c);
  await document.fonts.ready;

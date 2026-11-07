@@ -22,11 +22,8 @@ fn call(s: &WorkbenchStore, path: &str, input: Value) -> Value {
     serde_json::from_str(&r.body).unwrap()
 }
 fn run(s: &WorkbenchStore, at: i64) -> Value {
-    let r = maintain_at(s, at, &|p| {
-        // 模拟回收站移动，测试失败回滚时不会丢弃测试恢复材料。
-        fs::rename(p, p.with_extension("recycled")).map_err(|e| e.to_string())
-    })
-    .unwrap();
+    // 隔离样本执行真实删除，验证无需外部 PowerShell 的自动清理路径。
+    let r = maintain_at(s, at, &delete_expired_draft).unwrap();
     assert_eq!(r.status, 200, "{}", r.body);
     serde_json::from_str(&r.body).unwrap()
 }
@@ -503,4 +500,128 @@ fn one_pass_migrates_multiple_legacy_names_including_shared_sequence() {
     for (id, original) in expected {
         assert_eq!(version(&c, &id).unwrap(), original);
     }
+}
+
+// Windows 原生故障验证：真实句柄/ACL 阻止删除，不使用模拟错误回调。
+#[cfg(windows)]
+fn windows_delete_failure_probe(block: impl FnOnce(&Path) -> Box<dyn std::any::Any>, code: i32) {
+    let s = fixture();
+    let at = chrono::Utc::now().timestamp_millis();
+    let c = db(&s.path).unwrap();
+    let before = state(&c).unwrap();
+    let draft = call(&s, "/api/recovery-draft", json!({"state":before}));
+    let path = PathBuf::from(draft["file"].as_str().unwrap());
+    let bytes = fs::read(&path).unwrap();
+    c.execute(
+        "UPDATE workbench_recovery SET at=?1",
+        [stamp(at - KEEP_MS - 1).unwrap()],
+    )
+    .unwrap();
+    drop(c);
+    let guard = block(&path);
+    // 先确认操作系统确实拒绝删除，再经过产品完整维护流程验证持久化行为。
+    assert_eq!(
+        fs::remove_file(&path).unwrap_err().raw_os_error(),
+        Some(code)
+    );
+    let result = maintain_at(&s, at, &delete_expired_draft).unwrap();
+    assert_eq!(result.status, 500);
+    assert!(
+        result.body.contains(&format!("os error {code}")),
+        "{}",
+        result.body
+    );
+    // 这里只拒绝删除权限，保留读权限，以验证真实文件删除失败后的持久化队列。
+    let pending = 1;
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    let c = db(&s.path).unwrap();
+    assert_eq!(status(&s, &c).unwrap()["pendingFiles"], pending);
+    let registered: i64 = c
+        .query_row("SELECT count(*) FROM workbench_recovery", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(registered, 1 - pending);
+    if pending == 1 {
+        assert_eq!(saved(&c).unwrap()["phase"], "files-pending");
+    }
+    assert!(saved(&c).unwrap()["lastCleanup"].is_null());
+    assert_eq!(state(&c).unwrap(), before);
+    drop(c);
+    // 清理失败后仍能保存编辑；重开数据库后待处理记录仍存在。
+    edit(&s, 99);
+    drop(guard);
+    let s = initialize(&s.path, &s.path.with_file_name("none"), &s.assets).unwrap();
+    assert_eq!(
+        status(&s, &db(&s.path).unwrap()).unwrap()["pendingFiles"],
+        pending
+    );
+    let result = run(&s, at + CHECK_MS);
+    assert_eq!(result["phase"], "complete");
+    assert!(result["error"].is_null());
+    assert!(!path.exists());
+    assert_eq!(
+        status(&s, &db(&s.path).unwrap()).unwrap()["pendingFiles"],
+        0
+    );
+    assert_eq!(
+        state(&db(&s.path).unwrap()).unwrap()["configs"][0]["price"],
+        99
+    );
+    println!(
+        "Windows error {code}: file preserved, recovery registration or queue persisted, save succeeded, restart/retry deleted draft"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_locked_draft_preserved_then_deleted_after_unlock() {
+    use std::os::windows::fs::OpenOptionsExt;
+    windows_delete_failure_probe(
+        |path| {
+            // 允许读写但不共享删除，真实触发 Windows ERROR_SHARING_VIOLATION (32)。
+            Box::new(
+                fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(3)
+                    .open(path)
+                    .unwrap(),
+            )
+        },
+        32,
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_acl_denied_draft_preserved_then_deleted_after_permission_restore() {
+    struct DenyDelete(Vec<PathBuf>);
+    fn acl(path: &Path, args: &[&str]) {
+        let exe =
+            PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32/icacls.exe");
+        let output = std::process::Command::new(exe)
+            .arg(path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "icacls failed: {:?}", output);
+    }
+    impl Drop for DenyDelete {
+        fn drop(&mut self) {
+            // 仅还原本测试目录及草稿的拒绝规则，确保失败断言也能恢复权限。
+            for path in self.0.iter().rev() {
+                acl(path, &["/remove:d", "*S-1-1-0"]);
+            }
+        }
+    }
+    windows_delete_failure_probe(
+        |path| {
+            let parent = path.parent().unwrap().to_path_buf();
+            let mut guard = DenyDelete(vec![parent.clone()]);
+            // 同时拒绝父目录 DeleteChild 和文件 Delete，排除父目录权限允许删除的旁路。
+            acl(&parent, &["/deny", "*S-1-1-0:(DC)"]);
+            guard.0.push(path.to_path_buf());
+            acl(path, &["/deny", "*S-1-1-0:(DE)"]);
+            Box::new(guard)
+        },
+        5,
+    );
 }

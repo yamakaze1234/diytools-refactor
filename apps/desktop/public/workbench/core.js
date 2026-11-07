@@ -49,7 +49,7 @@ export const posterParts=config=>config.parts.filter(p=>(p.displayName||p.name||
 export function applyPosterStyle(source,target,{colors=true,format=true,images=false}={}){
  const src=clone(source),copyKeys=(from,to,keys)=>{for(const key of keys){if(from[key]===undefined)delete to[key];else to[key]=clone(from[key]);}};
  if(colors)copyKeys(src,target,['theme','palette','upgradeColor']);
- if(format)copyKeys(src,target,['layout','skuMode','posterDesignVersion','autoWidth','fontFamily','upgradeSize','upgradeWeight','showUpgrades','showWarranty','freeCanvasLayouts']);
+ if(format)copyKeys(src,target,['layout','skuMode','skuExportMode','posterDesignVersion','autoWidth','fontFamily','upgradeSize','upgradeWeight','showUpgrades','showWarranty','freeCanvasLayouts']);
  if(format||images)copyKeys(src,target,['caseTransforms','caseVisible']);
  const sourceModules=posterModules(src),targetModules=posterModules(target),used=new Set(),pairs=[];
  for(const m of sourceModules){const match=targetModules.find(t=>!used.has(t)&&t.type===m.type&&t.id===m.id)||targetModules.find(t=>!used.has(t)&&t.type===m.type);if(match){used.add(match);pairs.push([m,match]);}}

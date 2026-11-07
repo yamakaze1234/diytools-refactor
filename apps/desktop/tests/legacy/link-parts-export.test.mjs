@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {linkPartsExportScope,createLinkPartsExportSession} from '../../public/workbench/link-parts.js';
 import {applyReplacement,exportBatchImages,exportEntries} from '../../public/workbench/global-batch.js';
 
-const config=(id,productId='a',shopId='intel')=>({id,productId,shopId,product:'链接'+productId,spu:'888888888888888888',name:'配置'+id,parts:[{slot:'CPU',name:'旧CPU',goodsId:'1',qty:1}],actualParts:[],theme:'paper',skuMode:'full',modules:[{text:'原版式'}]});
+const config=(id,productId='a',shopId='intel')=>({id,productId,shopId,product:'链接'+productId,spu:'888888888888888888',name:'配置'+id,parts:[{slot:'CPU',name:'旧CPU',goodsId:'1',qty:1}],actualParts:[],theme:'paper',skuMode:'dedicated',skuExportMode:'dedicated',modules:[{text:'原版式'}]});
 const batch=configs=>({productIds:['a','b'],changes:[{id:configs[0].id,before:structuredClone(configs[0]),after:{...structuredClone(configs[0]),parts:[{slot:'CPU',name:'新CPU',goodsId:'2',qty:1}]}}]});
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no;});return {promise,resolve,reject};};
 const renderer=async c=>({overflow:false,canvas:{toBlob:callback=>callback(new Blob([JSON.stringify(c)]))}});
@@ -23,7 +23,7 @@ test('导出范围只取有实际变化的链接，包含全部未删除兄弟�
 test('保存成功优先捕获保存回执，忽略实时未保存编辑并保留样式与SKU模式',async()=>{
  const saved=[config('1'),config('2')],plan=batch(saved),draft=structuredClone(saved);let calls=0;
  const session=createLinkPartsExportSession({getConfigs:()=>draft,apply:async approved=>{calls++;applyReplacement(approved,saved);saved[0].modules.push({normalized:true});draft[1].parts[0].name='未保存';return {configs:saved};},exportImages:async(scope,kind)=>{
-  assert.equal(scope.snapshots[1].parts[0].name,'旧CPU');assert.equal(scope.snapshots[0].modules[1].normalized,true);assert.equal(scope.snapshots[0].theme,'paper');assert.equal(scope.snapshots[0].skuMode,'full');assert.equal(kind,'square');scope.snapshots[0].parts[0].name='渲染修改';
+  assert.equal(scope.snapshots[1].parts[0].name,'旧CPU');assert.equal(scope.snapshots[0].modules[1].normalized,true);assert.equal(scope.snapshots[0].theme,'paper');assert.equal(scope.snapshots[0].skuMode,'dedicated');assert.equal(kind,'square');scope.snapshots[0].parts[0].name='渲染修改';
  }});
  await session.save(plan);saved[1].parts[0].name='后续已保存';await session.export('square',()=>{});await session.export('square',()=>{});
  assert.equal(calls,1);assert.equal(session.scope().snapshots[0].parts[0].name,'新CPU');
@@ -72,15 +72,23 @@ test('保存回执范围准备失败明确标记已保存，不回退或导出�
 
 test('指定单一图种保留命名、完整SPU与每套样式，旧入口默认两张',()=>{
  const configs=[config('1'),config('2')];
- for(const kind of ['long','square','both']){const entries=exportEntries(configs,['a'],kind);assert.equal(entries.length,kind==='both'?4:2);assert.ok(entries.every(e=>e.name.startsWith('链接a_')));assert.ok(entries.every(e=>e.config.theme==='paper'&&e.config.skuMode==='full'));if(kind!=='both')assert.ok(entries.every(e=>e.config.layout===kind));}
+ for(const kind of ['long','square','both']){const entries=exportEntries(configs,['a'],kind);assert.equal(entries.length,kind==='both'?4:2);assert.ok(entries.every(e=>e.name.startsWith('链接a_')));assert.ok(entries.every(e=>e.config.theme==='paper'&&e.config.skuMode==='dedicated'));if(kind!=='both')assert.ok(entries.every(e=>e.config.layout===kind));}
  assert.equal(exportEntries(configs,['a']).length,4);assert.throws(()=>exportEntries(configs,['a'],'bad'),/请选择/);
 });
 
 test('快照导图跳过再次保存，以1400px渲染选定图种并写出导出清单',async()=>{
  const snapshots=[config('1'),config('2')],rendered=[],messages=[];let folderFiles,saves=0,downloads=0;
  await exportBatchImages({save:async()=>saves++,getConfigs:()=>{throw Error('不能读后续编辑');},renderImage:async(c,width)=>{rendered.push({c,width});return renderer(c);},saveFolder:async files=>{folderFiles=files;return {directory:'测试文件夹'};},download:()=>downloads++},['a'],message=>messages.push(message),{snapshots,imageKind:'square'});
- assert.equal(saves,0);assert.equal(downloads,0);assert.equal(rendered.length,2);assert.ok(rendered.every(r=>r.width===1400&&r.c.layout==='square'&&r.c.theme==='paper'&&r.c.skuMode==='full'));
+ assert.equal(saves,0);assert.equal(downloads,0);assert.equal(rendered.length,2);assert.ok(rendered.every(r=>r.width===1400&&r.c.layout==='square'&&r.c.theme==='paper'&&r.c.skuMode==='dedicated'));
  assert.deepEqual(folderFiles.map(f=>f.name),['1_配置1.png','2_配置2.png','导出清单.json']);assert.match(messages.at(-1),/导出 2 张图片/);
+});
+
+// 重试只刷新固定样式，不把保存后的配件编辑混入已经确认的业务快照。
+test('同一批次再次沿用配置样式时读取最新样式，保留配件快照',async()=>{
+ const snapshots=[{...config('1'),skuExportMode:'padded'}],rendered=[];
+ await exportBatchImages({getSkuModes:()=>new Map([['1','dedicated']]),renderImage:async c=>{rendered.push(c);return renderer(c);},saveFolder:async()=>({directory:'测试'})},['a'],()=>{},{snapshots,imageKind:'square',skuMode:'saved'});
+ assert.equal(rendered[0].skuMode,'dedicated');assert.deepEqual(rendered[0].parts,snapshots[0].parts);
+ assert.equal(snapshots[0].skuExportMode,'padded');
 });
 
 test('原批量入口仍先保存并默认导出两种图片',async()=>{
