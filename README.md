@@ -2,7 +2,7 @@
 
 面向 DIY 整机业务的 Windows 工作台。按店铺和商品链接集中维护配置、配件、库存与利润，批量更新说明，制作配置清单图和 SKU 图。
 
-**Windows x64 · 当前版本 0.2.39 · 解压即用**
+**Windows x64 · 当前版本 0.2.40 · 解压即用**
 
 配件选择可同时查看价格与库存；批量替换、展示名称和加购描述支持多任务统一预览与保存。维护数据按配件类型显示 CPU 简称、主板板型、机箱支持板型或容量，识别已知的主板机箱搭配错误，并隐藏不兼容的主板加购。
 
@@ -10,15 +10,15 @@
 
 | 下载入口 | 说明 |
 | --- | --- |
-| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.39/DIYTools-0.2.39-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
-| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.39/DIYTools-0.2.39-Windows-x64.zip) | 备用下载源 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.39) | 完整变化和下载附件 |
+| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.40/DIYTools-0.2.40-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
+| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.40/DIYTools-0.2.40-Windows-x64.zip) | 备用下载源 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.40) | 完整变化和下载附件 |
 
 1. 下载并完整解压到可写目录，不要直接在压缩包内运行。
 2. 无团队配置时使用本机模式；团队成员登录后，按提示下载资料或迁移旧数据。
 3. 选择店铺、链接和配置，编辑配件与价格，确认保存状态后导出。
 
-需要 Windows x64 和 Microsoft Edge WebView2 Runtime；使用者无需安装 Node.js、Rust 或 Python。便携版资料存放于程序旁的 data。已有用户通过“更多 → 检查更新”升级，更新保留原有数据与本机接入配置。
+需要 Windows x64 和 Microsoft Edge WebView2 Runtime；使用者无需安装 Node.js、Rust 或 Python。便携版资料存放于程序旁的 data。0.2.39 及更早版本需手动升级一次至 0.2.40：保存并退出程序，下载本次 Release 的 EXE，改成原程序文件名后替换原目录中的 EXE；保留 data、图片、本机配置及 diytools-portable.json。0.2.40 起后续可继续通过“更多 → 检查更新”升级。
 
 ## 界面例图
 

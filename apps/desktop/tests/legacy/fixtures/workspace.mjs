@@ -29,10 +29,10 @@ export const catalog = [parts.at(-1), ...parts.slice(0,-1)]
   .map(p => ({...p, sourceId:`synthetic-source-${p.goodsId}`, shopId:'intel'}));
 seed.sourceCatalog = structuredClone(catalog);
 
-// Frozen contract expectation, independent of erpRow()/erpFormula().
+// 旧版导出的预期结果独立于 erpRow()/erpFormula()，用于逐格核对。
 const slots = ['CPU','散热','主板','内存','硬盘','显卡','电源','机箱','风扇','配件1','配件2','配件3','配件4','配件5'];
 const contractParts = {CPU:['10001','1'], 内存:['10002','2'], 电源:['10003','1'], 风扇:['10004','8']};
 export const legacyRow = slots.flatMap(slot => {
   const [id, qty] = contractParts[slot] || ['0','1'];
-  return [id, `=IF([@[${slot}_id]]<>"",INDEX([主机成本表V2.xlsb]库存数据!$BD:$BD,MATCH([@[${slot}_id]],[主机成本表V2.xlsb]库存数据!$BB:$BB,0)),"")`, qty, ''];
+  return [id, `=IF([@[${slot}_id]]<>"",INDEX([主机成本表V2新.xlsb]库存数据!$BD:$BD,MATCH([@[${slot}_id]],[主机成本表V2新.xlsb]库存数据!$BB:$BB,0)),"")`, qty, ''];
 });

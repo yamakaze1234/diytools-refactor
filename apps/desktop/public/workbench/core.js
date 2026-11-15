@@ -18,10 +18,10 @@ export function erpUnitCost(part){
 }
 /** 以实际 BOM 计算成本和利润；存在无法确定的 ERP 成本时保留未知结果。 */
 export function totals(config){let erp=0,tax=0,missing=0,erpFallback=0,erpUnresolved=0;for(const p of actualParts(config)){if(isSpecialComponent(p)||!p.name&&!p.goodsId)continue;const a=erpUnitCost(p),b=cents(p.tax);if(a.fallback)erpFallback++;if(a.cents==null)erpUnresolved++;if(a.fallback||a.cents==null||b==null)missing++;erp+=(a.cents||0)*Number(p.qty||0);tax+=(b||0)*Number(p.qty||0);}const price=cents(config.price)||0,commission=Math.round(price*.04),basis=tax+commission+10000;return{erp:erpUnresolved?null:erp/100,tax:tax/100,basis:basis/100,erpProfit:erpUnresolved?null:Math.round(price*.98-erp)/100,taxProfit:(price-basis)/100,missing,erpFallback,erpUnresolved};}
-/** 新版英特尔表按本行隐藏的定位列取名；旧表继续直接查成本表。 */
+/** 新版英特尔表按本行隐藏的定位列取名；旧版导出直接查新成本表的库存数据。 */
 export function erpFormula(label,short=false){
  if(short)return `=IF([@[${label}_id]]<>"",INDEX(参名称,[@定位${label}]),"")`;
- return `=IF([@[${label}_id]]<>"",INDEX([主机成本表V2.xlsb]库存数据!$BD:$BD,MATCH([@[${label}_id]],[主机成本表V2.xlsb]库存数据!$BB:$BB,0)),"")`;}
+ return `=IF([@[${label}_id]]<>"",INDEX([主机成本表V2新.xlsb]库存数据!$BD:$BD,MATCH([@[${label}_id]],[主机成本表V2新.xlsb]库存数据!$BB:$BB,0)),"")`;}
 const clean=x=>{const v=String(x??'').trim();return ['0','/','good id','数量'].includes(v.toLowerCase())?'':v;};
 /** 导出前检查 ERP 槽位、商品 ID 与正整数数量，再生成成本表可粘贴的数据行。 */
 export function erpRow(config,template){const short=config.shopId==='intel'&&template!=='legacy';const seen=new Set();for(const p of actualParts(config)){if(p.name&&!isSpecialComponent(p)&&!clean(p.goodsId)&&!(p.slot==='显卡'&&/不含|无卡|核显|不配/.test(p.name)))throw Error(`${p.slot} 尚未绑定 ERP ID，请先选择配件`);if(clean(p.goodsId)){if(!slots.includes(p.slot))throw Error(`未分配 ERP 槽位：${p.name}`);if(seen.has(p.slot))throw Error(`ERP 槽位重复：${p.slot}`);seen.add(p.slot);if(!Number.isInteger(Number(p.qty))||Number(p.qty)<=0)throw Error(`${p.slot} 数量必须为正整数`);}}
