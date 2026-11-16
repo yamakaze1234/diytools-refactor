@@ -4,7 +4,7 @@ import {makeZip} from './zip.js';
 const amount=v=>v==null?'待补齐':v/100;
 const delta=(a,b)=>a==null||b==null?'不可比较':(b-a)/100;
 const kinds={high:'上涨 ≥5% / 从零上涨',up:'上涨 <5%',down:'降价',first:'首次采集',missing:'价格缺失',same:'未变化'};
-export function priceReportSheets(batch,{configs=[],shopName=id=>id,at=new Date().toISOString()}={}){
+export function priceReportSheets(batch,{configs=[],settings,shopName=id=>id,at=new Date().toISOString()}={}){
  if(batch.daily&&!batch.baselineKnown)throw Error('缺少可核验的昨日基线，无法导出昨日对比报表');
  const live=new Map(configs.filter(c=>!c.deletedAt).map(c=>[c.id,c]));
  const movement=(row,key)=>{const m=priceMovement(row,key);return [kinds[m.kind],m.delta==null?'不可比较':m.delta/100,m.percent==null?'不可比较':Number(m.percent.toFixed(4))];};
@@ -12,7 +12,7 @@ export function priceReportSheets(batch,{configs=[],shopName=id=>id,at=new Date(
   {name:'报表说明',rows:[['项目','内容'],['对比方式',batch.daily?'昨日最后保存价 → 今日最新保存价':'本批次保存前 → 保存后'],['日期/批次',batch.daily?batch.day:String(batch.revision)],['记录时间',batch.at],['导出时间',at],['导出范围','当前完整对比，包含全部配件和受影响配置，不受筛选、分页影响'],['变动配件数',new Set(batch.items.map(r=>r.goodsId)).size],['影响链接数',new Set(batch.configs.map(r=>linkKey(r.after))).size],['影响配置数',batch.configs.length],['金额单位','人民币元；幅度为百分数，5 表示 5%'],['利润口径','实际 BOM，扣分期费；ERP 成本缺失时使用核算成本代入并标注'],['当前利润','导出时已保存配置；不包含未保存草稿'],['链接明细','每套配置一行，同链接多套配置分别列出'],['处理状态','每日对比请到逐批次查看处理标记']]},
   {name:'配件价格变化',rows:[['ERP编码','配件名称','配件类型','成本价-前','成本价-后','成本分类','成本变动金额','成本幅度(%)','ERP价-前','ERP价-后','ERP分类','ERP变动金额','ERP幅度(%)','影响链接数','影响配置数'],...batch.items.map(r=>[String(r.goodsId),r.name,r.slots.join(' / '),amount(r.before.tax),amount(r.after.tax),...movement(r,'tax'),amount(r.before.erp),amount(r.after.erp),...movement(r,'erp'),new Set(batch.configs.filter(c=>r.configIds.includes(c.after.id)).map(c=>linkKey(c.after))).size,r.configIds.length])]},
   {name:'受影响链接与利润',rows:[['店铺','商品ID','链接名称','商品网址','配置ID','配置名称','到手价-前','到手价-后','核算利润-前','核算利润-后','核算利润变化','ERP利润-前','ERP利润-后','ERP利润变化','当前已保存到手价','当前核算利润','当前ERP利润','ERP成本代入说明','处理状态','变价配件'],...batch.configs.map(r=>{
-   const c=r.after,now=live.get(c.id),before=trackedProfit(r.before),after=trackedProfit(c),current=trackedProfit(now);
+   const c=r.after,now=live.get(c.id),before=trackedProfit(r.before),after=trackedProfit(c),current=trackedProfit(now,settings?.(now?.shopId));
    return [shopName(c.shopId),String(c.productId??''),c.product,c.productUrl||'',c.id,c.name,r.before.price??'待补齐',c.price??'待补齐',amount(before?.tax),amount(after?.tax),delta(before?.tax,after?.tax),amount(before?.erp),amount(after?.erp),delta(before?.erp,after?.erp),now?.price??'配置不存在',amount(current?.tax),amount(current?.erp),[before?.fallback?'对比前':null,after?.fallback?'对比后':null,current?.fallback?'当前':null].filter(Boolean).join('、')||'无',batch.daily?'请查看逐批次':batch.handled.includes(c.id)?'已处理':'待处理',batch.items.filter(i=>i.configIds.includes(c.id)).map(i=>`${i.name} [${i.goodsId}]`).join('\n')];
   })]}
  ];

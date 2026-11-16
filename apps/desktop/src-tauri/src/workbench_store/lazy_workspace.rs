@@ -5,7 +5,7 @@ use super::*;
 const SUMMARY_FIELDS: &[&str] = &[
     "id", "shopId", "shop", "productId", "product", "productUrl", "spu",
     "productCategory", "productCardColor", "name", "version", "shortName",
-    "skuId", "installment", "deletedAt", "workspaceOrder", "emptyLinkDraft",
+    "skuId", "installment", "pricingRule", "deletedAt", "workspaceOrder", "emptyLinkDraft",
     "price", "updatedAt", "isTemplate", "templateId",
 ];
 // 只投影列表展示和筛选需要的字段，未包含字段仍保留在完整配置正文中。

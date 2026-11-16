@@ -1,9 +1,6 @@
 /** 配件复制粘贴与概览利润：封装剪贴内容，粘贴时重新关联合法来源。 */
 import {markSourceFieldManual} from './source-follow.js';
-import {actualParts} from './actual-parts.js';
-import {isSpecialComponent} from './special-components.js';
 import {totals} from './core.js';
-import {pricing} from './pricing.js';
 import {replaceSourcePart} from './source.js';
 
 /** 从指定配置配件生成可传递的复制数据。 */
@@ -30,7 +27,6 @@ export function pastePartPayload(config,index,payload,catalog){
 }
 /** 按店铺定价设置计算配置概览所需利润值。 */
 export function overviewProfits(config,settings){
- const t=totals(config),fee=pricing(config,settings).fee;
- const parts=actualParts(config).filter(p=>p.name||p.goodsId);
- return [['tax',t.taxProfit],['erp',t.erpProfit]].map(([field,value])=>parts.length&&value!==null&&(field==='erp'||parts.every(p=>isSpecialComponent(p)||p.tax!=null&&Number.isFinite(Number(p.tax))))?Math.round((value-fee)*100)/100:null);
+ const t=totals(config,settings);
+ return [t.taxProfitAfter,t.erpProfitAfter];
 }

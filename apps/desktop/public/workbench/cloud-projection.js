@@ -1,4 +1,5 @@
 /** 在完整工作区和云实体记录之间转换，保留本机 ERP 派生字段与配置顺序。 */
+import {moneyCents} from './pricing.js';
 import {hasConfigCost,syncConfigCost} from './config-cost.js';
 // 工作台状态与云端记录的双向投影。此处只变换数据，不访问数据库或网络；
 // projectWorkspace 输出共享字段，applyWorkspace 从本机原状态恢复本地 ERP 派生字段。
@@ -15,9 +16,14 @@ const derived=['erp','tax','stockAvailable','stockUpdatedAt','erpUpdatedAt','erp
 const strip=row=>{const r=stripLocalErp(row);for(const k of derived)delete r[k];return r;};
 const cents=v=>v==null?null:Math.round(v*100);
 const configurationLocalFields=['deletionSessionId','updatedAt','taxUpdatedAt','erpImportedAt'];
+const deletedPartCacheFields=new Set(['tax','hardwareFacts','erpSpec','erpModel']);
+const withoutDeletedPartCache=parts=>Array.isArray(parts)?parts.map(part=>Object.fromEntries(
+ Object.entries(part).filter(([key])=>!deletedPartCacheFields.has(key))
+)):parts;
 // 网页版和旧记录可能带配件成本缓存。远端先投影到编辑基线的形状，
 // 再按字段合并；仅规范化远端，避免把本地有意恢复的备用价格当作缓存删除。
 export function mergeWorkspaceEdit(type,base,local,remote,sharedCostIds=[]){
+ const draft=remote;
  // No override is stored as null by replacement, but omitted when shared costs
  // materialize. They mean the same thing; keep real override objects distinct.
  if(type==='configuration'){
@@ -43,7 +49,19 @@ export function mergeWorkspaceEdit(type,base,local,remote,sharedCostIds=[]){
  if(current&&type==='configuration'&&!current.deletedAt){
   for(const field of ['parts','actualParts'])if(Array.isArray(current[field]))current[field]=current[field].map(p=>ids.has(p.goodsId)?strip(p):p);
  }else if(current&&type==='source'&&ids.has(current.goodsId))current=strip(current);
- return mergeRecord(base,local,current);
+ const merged=mergeRecord(base,local,current);
+ // 三份记录都已在同一时间删除时，配件缓存漂移不应挡住同步。
+ // 只消除缓存字段造成的冲突，保留同步草稿的原配件及实际业务冲突。
+ if(type==='configuration'&&base?.deletedAt&&base.deletedAt===local?.deletedAt&&base.deletedAt===current?.deletedAt){
+  merged.fields=merged.fields.filter(field=>{
+   if(field!=='parts'&&field!=='actualParts')return true;
+   const original=withoutDeletedPartCache(base[field]);
+   if(!equal(original,withoutDeletedPartCache(local[field]))||!equal(original,withoutDeletedPartCache(current[field])))return true;
+   merged.value[field]=copy(draft[field]);
+   return false;
+  });
+ }
+ return merged;
 }
 export function projectWorkspace(state,configurationOnly=false,selected=null){
  // 将配置、共享成本、输出源等投影为按 type/id 标识的记录；selected 只选目标 ID。
@@ -54,7 +72,7 @@ export function projectWorkspace(state,configurationOnly=false,selected=null){
  const wanted=(type,id)=>!(independentCosts&&type==='component')&&(!selected||selected[type]===null||selected[type].has(id));
  const add=(type,id,data)=>{const key=recordKey(type,id);if(seen.has(key))throw Error('重复记录 ID：'+id);seen.add(key);const value=stripLocalErp(data);if(independentCosts){const clean=v=>{if(!v||typeof v!=='object')return;for(const child of Object.values(v))clean(child);if(v.taxOverride)delete v.taxOverride.base;if(typeof v.goodsId==='string'&&!isSpecialComponent(v)){delete v.tax;delete v.taxUpdatedAt;}};clean(value);}records.push({type,id,data:value});};
  // 产品分组会改变数组位置；保存 workspaceOrder 才能稳定比较并发编辑。
- for(const [index,c] of (state.configs||[]).entries()){if(!wanted('configuration',c.id))continue;const d=copy(c);d.workspaceOrder=Number.isFinite(c.workspaceOrder)?c.workspaceOrder:index;d.priceCents=cents(d.price);delete d.price;for(const k of configurationLocalFields)delete d[k];for(const field of ['parts',...(Array.isArray(d.actualParts)?['actualParts']:[])])d[field]=d[field].map((p,i)=>({...(!componentIds.has(p.goodsId)||c.deletedAt?copy(p):strip(p)),lineId:p.lineId||'line-'+hash(field==='parts'?[c.id,i,p.slot]:[c.id,field,i,p.slot]).slice(0,24)}));add('configuration',c.id,d);}
+ for(const [index,c] of (state.configs||[]).entries()){if(!wanted('configuration',c.id))continue;const d=copy(c);d.workspaceOrder=Number.isFinite(c.workspaceOrder)?c.workspaceOrder:index;const price=moneyCents(d.price);d.priceCents=price??0;if(price==null)d.priceUnset=true;else delete d.priceUnset;delete d.price;for(const k of configurationLocalFields)delete d[k];for(const field of ['parts',...(Array.isArray(d.actualParts)?['actualParts']:[])])d[field]=d[field].map((p,i)=>({...(!componentIds.has(p.goodsId)||c.deletedAt?copy(p):strip(p)),lineId:p.lineId||'line-'+hash(field==='parts'?[c.id,i,p.slot]:[c.id,field,i,p.slot]).slice(0,24)}));add('configuration',c.id,d);}
  if(configurationOnly)return records;
  for(const c of state.costSource||[])if(wanted('component',c.goodsId)&&(!c.localInventoryOnly||c.tax!=null))add('component',`${scope}|${c.goodsId}`,{erpScopeId:scope,goodsId:c.goodsId,name:c.name,taxCents:cents(c.tax)});
  for(const s of state.sourceCatalog||[])if(wanted('source',s.sourceId))add('source',s.sourceId,componentIds.has(s.goodsId)?strip(s):copy(s));
@@ -70,7 +88,8 @@ export function applyWorkspace(template,records){
  const next=copy(metadata),groups=new Map();for(const r of records){if(!groups.has(r.type))groups.set(r.type,[]);groups.get(r.type).push(r);}
  const values=type=>(groups.get(type)||[]).map(r=>stripLocalErp(r.draft??r.data));
  const localConfigs=new Map((oldConfigs||[]).map(c=>[c.id,c]));
- next.configs=values('configuration').map(d=>{d.price=d.priceCents/100;delete d.priceCents;
+ // 协议仍传整数分，额外标记区分未定价与明确零元；旧客户端仍可接收记录。
+ next.configs=values('configuration').map(d=>{d.price=d.priceCents==null||d.priceCents===0&&d.priceUnset===true?null:d.priceCents/100;delete d.priceCents;delete d.priceUnset;
   // 更新时间属于本机成本缓存；云投影不携带，物化时也不能将其当作远端删除。
   const local=localConfigs.get(d.id);for(const key of ['taxUpdatedAt','erpImportedAt'])if(local&&Object.hasOwn(local,key))d[key]=copy(local[key]);return d;
  });

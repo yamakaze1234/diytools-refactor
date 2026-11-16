@@ -51,3 +51,22 @@ test('空行的有效成本及非空配件成本仍保留真实冲突',()=>{
   assert.deepEqual(mergeWorkspaceEdit('configuration',base,local,remote).fields,['parts']);
  }
 });
+
+test('同批已删除配置忽略配件缓存漂移，保留草稿、改配件及恢复冲突',()=>{
+ const deletedAt='2026-11-10T00:43:39.349Z';
+ const part={lineId:'p',goodsId:'123',slot:'CPU',name:'CPU',qty:1};
+ const base={id:'c',deletedAt,parts:[part],actualParts:[part]};
+ const withCache=(tax,erpSpec)=>({...base,parts:[{...part,tax,erpSpec}],actualParts:[{...part,tax,erpSpec}]});
+ const local=withCache(100,'本机规格'),draft=withCache(110,'旧规格');
+ assert.deepEqual(mergeWorkspaceEdit('configuration',base,local,draft),{value:draft,fields:[]});
+ const edited={...local,parts:[{...local.parts[0],goodsId:'456'}]};
+ assert.deepEqual(mergeWorkspaceEdit('configuration',base,edited,draft).fields,['parts']);
+ assert.deepEqual(mergeWorkspaceEdit('configuration',base,{...local,deletedAt:null},draft).fields,['$record']);
+});
+
+// 人工显卡简称属于共享维护资料，云投影和本机重建都必须保留。
+test('显卡人工简称云端往返保留',()=>{
+ const local=state();local.configs[0].parts[0].hardwareOverrides={gpuName:'RX9700 AI TOP 32G'};
+ const records=projectWorkspace(local);const restored=applyWorkspace(local,records);
+ assert.equal(restored.configs[0].parts[0].hardwareOverrides.gpuName,'RX9700 AI TOP 32G');
+});

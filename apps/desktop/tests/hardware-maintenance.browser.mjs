@@ -35,7 +35,8 @@ try {
 
  await page.locator('[data-source-id="fixture-a"]').click();
  await page.locator('#source-hardware').waitFor();
- async function visibleKind(id,kind){await page.locator(`[data-source-id="${id}"]`).click();await page.waitForFunction(()=>!document.querySelector('.workbench-detail-ghost'));assert.deepEqual(await page.locator('[data-maintenance-kind]:visible').evaluateAll(els=>els.map(el=>el.dataset.maintenanceKind)),[kind]);}
+ // 同类显卡同时显示显存和简称，按类型去重验证显示范围。
+ async function visibleKind(id,kind){await page.locator(`[data-source-id="${id}"]`).click();await page.waitForFunction(()=>!document.querySelector('.workbench-detail-ghost'));assert.deepEqual(await page.locator('[data-maintenance-kind]:visible').evaluateAll(els=>[...new Set(els.map(el=>el.dataset.maintenanceKind))]),[kind]);}
  for(const [id,kind]of [['fixture-a','cpu'],['fixture-b','board'],['fixture-case','case'],['fixture-memory','memoryGb'],['fixture-gpu','vramGb'],['fixture-storage','storageGb']])await visibleKind(id,kind);
  await visibleKind('fixture-a','cpu');
  await page.locator('#source-hardware').evaluate(el=>el.scrollIntoView({block:'center'}));

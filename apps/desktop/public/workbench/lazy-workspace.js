@@ -63,7 +63,7 @@ export function createLazyWorkspace({request,limit=16}){
 
 /** 只提取列表展示与定位需要的字段，摘要不能代替详情参与保存。 */
 export function summaryOf(config){
- const row={};for(const key of ['id','shopId','shop','productId','product','productUrl','spu','productCategory','productCardColor','name','version','shortName','skuId','installment','deletedAt','workspaceOrder','emptyLinkDraft','price','updatedAt','isTemplate','templateId'])if(Object.hasOwn(config,key))row[key]=config[key];
+ const row={};for(const key of ['id','shopId','shop','productId','product','productUrl','spu','productCategory','productCardColor','name','version','shortName','skuId','installment','pricingRule','deletedAt','workspaceOrder','emptyLinkDraft','price','updatedAt','isTemplate','templateId'])if(Object.hasOwn(config,key))row[key]=config[key];
  row.parts=(config.parts||[]).map(({slot,name,qty,goodsId})=>({slot,name,qty,goodsId}));
  if(config.wpsImport?.lineStart!=null)row.wpsImport={lineStart:config.wpsImport.lineStart};return row;
 }

@@ -83,7 +83,7 @@ import {partCapacity,capacityText} from './component-capacity.js';
         if (pkg.vram && pkg.vram !== "无" && !String(tail.join(" ")).includes(pkg.vram)) tail.push(pkg.vram);
       }
       if (pkg.version && !tail.includes(pkg.version)) tail.push(pkg.version);
-      return `${prefix || pkg.name}：${cpu}丨${formatOneGpuTail(tail.join(" "))}`;
+      return `${prefix || pkg.name}：${cpu}丨${(pkg.gpuManual?tail.join(" "):formatOneGpuTail(tail.join(" ")))}`;
     }
 
 
@@ -158,7 +158,8 @@ import {partCapacity,capacityText} from './component-capacity.js';
       if (!isNoGpu && pkg.vram && pkg.vram !== "无" && !String(gpuText).includes(pkg.vram)) {
         gpuText = `${gpuText} ${pkg.vram}`;
       }
-      gpuText = compactGpuText(gpuText);
+      // 人工简称按原文显示，保留专业卡后缀及用户填写的显存。
+      gpuText = pkg.gpuManual ? gpuText : compactGpuText(gpuText);
       const memory = compactPartCapacity(pkg, "内存") || "内存";
       const storage = compactPartCapacity(pkg, "硬盘") || "固态";
       const version = String(pkg.version || "").trim();
@@ -168,4 +169,4 @@ import {partCapacity,capacityText} from './component-capacity.js';
 
 
 /** 按选定命名格式返回建议名称，不直接覆盖手工名称。 */
-export function suggestedName(c,format="compact") { const parts=Object.fromEntries(c.parts.map(p=>[p.slot,{id:p.goodsId||"0",display:p.name,qty:p.qty,capacityGb:partCapacity(p,p.slot==='内存'?'memoryGb':p.slot==='硬盘'?'storageGb':'vramGb')}])); const g=parts.显卡?.id!=="0" ? gpuInfo(parts.显卡?.display||"") : {model:"无卡",vram:"无"}; if(/5060\s*TI/i.test(g.model))g.vram=parts.显卡?.capacityGb===16?'16GB':''; const pkg={name:c.name,version:c.version,parts,cpuShort:(c.parts.find(p=>p.slot==='CPU')?.hardwareOverrides?.cpuName||c.parts.find(p=>p.slot==='CPU')?.hardwareFacts?.cpuName||shortCpu(parts.CPU?.display||"")),gpu:g.model,vram:g.vram,erpConfigNameRaw:""}; return format==="compact"?compactErpConfigName(pkg):normalizedErpConfigName(pkg); }
+export function suggestedName(c,format="compact") { const parts=Object.fromEntries(c.parts.map(p=>[p.slot,{id:p.goodsId||"0",display:p.name,qty:p.qty,capacityGb:partCapacity(p,p.slot==='内存'?'memoryGb':p.slot==='硬盘'?'storageGb':'vramGb')}])); const g=parts.显卡?.id!=="0" ? gpuInfo(parts.显卡?.display||"") : {model:"无卡",vram:"无"}; const manualGpu=c.parts.find(p=>p.slot==='显卡')?.hardwareOverrides?.gpuName?.trim(); if(manualGpu&&parts.显卡?.id!=="0"){g.model=manualGpu;g.vram="";} if(!manualGpu&&/5060\s*TI/i.test(g.model))g.vram=parts.显卡?.capacityGb===16?'16GB':''; const pkg={name:c.name,version:c.version,parts,cpuShort:(c.parts.find(p=>p.slot==='CPU')?.hardwareOverrides?.cpuName||c.parts.find(p=>p.slot==='CPU')?.hardwareFacts?.cpuName||shortCpu(parts.CPU?.display||"")),gpu:g.model,gpuManual:!!manualGpu,vram:g.vram,erpConfigNameRaw:""}; return format==="compact"?compactErpConfigName(pkg):normalizedErpConfigName(pkg); }

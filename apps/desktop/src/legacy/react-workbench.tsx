@@ -4,7 +4,7 @@ import {WorkspaceSyncPanel} from './workspace-sync-panel';
 import {LinkPartsPanel,LinkPartsRule,LinkPartsOverview} from './link-parts-panel';
 import reuiStyles from '../reui.css?inline';
 import {Input} from '@/components/ui/input';
-import {LayoutGrid,Boxes,Images,History,PackageSearch,X} from 'lucide-react';
+import {LayoutGrid,Boxes,Images,History,PackageSearch,ChartNoAxesCombined,X} from 'lucide-react';
 import {ContinuousWorkbench} from './continuous-workbench';
 import {BatchIds,BatchAppearance,BatchDescription} from './batch-panels';
 /** 渐进迁移只接管展示节点，业务状态与操作仍由工作台闭包维护。 */
@@ -75,7 +75,7 @@ function WorkbenchNavigation({doc}:{doc:Document}) {
  },[open,shown,doc]);
  const run=(selector:string)=>{setOpen(null);doc.querySelector<HTMLButtonElement>(selector)?.click();};
  const group=groups.find(g=>g.label===shown);
- return <div ref={nav} className="rail-navigation"><strong>D·</strong><button className="rail-nav-button" title="返回当前配置" onClick={()=>run('[data-nav="configs"]')}><LayoutGrid/>配置</button>{groups.map(({label,Icon})=><button key={label} className="rail-nav-button" aria-expanded={open===label} aria-controls="rail-tool-panel" onClick={()=>changeMenu(open===label?null:label)}><Icon/>{label}</button>)}<button className="rail-nav-button" onClick={()=>run('#logs-open')}><History/>记录</button>{group&&<section ref={panel} id="rail-tool-panel" className="rail-tool-panel" aria-label={group.title} inert={!open} aria-hidden={!open||undefined}><header><strong>{group.title}</strong><button aria-label="关闭工具分类" onClick={()=>setOpen(null)}><X/></button></header>{group.items.map(([label,selector])=><button key={selector} onClick={()=>run(selector)}>{label}</button>)}</section>}</div>;
+ return <div ref={nav} className="rail-navigation"><strong>D·</strong><button className="rail-nav-button" title="返回当前配置" onClick={()=>run('[data-nav="configs"]')}><LayoutGrid/>配置</button><button className="rail-nav-button" title="价格与利润" onClick={()=>run('#price-profit-open')}><ChartNoAxesCombined/>价格</button>{groups.map(({label,Icon})=><button key={label} className="rail-nav-button" aria-expanded={open===label} aria-controls="rail-tool-panel" onClick={()=>changeMenu(open===label?null:label)}><Icon/>{label}</button>)}<button className="rail-nav-button" onClick={()=>run('#logs-open')}><History/>记录</button>{group&&<section ref={panel} id="rail-tool-panel" className="rail-tool-panel" aria-label={group.title} inert={!open} aria-hidden={!open||undefined}><header><strong>{group.title}</strong><button aria-label="关闭工具分类" onClick={()=>setOpen(null)}><X/></button></header>{group.items.map(([label,selector])=><button key={selector} onClick={()=>run(selector)}>{label}</button>)}</section>}</div>;
 }
 /** 每个 iframe 独立登记 React root，卸载和导航时全部释放。 */
 export function createWorkbenchReactRenderer() {

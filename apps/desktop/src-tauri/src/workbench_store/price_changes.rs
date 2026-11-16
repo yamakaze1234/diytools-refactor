@@ -70,9 +70,10 @@ mod tests {
     }
 }
 fn parts(c: &Value) -> &[Value] { if c["actualParts"].is_array() {rows(&c["actualParts"])} else {rows(&c["parts"])} }
-fn slim(c: &Value) -> Value {
+fn slim(c: &Value, shop_settings: &Value) -> Value {
     let mut result=json!({});
-    for k in ["id","shopId","productId","product","productUrl","name","price","installment","productCategory"] {result[k]=c[k].clone();}
+    for k in ["id","shopId","productId","product","productUrl","name","price","installment","pricingRule","productCategory"] {result[k]=c[k].clone();}
+    result["shopPricingRule"] = shop_settings["pricingRule"].clone();
     result["actualParts"]=parts(c).iter().map(|p|{let mut r=json!({});for k in ["goodsId","name","slot","lineId","qty","tax","erp","erpMissing","erpUnknown","taxOverride","specialComponent"]{r[k]=p[k].clone();}r}).collect::<Vec<_>>().into();
     result
 }
@@ -109,7 +110,15 @@ fn document(after:&Value, changes:&Value, input:&Value)->Option<Value> {
                 add(&mut items,&mut lookup,o,p,p["slot"].as_str().unwrap_or(""),Some(new));affected=true;
             }}
         }
-        if affected {configs.push(json!({"before":slim(old),"after":slim(new)}));}
+        if affected {
+            // 冻结各自保存时的核算参数，后续修改店铺规则不重算历史快照。
+            let old_shop=old["shopId"].as_str().unwrap_or("intel");
+            let new_shop=new["shopId"].as_str().unwrap_or("intel");
+            let settings=&changes["fields"]["shopSettings"];
+            let old_settings=settings.get("before").unwrap_or(&after["shopSettings"]);
+            let new_settings=settings.get("after").unwrap_or(&after["shopSettings"]);
+            configs.push(json!({"before":slim(old,&old_settings[old_shop]),"after":slim(new,&new_settings[new_shop])}));
+        }
     }
     if items.is_empty(){return None;}
     Some(json!({"revision":after["revision"],"at":after["updatedAt"],"message":input["message"],"items":items,"configs":configs}))

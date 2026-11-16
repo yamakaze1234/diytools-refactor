@@ -10,7 +10,9 @@ test('link installment updates only live configurations in the chosen shop and l
  assert.equal(productInstallment(configs.slice(0,2)),12);
  assert.equal(pricing(configs[0]).fee,60);assert.equal(pricing(configs[1]).fee,120);
  assert.deepEqual(configs.slice(2).map(c=>c.installment),[0,0,24]);
- assert.throws(()=>applyProductInstallment(configs,{id:'p',shopId:'intel'},6));
+ assert.deepEqual(applyProductInstallment(configs,{id:'p',shopId:'intel'},6),['a','b']);
+ assert.equal(pricing(configs[0]).fee,38);
+ assert.throws(()=>applyProductInstallment(configs,{id:'p',shopId:'intel'},3));
 });
 test('new configs and imported templates inherit link installment, not source installment',()=>{
  const source=blankConfig(null,{id:'old',shopId:'intel',installment:24});

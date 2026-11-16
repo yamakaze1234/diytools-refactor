@@ -3,7 +3,7 @@
 //! and cached ERP values are never changed or treated as a live cost observation.
 use super::*;
 
-const FORMULA: &str = "profit/v2";
+const FORMULA: &str = "profit/v3";
 const SOURCE: &str = "offline-manual";
 const ERP_UNKNOWN: &str = "ERP 未实时采集；本轮仅检测已保存的本地核算利润";
 
@@ -74,11 +74,43 @@ fn term(config: &Value) -> Option<i64> {
         Value::String(s) => s
             .parse::<i64>()
             .ok()
-            .filter(|_| ["0", "12", "24"].contains(&s.as_str())),
+            .filter(|_| ["0", "6", "12", "24"].contains(&s.as_str())),
         Value::Number(n) => n.as_i64(),
         _ => None,
     }
-    .filter(|t| [0, 12, 24].contains(t))
+    .filter(|t| [0, 6, 12, 24].contains(t))
+}
+
+// 与 pricing.js 共用 JSON 字段。费率精确到万分之一百分点，固定费用精确到分。
+const RULE_KEYS: [&str; 7] = [
+    "erpRate", "taxRate", "erpFixed", "taxFixed", "fee6", "fee12", "fee24",
+];
+const DEFAULT_RULE: [i64; 7] = [20000, 40000, 0, 10000, 38000, 60000, 100000];
+
+fn pricing_rule(value: &Value) -> Option<[i64; 7]> {
+    let entry = value.as_object()?;
+    let mut rule = DEFAULT_RULE;
+    for (i, key) in RULE_KEYS.iter().enumerate() {
+        let Some(value) = entry.get(*key) else {
+            continue;
+        };
+        let (n, d) = decimal(value)?;
+        let fixed = i == 2 || i == 3;
+        let units = n.checked_mul(if fixed { 100 } else { 10000 })?;
+        if units % d != 0 {
+            return None;
+        }
+        let units = i64::try_from(units / d).ok()?;
+        if units > if fixed { 100000000 } else { 990000 } {
+            return None;
+        }
+        rule[i] = units;
+    }
+    (rule[0].max(rule[1]) + rule[4..].iter().max()? < 1000000).then_some(rule)
+}
+
+fn charge(price: i64, rate: i64) -> Option<i64> {
+    round_ratio(i128::from(price) * i128::from(rate), 1000000)
 }
 
 fn quantity(value: &Value) -> Option<i64> {
@@ -121,7 +153,7 @@ fn truthy(value: &Value) -> bool {
 }
 
 // 冻结实际 BOM、数量、价格及分期条件，后续比较依据该次内容而非可变当前值。
-fn snapshot(config: &Value, configs: &[Value]) -> Result<Value> {
+fn snapshot(config: &Value, configs: &[Value], shop_settings: &Value) -> Result<Value> {
     // Match actualParts() for the nullable captured field. An explicit [] is
     // an empty actual BOM and must never fall back to display parts.
     let raw_parts = config
@@ -169,16 +201,20 @@ fn snapshot(config: &Value, configs: &[Value]) -> Result<Value> {
                 && !truthy(&c["deletedAt"])
         })
         .all(|c| term(c).is_some() && term(c) == installment);
-    let fee = if price.is_some() && consistent {
+    let rule = pricing_rule(&config["pricingRule"])
+        .or_else(|| pricing_rule(&shop_settings["pricingRule"]))
+        .unwrap_or(DEFAULT_RULE);
+    let commission = price.and_then(|p| charge(p, rule[1]));
+    let fee = if consistent {
         installment.and_then(|t| {
-            let (n, d) = decimal(&config["price"])?;
-            round_ratio(
-                n.checked_mul(match t {
-                    12 => 6,
-                    24 => 10,
+            charge(
+                price?,
+                match t {
+                    6 => rule[4],
+                    12 => rule[5],
+                    24 => rule[6],
                     _ => 0,
-                })?,
-                d,
+                },
             )
         })
     } else {
@@ -189,7 +225,7 @@ fn snapshot(config: &Value, configs: &[Value]) -> Result<Value> {
         "product":config["product"].as_str().unwrap_or(""),"configId":config["id"],
         "name":config["name"].as_str().unwrap_or(""),"revision":config["updatedAt"],
         "priceCents":price,"installment":config.get("installment").cloned().unwrap_or(json!(0)),
-        "feeCents":fee,"parts":rows}),
+        "feeCents":fee,"commissionCents":commission,"taxFixedCents":rule[3],"pricingRuleUnits":rule,"parts":rows}),
     )
 }
 
@@ -225,11 +261,12 @@ fn accounting(snapshot: &Value) -> (Option<i64>, Option<i64>, String) {
     if !issues.is_empty() {
         return (None, None, issues.join("；"));
     }
-    let commission = round_ratio(i128::from(price) * 4, 100).unwrap();
+    let commission = snapshot["commissionCents"].as_i64().unwrap_or_default();
+    let fixed = snapshot["taxFixedCents"].as_i64().unwrap_or_default();
     match price
         .checked_sub(total)
         .and_then(|v| v.checked_sub(commission))
-        .and_then(|v| v.checked_sub(10000))
+        .and_then(|v| v.checked_sub(fixed))
         .and_then(|v| v.checked_sub(fee))
     {
         Some(profit) => (Some(profit), Some(total), String::new()),
@@ -342,7 +379,7 @@ pub fn profit_start(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse
         let Some(config) = selected_configs.get(id.as_str().unwrap()) else {
             return Ok(failure(409, "所选配置已变化或不属于本店，请重新选择"));
         };
-        snapshots.push(snapshot(config, configs)?);
+        snapshots.push(snapshot(config, configs, &current["shopSettings"][shop])?);
     }
     let run_id = unique();
     let at = now();
@@ -469,8 +506,10 @@ fn causes(details: &mut Value, snapshot: &Value, old: &Value) {
     let price_impact = i128::from(price)
         - i128::from(old_price)
         - i128::from(
-            round_ratio(i128::from(price) * 4, 100).unwrap()
-                - round_ratio(i128::from(old_price) * 4, 100).unwrap(),
+            snapshot["commissionCents"].as_i64().unwrap_or_default()
+                - old["snapshot"]["commissionCents"]
+                    .as_i64()
+                    .unwrap_or_default(),
         );
     let fee_impact = i128::from(old["snapshot"]["feeCents"].as_i64().unwrap())
         - i128::from(snapshot["feeCents"].as_i64().unwrap());
@@ -520,7 +559,7 @@ pub fn profit_status(store: &WorkbenchStore, input: &Value) -> Result<ApiRespons
         row["configUpdated"] = json!(
             by_id
                 .get(row["config_id"].as_str().unwrap())
-                .and_then(|c| snapshot(c, configs).ok())
+                .and_then(|c| snapshot(c, configs, &current["shopSettings"][shop]).ok())
                 .is_none_or(|s| hash(&s) != row["content_hash"].as_str().unwrap())
         );
     }
@@ -598,7 +637,7 @@ pub fn profit_reset(store: &WorkbenchStore, input: &Value) -> Result<ApiResponse
     if id != result
         || row["valid"] != true
         || live
-            .and_then(|c| snapshot(c, configs).ok())
+            .and_then(|c| snapshot(c, configs, &current["shopSettings"][shop]).ok())
             .is_none_or(|s| hash(&s) != content_hash)
     {
         return Ok(failure(

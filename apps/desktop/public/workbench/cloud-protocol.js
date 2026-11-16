@@ -41,6 +41,7 @@ export function validateCloudRecord(type,id,data){
   if(data.deletedAt!=null&&!Number.isFinite(Date.parse(data.deletedAt)))throw Error('云端删除时间无效');
   if(type==='configuration'){
     if(data.id!==id||!['intel','gigabyte','jonsbo'].includes(data.shopId)||!safeInteger(data.priceCents)||!Array.isArray(data.parts))throw Error('云端配置格式无效');
+    if(data.priceUnset!==undefined&&typeof data.priceUnset!=='boolean')throw Error('云端到手价标记无效');
     if(data.actualParts!==undefined&&!Array.isArray(data.actualParts))throw Error('云端实际配置格式无效');
     for(const rows of [data.parts,...(data.actualParts!==undefined?[data.actualParts]:[])]){const seen=new Set();for(const p of rows){if(!p||typeof p.lineId!=='string'||!p.lineId||seen.has(p.lineId)||typeof p.goodsId!=='string'||!safeInteger(p.qty)||p.goodsId&&p.qty<1)throw Error('云端配件行格式无效');seen.add(p.lineId);}}
     for(const key of ['spu','skuId'])if(data[key]!==undefined&&typeof data[key]!=='string')throw Error('平台 ID 必须是字符串');

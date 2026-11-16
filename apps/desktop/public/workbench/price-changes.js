@@ -1,8 +1,5 @@
 /** 价格追踪展示规则：记录金额为分，利润复用现有实际 BOM 口径。 */
 import {totals} from './core.js';
-import {pricing} from './pricing.js';
-import {actualParts} from './actual-parts.js';
-import {isSpecialComponent} from './special-components.js';
 export function priceMovement(row,metric='erp'){
  const before=row.before[metric],after=row.after[metric];
  if(before==null&&after!=null)return{kind:'first',delta:null,percent:null,label:'首次采集'};
@@ -10,14 +7,11 @@ export function priceMovement(row,metric='erp'){
  const delta=after-before,percent=before>0?delta/before*100:null;
  return{kind:delta>0?(percent==null||percent>=5?'high':'up'):delta<0?'down':'same',delta,percent,label:delta===0?'未变化':null};
 }
-export function trackedProfit(config){
+export function trackedProfit(config,settings){
  if(!config)return null;
- const parts=actualParts(config).filter(p=>!isSpecialComponent(p)&&(p.name||p.goodsId));
- const valid=parts.length>0&&config.price!==null&&config.price!==''&&Number.isFinite(Number(config.price))&&Number(config.price)>=0&&parts.every(p=>Number.isInteger(Number(p.qty))&&Number(p.qty)>0);
- if(!valid)return{tax:null,erp:null,fallback:false};
- try{const t=totals(config),fee=pricing({...config,installment:config.installment??0}).fee;
- return{tax:parts.every(p=>p.tax!==null&&p.tax!==undefined&&p.tax!==''&&Number.isFinite(Number(p.tax))&&Number(p.tax)>=0)?Math.round((t.taxProfit-fee)*100):null,erp:t.erpProfit==null?null:Math.round((t.erpProfit-fee)*100),fallback:t.erpFallback>0};
- }catch{return{tax:null,erp:null,fallback:false};}
+ const t=totals(config,settings??{pricingRule:config.shopPricingRule});
+ const cents=v=>v==null?null:Math.round(v*100);
+ return {tax:cents(t.taxProfitAfter),erp:cents(t.erpProfitAfter),fallback:t.erpFallback>0};
 }
 export const money=cents=>cents==null?'待补齐':`${cents<0?'−':''}¥${(Math.abs(cents)/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
 export const linkKey=c=>JSON.stringify([c.shopId,c.productId||c.id]);

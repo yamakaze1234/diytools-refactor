@@ -1,3 +1,4 @@
+import {normalizePricingRule,normalizeProfitAlerts} from './pricing.js';
 /** 店铺注册与工作区标准化：统一店铺身份、配色、设置及旧数据兼容，支持分片处理大状态。 */
 import {normalizePosterView} from './poster-view.js';
 import {ensureActualParts} from './actual-parts.js';
@@ -151,6 +152,7 @@ export const DEFAULT_ERP_SHOP_IDS={intel:'76',gigabyte:'32',jonsbo:'33'};
 function normalizeShopSettings(value){
  const legacyCoupon=Number(value?.coupon);
  const result={};for(const shop of shops){const entry=value?.[shop.id];result[shop.id]={coupon:Number.isFinite(Number(entry?.coupon))&&Number(entry.coupon)>=0?Number(entry.coupon):shop.id===SHOP_IDS.intel&&Number.isFinite(legacyCoupon)&&legacyCoupon>=0?legacyCoupon:0};if(["light","dark"].includes(entry?.posterTheme))result[shop.id].posterTheme=entry.posterTheme;const view=normalizePosterView(entry?.posterView);if(view)result[shop.id].posterView=view;if(typeof entry?.serviceText==='string')result[shop.id].serviceText=entry.serviceText;for(const key of ['erpShopId','erpShopName'])if(typeof entry?.[key]==='string')result[shop.id][key]=entry[key];}
+ for(const shop of shops){const entry=value?.[shop.id],rule=normalizePricingRule(entry?.pricingRule),alert=normalizeProfitAlerts(entry?.profitAlert);if(rule)result[shop.id].pricingRule=rule;if(alert)result[shop.id].profitAlert=alert;}
  return result;
 }
 

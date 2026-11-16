@@ -69,7 +69,7 @@ fn edit(store: &WorkbenchStore, change: impl FnOnce(&mut Value)) {
 }
 
 #[test]
-fn decimal_rounding_and_raw_installment_match_python_v2() {
+fn decimal_rounding_and_installment_use_the_same_effective_cents() {
     for (raw, cents) in [
         (json!("1.005"), 101),
         (json!("2.675"), 268),
@@ -92,9 +92,10 @@ fn decimal_rounding_and_raw_installment_match_python_v2() {
     let mut c = config("a", "intel", json!(0));
     c["price"] = json!("0.0834");
     c["installment"] = json!(12);
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(s["priceCents"], 8);
-    assert_eq!(s["feeCents"], 1);
+    // 先把历史金额规范到分，再以同一到手价计算息费。
+    assert_eq!(s["feeCents"], 0);
 }
 
 #[test]
@@ -107,17 +108,17 @@ fn actual_bom_quantity_hidden_and_independent_price_are_preserved() {
         .as_array_mut()
         .unwrap()
         .push(json!({"name":"不含显卡","specialComponent":true,"qty":null,"tax":null}));
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(s["parts"].as_array().unwrap().len(), 1);
     assert_eq!(accounting(&s), (Some(46000), Some(40000), String::new()));
     c["actualParts"] = json!([]);
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(accounting(&s).0, None);
     c.as_object_mut().unwrap().remove("actualParts");
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(accounting(&s).1, Some(100));
     c["actualParts"] = Value::Null;
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(accounting(&s).1, Some(100));
 }
 
@@ -130,26 +131,26 @@ fn numeric_identities_match_legacy_without_losing_string_leading_zeroes() {
     c["actualParts"][0]["taxOverride"] = json!({"goodsId":"456","value":200});
     let mut peer = config("b", "intel", json!(100));
     peer["productId"] = json!(789);
-    let s = snapshot(&c, &[c.clone(), peer.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap();
     assert_eq!(s["productId"], "123");
     assert_eq!(s["parts"][0]["goodsId"], "456");
     assert_eq!(accounting(&s).0, Some(60000));
     peer["productId"] = json!("123");
     assert_eq!(
-        snapshot(&c, &[c.clone(), peer.clone()]).unwrap()["feeCents"],
+        snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap()["feeCents"],
         Value::Null
     );
     c["productId"] = json!("00123");
     c["actualParts"][0]["goodsId"] = json!("00456");
     c["actualParts"][0]["taxOverride"]["goodsId"] = json!("00456");
-    let s = snapshot(&c, &[c.clone(), peer.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap();
     assert_eq!(s["productId"], "00123");
     assert_eq!(s["parts"][0]["goodsId"], "00456");
     assert_eq!(s["feeCents"], 6000);
     assert_eq!(s["parts"][0]["taxCents"], 20000);
     c["actualParts"][0]["taxOverride"]["goodsId"] = json!("456");
     assert_eq!(
-        snapshot(&c, &[c.clone(), peer]).unwrap()["parts"][0]["taxCents"],
+        snapshot(&c, &[c.clone(), peer], &Value::Null).unwrap()["parts"][0]["taxCents"],
         50000
     );
 }
@@ -157,7 +158,7 @@ fn numeric_identities_match_legacy_without_losing_string_leading_zeroes() {
 #[test]
 fn missing_and_invalid_costs_are_unknown_instead_of_zero() {
     let mut c = config("a", "intel", Value::Null);
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(accounting(&s).2, "CPU含税价缺失");
     for qty in [
         json!(0),
@@ -168,12 +169,12 @@ fn missing_and_invalid_costs_are_unknown_instead_of_zero() {
         Value::Null,
     ] {
         c["actualParts"][0]["qty"] = qty;
-        let s = snapshot(&c, &[c.clone()]).unwrap();
+        let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
         assert_eq!(accounting(&s).2, "CPU数量无效");
     }
     c["actualParts"][0]["qty"] = json!("2");
     c["actualParts"][0]["tax"] = json!(0);
-    let s = snapshot(&c, &[c.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert!(accounting(&s).0.is_some());
 }
 
@@ -183,10 +184,10 @@ fn link_installment_disagreement_invalidates_selected_config() {
     let mut peer = config("b", "intel", json!(100));
     peer["productId"] = c["productId"].clone();
     peer["installment"] = json!(12);
-    let s = snapshot(&c, &[c.clone(), peer.clone()]).unwrap();
+    let s = snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap();
     assert_eq!(s["feeCents"], Value::Null);
     peer["deletedAt"] = json!("deleted");
-    let s = snapshot(&c, &[c.clone(), peer]).unwrap();
+    let s = snapshot(&c, &[c.clone(), peer], &Value::Null).unwrap();
     assert_eq!(s["feeCents"], 0);
 }
 
@@ -200,7 +201,7 @@ fn deletion_marker_truthiness_matches_legacy_scope_and_link_terms() {
         peer["deletedAt"] = marker;
         assert!(eligible(&peer, "intel"));
         assert_eq!(
-            snapshot(&c, &[c.clone(), peer.clone()]).unwrap()["feeCents"],
+            snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap()["feeCents"],
             Value::Null
         );
     }
@@ -208,7 +209,7 @@ fn deletion_marker_truthiness_matches_legacy_scope_and_link_terms() {
         peer["deletedAt"] = marker;
         assert!(!eligible(&peer, "intel"));
         assert_eq!(
-            snapshot(&c, &[c.clone(), peer.clone()]).unwrap()["feeCents"],
+            snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap()["feeCents"],
             0
         );
     }
@@ -487,5 +488,42 @@ fn selected_thousand_configurations_persist_two_independent_results_each() {
             .get::<_, i64>(0))
             .unwrap(),
         1000
+    );
+}
+
+#[test]
+fn effective_shop_and_link_rules_apply_to_six_periods_and_invalidate_old_observations() {
+    let mut c = config("a", "intel", json!(600));
+    c["installment"] = json!(6);
+    let store = fixture(json!([c]));
+    edit(&store, |state| {
+        state["shopSettings"] =
+            json!({"intel":{"pricingRule":{"taxRate":10,"taxFixed":20,"fee6":4.5}}});
+    });
+    let first = start(&store, "configured-shop", &["a"]);
+    let first_report = report(&store, &first);
+    let row = result(&first_report, "accounting");
+    assert_eq!(row["profit_cents"], 23500);
+    assert_eq!(row["snapshot"]["feeCents"], 4500);
+    assert_eq!(row["configUpdated"], false);
+    edit(&store, |state| {
+        state["shopSettings"]["intel"]["pricingRule"]["taxRate"] = json!(9);
+    });
+    assert_eq!(
+        result(&report(&store, &first), "accounting")["configUpdated"],
+        true
+    );
+    edit(&store, |state| {
+        state["configs"][0]["pricingRule"] = json!({"taxRate":3,"taxFixed":10,"fee6":5});
+    });
+    let second = start(&store, "configured-link", &["a"]);
+    let second_report = report(&store, &second);
+    assert_eq!(result(&second_report, "accounting")["profit_cents"], 31000);
+    edit(&store, |state| {
+        state["shopSettings"]["intel"]["pricingRule"]["taxRate"] = json!(8);
+    });
+    assert_eq!(
+        result(&report(&store, &second), "accounting")["configUpdated"],
+        false
     );
 }

@@ -16,11 +16,13 @@ export function maintenanceKind(row,configs=[],costs=[]){
  if(/硬盘|固态|SSD|NVME|SATA/i.test(name))return 'storageGb';
  if(/内存|DDR[345]|海力士/i.test(name))return 'memoryGb';
  if(/CPU|处理器|酷睿|锐龙|\bRYZEN|\bULTRA\s*[3579]|\bI[3579][ -]?\d{4,5}|\b\d{4,5}(?:KF|K|F|X3D|X)\b|\b\d{3}K(?:F|\s*PLUS)?\b/i.test(name))return 'cpu';
+ if(row.hardwareOverrides?.gpuName)return 'vramGb';
  const facts=row.hardwareFacts||{};
  if(facts.caseBoards||facts.caseType)return 'case';if(facts.boardType)return 'board';if(facts.cpuName)return 'cpu';
  return 'other';
 }
 const hardwareCopy={
+ vramGb:['显卡简称识别','自动识别不准确时填写显卡简称，生成配置简称时优先使用人工值。','清空恢复自动识别；人工简称会保留，价格同步不会覆盖。'],
  cpu:['CPU 简称识别','默认自动识别。识别有误时填写人工名称；清空后恢复自动。','人工名称会保留，价格同步不会覆盖。'],
  board:['主板板型识别','默认自动识别。识别有误时选择实际板型；选择“自动识别”恢复自动。','人工板型会保留，价格同步不会覆盖。'],
  case:['机箱支持板型','默认读取已维护的机箱资料。识别有误时勾选支持的主板板型，可多选。','取消全部勾选恢复自动；人工设置会保留，价格同步不会覆盖。']

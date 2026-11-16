@@ -81,3 +81,22 @@ test('混合加购手动展示仅恢复已勾选选项，并保留兼容提示',
  selectHardwareUpgrade(a,c,false);assert.equal(displayedAddon(a,c).text,'【小板】');
  assert.equal(a.choices[2].enabled,false);
 });
+
+// 专业显卡人工简称需完整保留，覆盖保存、清空和两种配置命名格式。
+test('显卡人工简称保留后缀显存，保存重载后可清空恢复自动',()=>{
+ const row={sourceId:'gpu',shopId:'intel',goodsId:'453606',name:'GIGABYTE技嘉 GV-R9700AI TOP-32GD (RX9700AI TOP)',tax:18500};
+ const part={...sourcePart(row),slot:'显卡',qty:1};
+ const state={configs:[{id:'c',name:'配置1',shopId:'intel',parts:[part],actualParts:[structuredClone(part)],shortName:'手工整机名',shortNameAuto:false,addons:[]}],sourceCatalog:[row],costSource:[{...row}]};
+ const result=sourceBatch(state,[{before:row,row:{...row,hardwareOverrides:{gpuName:' RX9700 AI TOP 32G '}}}]);
+ const saved=JSON.parse(JSON.stringify(result.next));
+ assert.equal(saved.sourceCatalog[0].hardwareOverrides.gpuName,'RX9700 AI TOP 32G');
+ assert.equal(saved.configs[0].actualParts[0].hardwareOverrides.gpuName,'RX9700 AI TOP 32G');
+ assert.equal(saved.configs[0].shortName,'手工整机名');
+ assert.equal(saved.configs[0].parts[0].tax,18500);
+ for(const format of ['compact','normal'])assert.ok(suggestedName(saved.configs[0],format).includes('RX9700 AI TOP 32G'));
+ const reset=sourceBatch(saved,[{before:saved.sourceCatalog[0],row:{...saved.sourceCatalog[0],hardwareOverrides:{gpuName:''}}}]);
+ assert.equal(reset.next.configs[0].parts[0].hardwareOverrides,undefined);
+ assert.equal(suggestedName(reset.next.configs[0]),suggestedName(state.configs[0]));
+ assert.throws(()=>validateHardware({gpuName:'x'.repeat(81)}),/显卡简称/);
+ assert.throws(()=>validateHardware({gpuName:123}),/显卡简称/);
+});

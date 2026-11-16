@@ -24,6 +24,8 @@ export function validateHardware(value){
  if(value==null)return undefined;if(typeof value!=='object'||Array.isArray(value))throw Error('配件识别资料格式无效');
  const result={};
  if(value.cpuName!=null&&value.cpuName!==''){if(typeof value.cpuName!=='string'||value.cpuName.trim().length>80)throw Error('CPU 简称须为 80 字以内的文字');if(value.cpuName.trim())result.cpuName=value.cpuName.trim();}
+ // 显卡人工简称持久保存，价格同步不参与覆盖。
+ if(value.gpuName!=null&&value.gpuName!==''){if(typeof value.gpuName!=='string'||value.gpuName.trim().length>80)throw Error('显卡简称须为 80 字以内的文字');if(value.gpuName.trim())result.gpuName=value.gpuName.trim();}
  if(value.boardType){if(!boardTypes.includes(value.boardType))throw Error('主板板型无效');result.boardType=value.boardType;}
  if(value.caseBoards!=null){if(!Array.isArray(value.caseBoards)||!value.caseBoards.length||value.caseBoards.some(v=>!boardTypes.includes(v)))throw Error('请选择机箱支持的主板板型');result.caseBoards=boardTypes.filter(v=>value.caseBoards.includes(v));}
  return Object.keys(result).length?result:undefined;
