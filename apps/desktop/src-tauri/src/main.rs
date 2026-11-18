@@ -8,7 +8,7 @@ const _: () = assert!(!tauri::is_dev(), "Release desktop must embed frontend ass
 // 先执行资源探针和辅助命令，未命中时才进入工作台主生命周期。
 fn main() {
     // 普通双击入口在任何运行时/线程创建前读取旁置配置；辅助探针保留原有参数语义。
-    #[cfg(feature = "formal-nas-client")]
+    #[cfg(all(feature = "formal-nas-client",not(feature = "nas-acceptance")))]
     if std::env::args_os().len()==1 {
         // 安全：这是 main 首个执行步骤，尚未调用任何会创建后台线程的组件。
         if let Err(message)=unsafe { desktop_lib::prepare_formal_launch() } {
@@ -26,5 +26,11 @@ fn main() {
     if let Some(code) = desktop_lib::run_update_helper() {
         std::process::exit(code);
     }
+    #[cfg(feature="nas-acceptance")]
+    let _acceptance=desktop_lib::nas_acceptance::start().unwrap_or_else(|message| {
+        rfd::MessageDialog::new().set_title("DIY 配置工作台完整测试版").set_description(&message)
+            .set_level(rfd::MessageLevel::Error).show();
+        std::process::exit(1);
+    });
     desktop_lib::run()
 }

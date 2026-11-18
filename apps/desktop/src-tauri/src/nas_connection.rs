@@ -90,7 +90,7 @@ fn persist(directory:&Path, config:&ConnectionConfig)->Result<(),String>{
     #[cfg(not(windows))] std::fs::rename(&temporary,&target).map_err(|_|"无法替换连接设置")?;
     Ok(())
 }
-fn require_formal()->Result<(),String>{if cfg!(feature="formal-nas-client"){Ok(())}else{Err("此程序不支持服务端连接设置".into())}}
+fn require_formal()->Result<(),String>{if cfg!(all(feature="formal-nas-client",not(feature="nas-acceptance"))){Ok(())}else{Err("此程序不支持服务端连接设置".into())}}
 
 #[tauri::command]
 pub async fn nas_connection_settings()->Result<Value,String>{

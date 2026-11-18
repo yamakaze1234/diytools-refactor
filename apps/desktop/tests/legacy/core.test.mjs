@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {expandPartFormula,readPartFormulas,savePartFormulas} from '../../public/workbench/part-export-formulas.js';
 import {seed,legacyRow} from './fixtures/workspace.mjs';
 import {erpRow,copyText,totals,fromTemplate,modulesDefault,normalizeProducts,productGroups,productTemplate,templateConfigs,importTemplateConfigs,blankConfig,liveConfigs,deleteConfigs,restoreConfigs} from '../../public/workbench/core.js';
 import {suggestedName} from '../../public/workbench/legacy-names.js';
@@ -44,6 +45,33 @@ test('横向输出逐格兼容已记录 V5 纯函数结果',()=>{
  const parts=[['CPU','10001',1],['内存','10002',2],['电源','10003',1],['风扇','10004',8]].map(([slot,goodsId,qty])=>({slot,goodsId,qty}));
  assert.deepEqual(erpRow({parts}),legacyRow);
 });
+test('英特尔用定位列生成名称公式，旧版和其他店仍引用修复版成本表',()=>{
+ const config={shopId:'intel',parts:[{slot:'CPU',goodsId:'9900014',qty:1}]};
+ const row=erpRow(config);
+ assert.equal(row[1],'=IF(OR([@[CPU_id]]="",[@[CPU_id]]=0,[@[CPU_id]]="0"),"",IF(IFERROR(AND(ISNUMBER([@定位CPU]),[@定位CPU]>0),FALSE),INDEX(参名称,[@定位CPU]),"未匹配"))');
+ assert.equal(row[9].includes('INDEX(参名称,[@定位主板])'),true);
+ assert.equal(erpRow(config,'legacy')[1].includes('主机成本表V2新_修复版.xlsb'),true);
+ assert.equal(erpRow({...config,shopId:'gigabyte'})[1],erpRow(config,'legacy')[1]);
+});
+
+test('单条公式按店铺与布局保存，整店替换列名时保留文字和文件引用',()=>{
+ const slots=['CPU','主板','配件1'];
+ const pasted=String.raw`\=@IF([@[CPU_id]]<>"",INDEX(参名称,[@定位CPU])&"[CPU_id]","")`;
+ const formulas=expandPartFormula(pasted,slots);
+ assert.equal(formulas.主板,'=@IF([@[主板_id]]<>"",INDEX(参名称,[@定位主板])&"[CPU_id]","")');
+ assert.equal(expandPartFormula(`=INDEX('[CPU_id]库存数据'!A:A,[@[CPU_id]])`,slots).配件1,`=INDEX('[CPU_id]库存数据'!A:A,[@[配件1_id]])`);
+ assert.throws(()=>expandPartFormula('=[@[CPU_id]]+[@定位主板]',slots),/多个配件/);
+ assert.throws(()=>expandPartFormula('=B2\t=E2',slots),/一个完整/);
+ assert.deepEqual(expandPartFormula('=B2',slots,'主板'),{主板:'=B2'});
+ const values=new Map(),storage={getItem:key=>values.get(key),setItem:(key,value)=>values.set(key,value)};
+ savePartFormulas(storage,'fixture','intel',true,formulas);
+ assert.deepEqual(readPartFormulas(storage,'fixture','intel',true,slots),formulas);
+ assert.deepEqual(readPartFormulas(storage,'fixture','intel',false,slots),{});
+ assert.deepEqual(readPartFormulas(storage,'fixture','gigabyte',false,slots),{});
+ const config={shopId:'intel',parts:[{slot:'CPU',goodsId:'9900014',qty:1}]};
+ assert.equal(copyText([config],'parts','short',()=>formulas).split('\t')[9],formulas.主板);
+});
+
 test('合成样例成本，单价乘数量及利润',()=>{const t=totals(seed.configs[0]);assert.equal(t.erp,6520);assert.equal(t.tax,6440);assert.equal(t.basis,6807.96);assert.equal(t.taxProfit,-108.96);assert.equal(t.erpProfit,45.02);});
 test('同一配件行保持 ID/数量对应，不采用来源 AA/AB 错位引用',()=>{const row=erpRow(seed.configs[0]);assert.equal(row.length,56);assert.equal(row[24],'383029');assert.equal(row[26],'1');assert.equal(row[32],'375660');assert.equal(row[34],'8');assert.equal(row[14],'2');});
 test('SPU/SKU 字符串精度与空 ID 阻止复制',()=>{const c={...seed.configs[0],skuId:'3682299409011548'};assert.equal(copyText([c,c],'sku'),'3682299409011548\r\n3682299409011548');assert.equal(copyText([c],'spu'),'3797170100491124774');assert.throws(()=>copyText(seed.configs.slice(0,1),'sku'),/尚未填写/);});

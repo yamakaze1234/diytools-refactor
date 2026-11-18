@@ -2,11 +2,14 @@
 import {createHash} from 'node:crypto';
 import {Fault,requireValue} from './config.mjs';
 import {shopLock} from './shop-scope.mjs';
+import {foreignGalleryPrefix,lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
+import {listSharedSources,validateSharedSourceEdit,writeSharedSource} from './shared-sources.mjs';
+import {sourceGoodsId} from '../../../apps/desktop/public/workbench/shared-source-fields.js';
 import {sourceAddon,validateAddon} from '../../../apps/desktop/public/workbench/addon-data.js';
 
 export const sharedAddonFields=['addonText','addonNote','addonGoodsId','addonPriceCents','addonQty','addonItems',
  'addonOriginalQty','addonVariants','addonShowTogether','addonChoices','addonMode'];
-const kinds=new Set(['sources','addons','gallery','templates','assets']);
+const kinds=new Set(['sources','addons','gallery','templates','assets','shared-sources']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const validVersion=v=>typeof v==='string'&&/^[1-9]\d{0,18}$/.test(v)&&BigInt(v)<=9223372036854775807n;
 const plain=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
@@ -73,9 +76,10 @@ function assetPaths(document,result=new Set()){
 }
 
 export class CatalogStore {
- constructor(pool,{shopId='intel',tx,writable,workspaceWritable=false,writeImage=null,applyTemplate=null}){
+ constructor(pool,{shopId='intel',tx,writable,workspaceWritable=false,writeImage=null,applyTemplate=null,sharedGallery=false,sharedSources=false}){
   this.pool=pool;this.tx=tx;this.writable=writable;this.workspaceWritable=workspaceWritable;this.writeImage=writeImage;this.applyTemplate=applyTemplate;
   this.shopId=shopId;
+  this.sharedGallery=sharedGallery;this.sharedSources=sharedSources;
  }
  async grants(db,member){
   if(!this.writable||this.shopId!=='intel')return new Set();
@@ -94,10 +98,15 @@ export class CatalogStore {
    " AS document FROM intel_live."+info.table+" WHERE ("+info.owner+"=$2 OR "+info.owner+"='shared' OR ("+info.share+")) AND ($1::text IS NULL OR "+info.id+"=$1) ORDER BY "+info.id,[id,this.shopId])).rows;
  }
  async list(member,kind,id){
+  if(kind==='shared-sources'){
+   requireValue(this.sharedSources,'NOT_FOUND',404);
+   return this.tx(false,db=>listSharedSources(db,member,this.shopId,id));
+  }
   return this.tx(false,async db=>{
    const grants=await this.grants(db,member);
-   const rows=await this.read(db,kind,id);
-   const output=rows.map(row=>({...row,editable:this.writable&&(kind!=='addons'||!archives(row.document))&&mayWrite(row,grants,descriptor(kind).kind,this.shopId),
+   const rows=kind==='gallery'&&this.sharedGallery?await sharedGalleryRows(db,this.shopId,id,{includeArchived:true}):await this.read(db,kind,id);
+   const output=rows.map(({source_shop,sha256,extension,...row})=>({...row,
+    editable:(!source_shop||source_shop===this.shopId)&&this.writable&&(kind!=='addons'||!archives(row.document))&&mayWrite(row,grants,descriptor(kind).kind,this.shopId),
     document:kind==='addons'?{sourceId:row.id,shopId:row.document.shopId,...subset(row.document,[...sharedAddonFields,'deletedAt'])}:row.document}));
    if(!id)return output;
    if(!output.length)throw new Fault('NOT_FOUND',404);
@@ -108,6 +117,7 @@ export class CatalogStore {
  async references(db,kind,row){
   const key=kind==='gallery'?row.document.url:row.id;
   if(kind==='gallery'){
+   if(this.sharedGallery)return (await db.query('SELECT * FROM workbench_gallery.image_references($1)',[key])).rows[0];
    const {rows:[count]}=await db.query(`SELECT
     (SELECT count(*)::int FROM intel_live.configurations WHERE ${existsValue('design','$1')} OR ${existsValue('fields','$1')}) AS configurations,
     (SELECT count(*)::int FROM intel_live.templates WHERE ${existsValue('configurations','$1')} OR ${existsValue('attrs','$1')}) AS templates,
@@ -124,7 +134,7 @@ export class CatalogStore {
  async checkAssetPaths(db,document){
   const paths=[...assetPaths(document)].sort();
   // 与图库归档和配置保存使用同一摘要事务锁，保留所有历史素材。
-  for(const path of paths)await shopLock(db,this.shopId,814519,'asset:'+path);
+  for(const path of paths)await (this.sharedGallery?lockGalleryAsset(db,path):shopLock(db,this.shopId,814519,'asset:'+path));
   if(paths.length){
    const {rows:[row]}=await db.query('SELECT count(*)::int AS count FROM intel_live.assets WHERE legacy_uri=ANY($1::text[])',[paths]);
    validation(row.count===paths.length,'document.images');
@@ -157,6 +167,12 @@ export class CatalogStore {
   requireValue(this.writable,'WRITES_DISABLED',405);
   validation(shop===this.shopId&&kinds.has(kind),'operation');
   validation(plain(body)&&uuid.test(body.operation_id||'')&&idOk(id),'operation_id/resource_id');
+  if(kind==='gallery'&&this.sharedGallery){
+   requireValue(!id.startsWith(foreignGalleryPrefix),'CATALOG_SHARED_READ_ONLY',403);
+   validation(typeof body.target_id!=='string'||!body.target_id.startsWith(foreignGalleryPrefix),'target_id');
+  }
+  const sharedEdit=kind==='shared-sources';
+  if(sharedEdit)requireValue(this.sharedSources&&(action==='create'||action==='replace'),'METHOD_NOT_ALLOWED',405);
   const op=body.operation_id.toLowerCase();
   const writeImage=image&&kind==='assets'&&action==='upload';
   const create=action==='create',copy=action==='copy',apply=action==='apply';
@@ -177,9 +193,10 @@ export class CatalogStore {
    for(const field of ['owner_shop','ownerShop','shared','resource_version'])
     validation(!own(body.document,field),'document.'+field);
    validation(body.document.deletedAt==null,'document.deletedAt');
+   if(sharedEdit)validateSharedSourceEdit(id,body.document,create);
   }
   const hash=sha(canonical({shop,kind,id,action,body:{...body,operation_id:op},asset:writeImage?{digest:image.digest,mime:image.mime}:null}));
-  return this.tx(true,async db=>{
+  return this.tx(sharedEdit?'shared':true,async db=>{
    await this.bind(db,member);
    await shopLock(db,shop,814517,JSON.stringify([member.workspaceId,member.uid,op]));
    const actor=[member.workspaceId,member.uid,op];
@@ -193,9 +210,13 @@ export class CatalogStore {
    if(this.workspaceWritable&&(await db.query('SELECT 1 FROM intel_live.workspace_receipts WHERE workspace_id=$1 AND actor_uid=$2 AND operation_id=$3',actor)).rows.length)
     throw new Fault('OPERATION_REUSED',409);
    let resultId=id,version='1',previous=null,document=null;
-   if(writeImage){
+   if(sharedEdit){
+    previous=body.expected_version??null;
+    version=await writeSharedSource(db,member,shop,id,previous,body.document);
+    document={id};
+   }else if(writeImage){
     requireValue(this.writeImage,'IMAGE_UPLOAD_DISABLED',405);
-    await shopLock(db,shop,814519,'asset:'+id);
+    await (this.sharedGallery?lockGalleryAsset(db,id):shopLock(db,shop,814519,'asset:'+id));
     await this.writeImage(image);
     await db.query('INSERT INTO intel_live.assets(legacy_uri,sha256,extension,byte_count) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',[id,image.digest,image.extension,image.bytes.length]);
     const {rows:[asset]}=await db.query('SELECT sha256,extension,byte_count::text FROM intel_live.assets WHERE legacy_uri=$1',[id]);
@@ -208,6 +229,12 @@ export class CatalogStore {
     const lock=[id,...(copy?[body.target_id]:[])].sort();
     for(const resource of lock)await shopLock(db,shop,814519,(info.kind==='sources'?'source':info.kind)+':'+resource);
     const [existing]=await this.read(db,kind,id);
+    if(this.sharedSources&&info.kind==='sources'&&(create||action==='replace')){
+     // 保留旧目录的删除与恢复。普通配件资料必须走共用事务，避免只更新投影。
+     const source=existing?.document||body.document;
+     requireValue(!sourceGoodsId(source?.goodsId)&&source?.specialComponent!==true,
+      'SHARED_SOURCE_EDITOR_REQUIRED',409);
+    }
     if(create){
      requireValue(!existing,'CATALOG_EXISTS',409);
      document=body.document;

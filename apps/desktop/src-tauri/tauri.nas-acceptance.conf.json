@@ -1,0 +1,13 @@
+{
+  "productName": "DIY 配置工作台完整测试版",
+  "identifier": "io.diytools.nas-acceptance",
+  "app": {"windows": [{
+    "label": "main",
+    "title": "DIY 配置工作台 · 完整测试版",
+    "width": 1440,
+    "height": 900,
+    "minWidth": 980,
+    "minHeight": 680,
+    "dragDropEnabled": false
+  }]}
+}

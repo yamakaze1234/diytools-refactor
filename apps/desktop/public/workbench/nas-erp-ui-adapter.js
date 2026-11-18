@@ -2,6 +2,15 @@
 import {planNasErpRows} from './nas-cost-overlay.js';
 import {REPAIRED_HOST_COST} from './maintenance-workbook.js';
 
+// 输出源查询独立于同步计划，找新品时无需先在工作区建立成本记录。
+export async function lookupNasSourceProduct(read,goodsId){
+ const {saved}=await read('erp-status');
+ // 没有本店连接时，在原生选择器中临时选用已保存的连接。
+ const result=await read(saved?'erp':'erp-saved',[goodsId]);
+ if(result.cancelled)return {cancelled:true};
+ return {row:result.rows.find(row=>row.goodsId===goodsId)};
+}
+
 export function createNasErpUiAdapter({read,snapshot,context,apply,shopName='英特尔',now=()=>Date.now(),id=()=>crypto.randomUUID()}){
  const plans=new Map();
  let layout={sheet:REPAIRED_HOST_COST.sheet,goodsColumn:13,taxColumn:26};

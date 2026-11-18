@@ -30,6 +30,7 @@ export default function App() {
   const [updateOpen, setUpdateOpen] = useState(false);
   const [updateFrozen, setUpdateFrozen] = useState(false);
   const [nasMain,setNasMain]=useState(false);
+  const [acceptance,setAcceptance]=useState(false);
   const [connectionOpen,setConnectionOpen]=useState(false);
   const [connectionRequired,setConnectionRequired]=useState(false);
   const header = useRef<HTMLElement>(null);
@@ -44,6 +45,7 @@ export default function App() {
         const info=native?JSON.parse(native.body):{};
         const useNas=info.main_editor===true;
         setNasMain(useNas);
+        setAcceptance(info.acceptance===true);
         if(useNas&&!info.configured){setConnectionRequired(true);setConnectionOpen(true);return;}
         controller=createStartupLoginController({desktop,nasMain:useNas,
           invoke:(command,args)=>invoke<CloudApiResponse>(useNas?'nas_identity_request':command,args),onState:setLogin});
@@ -103,22 +105,22 @@ export default function App() {
     onLogin={(username, password, remember) => loginController.current?.login(username, password, remember) ?? Promise.resolve()}
     onRetry={() => loginController.current?.retry() ?? Promise.resolve()}
     onChooseData={source => loginController.current?.chooseData(source) ?? Promise.resolve()}
-    onLogout={() => loginController.current?.logout() ?? Promise.resolve()} onConnectionSettings={nasMain?()=>setConnectionOpen(true):undefined} /></>;
+    onLogout={() => loginController.current?.logout() ?? Promise.resolve()} onConnectionSettings={nasMain&&!acceptance?()=>setConnectionOpen(true):undefined} /></>;
   const hostHeader = <header ref={header} inert={updateFrozen} className="app-header">
     <div><strong>DIY Tools</strong><span>配置工作台</span></div>
     <nav aria-label="主导航"><Button type="button" variant="outline" className={page === "workbench" ? "active" : ""} disabled={dirty && page !== "workbench"} onClick={() => navigate("workbench")}>配置工作台</Button></nav>
-    <span className="sandbox-label">{nasMain?'局域网 · NAS':login.localOnly ? '本机保存' : '团队工作区'}</span>
+    <span className="sandbox-label">{acceptance?'完整测试版 · 本机测试数据':nasMain?'局域网 · NAS':login.localOnly ? '本机保存' : '团队工作区'}</span>
     <WorkbenchThemeToggle/>
     <details className="app-more"><summary>更多</summary><div className="app-more-menu">
-      {nasMain&&<Button type="button" variant="outline" onClick={event=>{setConnectionOpen(true);event.currentTarget.closest('details')?.removeAttribute('open');}}>连接设置</Button>}
+      {nasMain&&!acceptance&&<Button type="button" variant="outline" onClick={event=>{setConnectionOpen(true);event.currentTarget.closest('details')?.removeAttribute('open');}}>连接设置</Button>}
       {nasMain&&<Button type="button" variant="outline" onClick={event => {
         const frame=document.querySelector<HTMLIFrameElement>('.legacy-workbench-frame');
         frame?.contentWindow?.postMessage({type:'workbench-nas-autosave-settings'},location.origin);
         event.currentTarget.closest('details')?.removeAttribute('open');
       }}>自动保存设置</Button>}
       {/* 新版通道由原生签名契约隔离；诊断仅导出本次运行日志。 */}
-      <Button type="button" variant="outline"
-        onClick={event => { setUpdateOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>
+      {!acceptance&&<Button type="button" variant="outline"
+        onClick={event => { setUpdateOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}
       <DiagnosticExport />
     </div></details>
   </header>;

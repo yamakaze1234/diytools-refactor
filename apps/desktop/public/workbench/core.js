@@ -41,19 +41,41 @@ export function totals(config,settings={},quote=pricing(config,settings)){
  const termErp=after(erpProfit),termTax=after(taxProfit);
  return {erp:toMoney(erpCost),tax:toMoney(taxCost),basis:toMoney(basis),erpDeduction:toMoney(erpDeduction),taxDeduction:toMoney(taxDeduction),erpProfit:toMoney(erpProfit),taxProfit:toMoney(taxProfit),erpProfitAfter:toMoney(termErp),taxProfitAfter:toMoney(termTax),erpMargin:priceCents>0&&termErp!=null?termErp/priceCents*100:null,taxMargin:priceCents>0&&termTax!=null?termTax/priceCents*100:null,missing,erpFallback,erpUnresolved,taxUnresolved};
 }
-/** 英特尔新版由维护表命名区域取名；旧版直接匹配修复版成本表的编号列并取优化名称。 */
+export const maintenanceUsesLocator=(shopId,template)=>shopId==='intel'&&template!=='legacy';
+/** 英特尔新版复用已有定位列，其他表沿用修复版成本表的商品编号与名称列。 */
 export function erpFormula(label,short=false){
- if(short)return `=IF([@[${label}_id]]<>"",INDEX(参名称,[@定位${label}]),"")`;
+ const id=`[@[${label}_id]]`,empty=`OR(${id}="",${id}=0,${id}="0")`;
+ if(short){
+  const row=`[@定位${label}]`;
+  return `=IF(${empty},"",IF(IFERROR(AND(ISNUMBER(${row}),${row}>0),FALSE),INDEX(参名称,${row}),"未匹配"))`;
+ }
  const {file,sheet,goods,name}=REPAIRED_HOST_COST,source=`'[${file}]${sheet}'`;
- return `=IF([@[${label}_id]]<>"",INDEX(${source}!$${name}:$${name},MATCH([@[${label}_id]],${source}!$${goods}:$${goods},0)),"")`;}
+ return `=IF(${empty},"",INDEX(${source}!$${name}:$${name},MATCH(${id},${source}!$${goods}:$${goods},0)))`;
+}
 const clean=x=>{const v=String(x??'').trim();return ['0','/','good id','数量'].includes(v.toLowerCase())?'':v;};
 /** 导出前检查 ERP 槽位、商品 ID 与正整数数量，再生成成本表可粘贴的数据行。 */
-export function erpRow(config,template){const short=config.shopId==='intel'&&template!=='legacy';const seen=new Set();for(const p of actualParts(config)){if(p.name&&!isSpecialComponent(p)&&!clean(p.goodsId)&&!(p.slot==='显卡'&&/不含|无卡|核显|不配/.test(p.name)))throw Error(`${p.slot} 尚未绑定 ERP ID，请先选择配件`);if(clean(p.goodsId)){if(!slots.includes(p.slot))throw Error(`未分配 ERP 槽位：${p.name}`);if(seen.has(p.slot))throw Error(`ERP 槽位重复：${p.slot}`);seen.add(p.slot);if(!Number.isInteger(Number(p.qty))||Number(p.qty)<=0)throw Error(`${p.slot} 数量必须为正整数`);}}
+export function erpRow(config,template,formulas={}){const short=maintenanceUsesLocator(config.shopId,template);const seen=new Set();for(const p of actualParts(config)){if(p.name&&!isSpecialComponent(p)&&!clean(p.goodsId)&&!(p.slot==='显卡'&&/不含|无卡|核显|不配/.test(p.name)))throw Error(`${p.slot} 尚未绑定 ERP ID，请先选择配件`);if(clean(p.goodsId)){if(!slots.includes(p.slot))throw Error(`未分配 ERP 槽位：${p.name}`);if(seen.has(p.slot))throw Error(`ERP 槽位重复：${p.slot}`);seen.add(p.slot);if(!Number.isInteger(Number(p.qty))||Number(p.qty)<=0)throw Error(`${p.slot} 数量必须为正整数`);}}
 const exportSlots=actualParts(config).some(p=>slots.slice(14).includes(p.slot)&&(clean(p.goodsId)||isSpecialComponent(p)))?slots:slots.slice(0,14);
 if(short&&exportSlots.length>14)throw Error('英特尔新版维护表只到配件5；含配件6/7 的配置请在复制窗口选择旧版，并粘贴到支持这些列的表。');
-return exportSlots.flatMap(slot=>{const p=actualParts(config).find(x=>x.slot===slot)||{},id=clean(p.goodsId),qty=id?clean(p.qty):'';if(isSpecialComponent(p))return ['0',p.name||'0',Number.isInteger(Number(p.qty))&&Number(p.qty)>0?String(p.qty):'1',''];const handwritten=short&&!id&&slot==='显卡'&&p.name&&/不含|无卡|核显|不配/.test(p.name);return[id||'0',handwritten?p.name:erpFormula(slot,short),qty||'1',''];});}
+return exportSlots.flatMap(slot=>{const p=actualParts(config).find(x=>x.slot===slot)||{},id=clean(p.goodsId),qty=id?clean(p.qty):'';if(isSpecialComponent(p))return ['0',p.name||'0',Number.isInteger(Number(p.qty))&&Number(p.qty)>0?String(p.qty):'1',''];const handwritten=short&&!id&&slot==='显卡'&&p.name&&/不含|无卡|核显|不配/.test(p.name);return[id||'0',handwritten?p.name:(formulas[slot]??erpFormula(slot,short)),qty||'1',''];});}
 /** 按复制类型生成制表符或换行文本，缺少必要身份字段时拒绝导出。 */
-export function copyText(configs,kind,template){if(!configs.length)throw Error('请先勾选配置');if(kind==='parts'){const rows=configs.map(c=>erpRow(c,template)),width=Math.max(...rows.map(row=>row.length));return rows.map(row=>{while(row.length<width)row.push('0',erpFormula(slots[row.length/4]),'1','');return row.join('\t');}).join('\r\n');}const key={spu:'spu',sku:'skuId',name:'shortName'}[kind];if(!key)throw Error('未知复制类型');for(const c of configs){if(!String(c[key]||'').trim())throw Error(`${c.name} 尚未填写${kind==='sku'?' SKU ID':kind==='spu'?' SPU':'简称'}`);if(kind!=='name'&&!/^\d+$/.test(c[key]))throw Error(`${c.name} 的 ID 只能包含数字`);if(/[\t\r\n]/.test(c[key]))throw Error('字段包含换行或制表符，请先清理');}return configs.map(c=>c[key]).join('\r\n');}
+export function copyText(configs,kind,template,formulasForShop=()=>({})){
+ if(!configs.length)throw Error('请先勾选配置');
+ if(kind==='parts'){
+  const rows=configs.map(config=>{
+   const formulas=formulasForShop(config.shopId);
+   return {cells:erpRow(config,template,formulas),formulas};
+  });
+  const width=Math.max(...rows.map(row=>row.cells.length));
+  return rows.map(({cells,formulas})=>{
+   while(cells.length<width){
+    const slot=slots[cells.length/4];
+    cells.push('0',formulas[slot]??erpFormula(slot),'1','');
+   }
+   return cells.join('\t');
+  }).join('\r\n');
+ }
+ const key={spu:'spu',sku:'skuId',name:'shortName'}[kind];if(!key)throw Error('未知复制类型');for(const c of configs){if(!String(c[key]||'').trim())throw Error(`${c.name} 尚未填写${kind==='sku'?' SKU ID':kind==='spu'?' SPU':'简称'}`);if(kind!=='name'&&!/^\d+$/.test(c[key]))throw Error(`${c.name} 的 ID 只能包含数字`);if(/[\t\r\n]/.test(c[key]))throw Error('字段包含换行或制表符，请先清理');}return configs.map(c=>c[key]).join('\r\n');}
 export const serviceModule=(shopId,theme)=>({id:'service',type:'service',title:'服务承诺',text:DEFAULT_SERVICE_TEXT,visible:true,size:18,weight:700,color:shopServiceTextColor(shopId,theme),background:shopServiceColor(shopId,theme),fontFamily:'',gap:8});
 export const modulesDefault=(shopId,theme)=>[
  {id:'header',type:'header',title:'标题与机箱',visible:true,size:29,weight:700,color:'',gap:18},

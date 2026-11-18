@@ -1,29 +1,35 @@
 // 对生成的合成正式 SQL 做 HTTP 验收。仅使用进程内 PGlite，不能连接现网。
-// 用法：node test/production-three-api.integration.mjs <sql-fixture>
+// 用法：node test/production-three-api.integration.mjs <sql-fixture> [test-key.pem test-cert.pem]
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {mkdir,readFile,readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
+import {createServer} from 'node:http';
+import {request} from 'node:https';
 import {PGlite} from '@electric-sql/pglite';
 import {PNG} from 'pngjs';
 import {Fault} from '../src/config.mjs';
-import {serve} from '../src/http.mjs';
+import {createHandler,serve} from '../src/http.mjs';
 import {LiveStore} from '../src/live-store.mjs';
 import {scopedDatabase} from '../src/shop-scope.mjs';
-import {combineImageHandlers,createImageHandler} from '../src/images.mjs';
+import {combineImageHandlers,createImageHandler,createImageWriter} from '../src/images.mjs';
+import {createLanCaseGallery} from '../src/lan-case-gallery.mjs';
 
 const fixture=process.argv[2];
 if(!fixture)throw Error('请指定合成 SQL 验收目录');
 
 test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价、成本、历史和权限撤销',async()=>{
  const bootstrap=new PGlite();
- let db,server;
+ let db,server,galleryServer,outsideServer;
  try{
   await bootstrap.exec('CREATE DATABASE diy_workbench');
   db=new PGlite({loadDataDir:await bootstrap.dumpDataDir(),database:'diy_workbench'});
   for(const name of ['intel-fixture.sql','gigabyte/02-gigabyte-import.sql','jonsbo/02-jonsbo-import.sql','access/04-install-three-operations-private.sql'])
    await db.exec(await readFile(join(fixture,name),'utf8'));
+  const sharedGallerySql=await readFile(new URL('../sql/016-shared-case-gallery.sql',import.meta.url),'utf8');
+  await db.exec(sharedGallerySql);
+  await db.exec(sharedGallerySql);
   let pending=Promise.resolve();
   // PGlite 是同一个本地连接，串行借用即可在每次查询和事务中按真实权限角色执行。
   const underRole=(shop,work)=>{
@@ -51,20 +57,98 @@ test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价
     });
    }
   });
-  const databases=new Map(['intel','gigabyte','jonsbo'].map(shop=>[shop,scopedDatabase(poolFor(shop),shop)]));
+  const shops=['intel','gigabyte','jonsbo'];
+  const databases=new Map(shops.map(shop=>[shop,scopedDatabase(poolFor(shop),shop)]));
+  const uploadRoots=new Map(shops.map(shop=>[shop,join(fixture,shop+'-gallery-uploads')]));
+  await Promise.all([...uploadRoots.values()].map(root=>mkdir(root,{recursive:true})));
   const uploads=[];
   const stores=new Map([...databases].map(([shop,db])=>[shop,new LiveStore(db,
-   {shopId:shop,writable:true,catalogWritable:true,workspaceWritable:true,writeImage:async image=>uploads.push([shop,image.uri])})]));
-  const serveImage=combineImageHandlers(['gigabyte','jonsbo'].map(shop=>createImageHandler(databases.get(shop),join(fixture,shop+'-source','assets'))));
+   {shopId:shop,writable:true,catalogWritable:true,workspaceWritable:true,sharedGallery:true,writeImage:async image=>{
+    uploads.push([shop,image.uri]);
+    await createImageWriter(uploadRoots.get(shop),null)(image);
+   }})]));
+  const serveImage=combineImageHandlers(shops.map(shop=>createImageHandler(databases.get(shop),
+   shop==='intel'?null:join(fixture,shop+'-source','assets'),uploadRoots.get(shop))));
   const user='fixture_existing01',legacy='fixture_legacy03',other='fixture_verified02',disabled='fixture_disabled04';
-  server=serve({shopStores:stores,serveImage,deploymentId:'intel-production-fixture',
+  const deps={shopStores:stores,serveImage,deploymentId:'intel-production-fixture',lanGallery:createLanCaseGallery(databases),
    authenticate:async header=>{
     const uid=header?.slice(7);
     if(![user,legacy,other,disabled].includes(uid))throw new Fault('UNAUTHENTICATED',401);
     return {uid,workspaceId:'workbench-main'};
-   }});
+   }};
+  server=serve(deps);
   await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
   const origin='http://127.0.0.1:'+server.address().port,url=origin+'/api/v1';
+  const [, , , testKey, testCert]=process.argv;
+  const tls=testCert?{key:await readFile(testKey),cert:await readFile(testCert),network:'127.0.0.0',prefix:24}:null;
+  // 有测试证书时覆盖真实 TCP/TLS 门禁；无证书也验证同一个路由和真实角色的 SQL。
+  galleryServer=tls?serve(deps,tls):createServer(createHandler(deps));
+  await new Promise(resolve=>galleryServer.listen(0,'127.0.0.1',resolve));
+  const galleryOrigin=(tls?'https:':'http:')+'//127.0.0.1:'+galleryServer.address().port;
+  const galleryRequest=async(path,method='GET',headers={},base=galleryOrigin)=>{
+   if(!tls){
+    const res=await fetch(base+path,{method,headers});
+    return {status:res.status,body:Buffer.from(await res.arrayBuffer()),headers:Object.fromEntries(res.headers)};
+   }
+   return await new Promise((resolve,reject)=>{
+    const req=request(base+path,{method,headers,ca:tls.cert},res=>{
+     const chunks=[];
+     res.on('data',chunk=>chunks.push(chunk));
+     res.on('end',()=>resolve({status:res.statusCode,body:Buffer.concat(chunks),headers:res.headers}));
+     res.on('error',reject);
+    });
+    req.on('error',reject);
+    req.end();
+   });
+  };
+  const galleryPath='/case-gallery/v1/images';
+  if(tls){
+   outsideServer=serve(deps,{...tls,network:'192.0.2.0'});
+   await new Promise(resolve=>outsideServer.listen(0,'127.0.0.1',resolve));
+   const outsideOrigin='https://127.0.0.1:'+outsideServer.address().port;
+   assert.equal((await galleryRequest(galleryPath,'GET',{'x-forwarded-for':'192.0.2.20'},outsideOrigin)).status,403);
+  }
+  const galleryList=async query=>{
+   const result=await galleryRequest(galleryPath+'?'+new URLSearchParams(query));
+   assert.equal(result.status,200,result.body.toString());
+   return JSON.parse(result.body);
+  };
+  assert.equal((await fetch(origin+galleryPath)).status,404);
+  assert.equal((await galleryRequest(galleryPath,'POST')).status,405);
+  assert.equal((await galleryRequest(galleryPath+'?shop_id=intel')).status,400);
+  assert.equal((await galleryRequest(galleryPath+'?view=categories&limit=3')).status,400);
+  assert.equal((await galleryRequest(galleryPath+'?model=A&model=B')).status,400);
+  assert.equal((await galleryRequest('/api/v1/me','GET',{'x-workbench-deployment':'intel-production-fixture'})).status,401);
+  // 同一份原图模拟跨店重复，仍保留相同机箱分类下的三张不同原图。
+  await db.exec(`
+   INSERT INTO jonsbo_live.gallery(gallery_id,owner_shop,shared,legacy_uri,brand,model,color,edition,attrs)
+    SELECT 'fixture-duplicate','jonsbo',false,legacy_uri,brand,model,color,edition,attrs||'{"hidden":"fixture-internal"}'::jsonb
+    FROM intel_live.gallery WHERE gallery_id='fixture-gallery'`);
+  const categories=await galleryList({view:'categories',model:'m'});
+  assert.equal(categories.imageCount,3);
+  assert.deepEqual(categories.categories,[{brand:'测试',models:[{model:'M',colors:[{color:'待分类',editions:['通用']}]}]}]);
+  const first=await galleryList({edition:'通用',q:'测试 M',limit:1});
+  const rest=await galleryList({edition:'通用',q:'测试 M',cursor:first.nextCursor});
+  assert.equal(first.total,3);
+  assert.equal(rest.nextCursor,null);
+  assert.equal(new Set([...first.items,...rest.items].map(item=>item.id)).size,3);
+  assert.deepEqual(Object.keys(first.items[0]),['id','name','brand','model','color','edition','categoryPath','downloadUrl']);
+  const galleryAsset=JSON.parse(await readFile(join(fixture,'gigabyte-source','assets.json'),'utf8'))[0];
+  const downloadUrl=[...first.items,...rest.items].find(item=>item.downloadUrl.includes(galleryAsset.sha256)).downloadUrl;
+  const original=await galleryRequest(downloadUrl);
+  assert.equal(original.status,200);
+  assert.equal(original.headers['cache-control'],'no-store');
+  assert.match(original.headers['content-disposition'],/^attachment;/);
+  assert.equal(createHash('sha256').update(original.body).digest('hex'),galleryAsset.sha256);
+  const head=await galleryRequest(downloadUrl,'HEAD');
+  assert.equal(head.status,200);
+  assert.equal(head.body.length,0);
+  await db.exec(`UPDATE gigabyte_live.gallery SET attrs=attrs||'{"deletedAt":"2026-11-18T00:00:00.000Z"}'::jsonb
+   WHERE gallery_id='fixture-gallery'`);
+  assert.equal((await galleryRequest(downloadUrl)).status,404);
+  assert.equal((await galleryList({})).total,2);
+  assert.equal((await fetch(origin+'/images/'+galleryAsset.sha256+'.png')).status,200);
+  await db.exec("UPDATE gigabyte_live.gallery SET attrs=attrs-'deletedAt' WHERE gallery_id='fixture-gallery'");
   const call=async(path,{shop,uid=user,method='GET',body=null,status=200,query={}}={})=>{
    const params=new URLSearchParams({...query,...(shop?{shop_id:shop}:{})});
    const res=await fetch(url+path+(params.size?'?'+params:''),{method,headers:{authorization:'Bearer '+uid,'x-workbench-deployment':'intel-production-fixture',
@@ -74,6 +158,15 @@ test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价
    return value.ok?(Object.hasOwn(value,'data')?value.data:value):value;
   };
   const route='/operations/configurations/fixture-overlap';
+  const uploadGalleryImage=async(shop,channel)=>{
+   const bytes=PNG.sync.write({width:1,height:1,data:Buffer.from([65,90,channel,255])});
+   const response=await fetch(url+'/operations/catalog/assets?shop_id='+shop+'&operation_id='+randomUUID(),{method:'POST',
+    headers:{authorization:'Bearer '+user,'x-workbench-deployment':'intel-production-fixture','content-type':'image/png'},body:bytes});
+   const result=await response.json();
+   assert.equal(response.status,201,JSON.stringify(result));
+   assert.equal(result.data.document.sha256,createHash('sha256').update(bytes).digest('hex'));
+   return {asset:result.data.document,bytes};
+  };
   const me=await call('/me');
   assert.deepEqual(me.shops.map(row=>row.shop_id),['intel','gigabyte','jonsbo']);
   assert.equal(me.shop_capabilities.gigabyte.data_source,'gigabyte_live');
@@ -157,11 +250,70 @@ test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价
    assert.equal((await call('/operations/catalog/sources/fixture-local',{shop})).document.name,'本店来源 '+shop);
    assert.equal((await call('/operations/costs/100001',{shop})).document.tax,shop==='gigabyte'?20:30);
   }
+  for(const [index,owner] of shops.entries()){
+   const [firstShop,secondShop]=shops.filter(shop=>shop!==owner);
+   const {asset,bytes}=await uploadGalleryImage(owner,170+index);
+   const catalog='/operations/catalog/gallery';
+   const id=randomUUID(),item={id,name:'三店共用验证',brand:'测试品牌',model:'共用机箱',color:'白色',edition:owner,url:asset.url};
+   assert.equal((await call(catalog,{shop:firstShop})).some(row=>row.document.url===asset.url),false);
+   const operation_id=randomUUID();
+   const created=await call(catalog,{shop:owner,method:'POST',status:201,body:{operation_id,document:item}});
+   assert.equal((await call(catalog,{shop:owner,method:'POST',status:201,body:{operation_id,document:item}})).resource_id,id);
+   const own=(await call(catalog,{shop:owner})).find(row=>row.id===id);
+   assert.equal(own.editable,true);
+   for(const shop of [firstShop,secondShop]){
+    const all=await call(catalog,{shop});
+    const row=all.find(entry=>entry.document.url===asset.url);
+    assert.equal(row.editable,false);
+    assert.match(row.id,/^shared-gallery:/);
+    assert.equal(row.document.edition,owner);
+    const workspace=await call('/operations/workspace-catalog',{shop});
+    assert(workspace.caseGallery.some(entry=>entry.id===row.id&&entry.url===asset.url));
+    const original=await call('/operations/gallery/'+encodeURIComponent(row.id),{shop});
+    const readback=await fetch(origin+original.document.url);
+    assert.deepEqual(Buffer.from(await readback.arrayBuffer()),bytes);
+    const detail=await call(route,{shop});
+    if(shop===firstShop){
+     await call('/operations/workspace/configurations',{shop,method:'POST',body:{operation_id:randomUUID(),
+      changes:[{id:detail.document.id,action:'replace',expected_version:detail.version,dependencies:detail.dependencies,
+       document:{...detail.document,caseImage:row.document.url}}]}});
+    }else{
+     await call(route+'/design',{shop,method:'PUT',body:{operation_id:randomUUID(),expected_version:detail.version,design:{caseImage:row.document.url}}});
+    }
+    assert.equal((await call(route,{shop})).document.caseImage,asset.url);
+    const attempted=await call(catalog+'/'+encodeURIComponent(row.id)+'/archive',{shop,method:'POST',status:403,
+     body:{operation_id:randomUUID(),expected_version:row.version}});
+    assert.equal(attempted.error,'CATALOG_SHARED_READ_ONLY');
+   }
+   for(const [shop,root] of uploadRoots){
+    assert.equal((await readdir(root)).includes(asset.sha256),shop===owner);
+   }
+   const refs=await call(catalog+'/'+id,{shop:owner});
+   assert.equal(refs.references.configurations,2);
+   const archive=await call(catalog+'/'+id+'/archive',{shop:owner,method:'POST',status:409,
+    body:{operation_id:randomUUID(),expected_version:created.version}});
+   assert.equal(archive.error,'CATALOG_IN_USE');
+   const replacement=await uploadGalleryImage(owner,200+index);
+   const changed=await call(catalog+'/'+id,{shop:owner,method:'PUT',
+    body:{operation_id:randomUUID(),expected_version:created.version,document:{...item,url:replacement.asset.url}}});
+   assert.equal(changed.document.url,replacement.asset.url);
+   for(const shop of [firstShop,secondShop]){
+    assert((await call(catalog,{shop})).some(row=>row.document.url===replacement.asset.url));
+    assert.equal((await call(route,{shop})).document.caseImage,asset.url);
+   }
+   const archived=await call(catalog+'/'+id+'/archive',{shop:owner,method:'POST',
+    body:{operation_id:randomUUID(),expected_version:changed.version}});
+   assert(!(await call(catalog,{shop:firstShop})).some(row=>row.document.url===replacement.asset.url));
+   await call(catalog+'/'+id+'/restore',{shop:owner,method:'POST',body:{operation_id:randomUUID(),expected_version:archived.version}});
+   assert((await call(catalog,{shop:secondShop})).some(row=>row.document.url===replacement.asset.url));
+  }
   await pending;
   await db.query("UPDATE nas_business.members SET enabled=false WHERE workspace_id='workbench-main' AND uid=$1",[user]);
   await call('/me',{status:403});
   await call(route,{shop:'jonsbo',status:403});
  }finally{
+  if(outsideServer)await new Promise(resolve=>outsideServer.close(resolve));
+  if(galleryServer)await new Promise(resolve=>galleryServer.close(resolve));
   if(server)await new Promise(resolve=>server.close(resolve));
   await db?.close();
   await bootstrap.close();

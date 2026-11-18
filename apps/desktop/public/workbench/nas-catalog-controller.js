@@ -2,7 +2,7 @@
 import {NasApiError,receiptNotFound,receiptLookupError,originalVersionRejected} from './nas-api-client.js';
 const known=new Set(['WRITES_DISABLED','FORBIDDEN','CATALOG_SHARED_READ_ONLY','INVALID_REQUEST','INVALID_IMAGE','INVALID_CONTENT_TYPE',
  'PAYLOAD_TOO_LARGE','VALIDATION_FAILED','CATALOG_EXISTS','NOT_FOUND','INVALID_CONFIGURATION_STATE','OPERATION_REUSED','VERSION_CONFLICT',
- 'CATALOG_IN_USE','IMAGE_UPLOAD_DISABLED','UNAUTHENTICATED']);
+ 'CATALOG_IN_USE','SHARED_SOURCE_VALUE_REQUIRED','SHARED_SOURCE_EDITOR_REQUIRED','IMAGE_UPLOAD_DISABLED','UNAUTHENTICATED']);
 const pendingOp=(kind,id)=>JSON.stringify([kind,id]);
 export function createNasCatalogController({client,storage,scope,shopId='intel',uuid=()=>crypto.randomUUID()}){
  const prefix='diy-nas-catalog:'+JSON.stringify(scope)+':',flights=new Map();

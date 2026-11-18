@@ -3,6 +3,8 @@
 mod nas_launch;
 #[cfg(feature = "formal-nas-client")]
 pub use nas_launch::prepare_formal_launch;
+#[cfg(feature = "nas-acceptance")]
+pub mod nas_acceptance;
 mod asset_protocol;
 mod cloud_transport;
 mod embedded_auth;
@@ -76,7 +78,9 @@ pub fn run() {
                 .ok_or_else(|| std::io::Error::other("程序目录不可用"))?;
             let portable = executable_dir.join("diytools-portable.json");
             // 便携数据跟随当前程序目录；开发模式使用 sandbox，避免误用正式安装目录。
-            let folder = if portable.is_file() {
+            let folder = if cfg!(feature="nas-acceptance") {
+                executable_dir.join("acceptance-data")
+            } else if portable.is_file() {
                 let marker: serde_json::Value = serde_json::from_slice(&std::fs::read(portable)?)?;
                 if marker["mode"] != "portable" { return Err(std::io::Error::other("便携版标记格式无效").into()); }
                 executable_dir.join("data")
@@ -93,7 +97,7 @@ pub fn run() {
                 .map_err(std::io::Error::other)?;
             if nas_main {
                 // 服务端模式没有本机业务库，完成身份/运行时装配后仍须确认更新启动成功。
-                updater::acknowledge_startup().map_err(std::io::Error::other)?;
+                if !cfg!(feature="nas-acceptance") { updater::acknowledge_startup().map_err(std::io::Error::other)?; }
                 return Ok(());
             }
             let path = folder.join("refactor.sqlite");

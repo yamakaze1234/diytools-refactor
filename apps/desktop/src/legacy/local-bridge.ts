@@ -212,7 +212,7 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
           const owner=request.headers.get('x-workbench-nas-owner');
           if(!owner)return errorResponse('NAS ERP 请求缺少已确认的身份',403);
           const input=JSON.parse(body) as {kind?:unknown;goodsIds?:unknown;connection?:unknown;shopId?:unknown};
-          if(!['erp','erp-saved','erp-status','erp-clear','erp-form','tax-file','tax-status','tax-choose','tax-read','quote-file'].includes(String(input.kind))||!Array.isArray(input.goodsIds))
+          if(!['erp','erp-saved','erp-status','erp-clear','erp-form','tax-file','tax-status','tax-choose','tax-read','tax-current','quote-file'].includes(String(input.kind))||!Array.isArray(input.goodsIds))
             return errorResponse('NAS ERP 查询范围无效',400);
           // 连接表单只交给本机命令，不能进入 NAS HTTP 请求或诊断记录。
           result=await invoke<WorkbenchResponse>('nas_erp_read',{kind:input.kind,goodsIds:input.goodsIds,shopId:input.shopId??'intel',connection:input.connection??null,expectedActor:JSON.parse(decodeURIComponent(owner))});

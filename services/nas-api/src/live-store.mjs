@@ -4,6 +4,7 @@ import {Fault,requireValue} from './config.mjs';
 import {Store,authorize} from './store.mjs';
 import {CatalogStore} from './catalog-store.mjs';
 import {liveScopes,shopLock} from './shop-scope.mjs';
+import {lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
 import {runNasProfit} from './profit-store.mjs';
 import {priceHistoryAction,priceHistorySnapshot,priceHistoryCurrent} from './price-history.mjs';
 import {addonItems,choiceAddon,effectiveNasAddon} from '../../../apps/desktop/public/workbench/addon-data.js';
@@ -133,7 +134,7 @@ const dependencies=async(db,shop,parts,{lock=false,addons=[],overrides=false}={}
  const costRows=await effectiveCosts(db,shop,costs,overrides);
  return {sources:Object.fromEntries(sourceRows.map(r=>[r.source_id,r.version])),costs:Object.fromEntries(costRows.map(r=>[r.goodsid,r.version])),sourceRows,effective};
 };
-const validateAssets=async(db,shop,design)=>{
+const validateAssets=async(db,shop,design,sharedGallery)=>{
  const paths=[];
  if(own(design,'caseImage')){
   failure(typeof design.caseImage==='string','design.caseImage');
@@ -148,7 +149,7 @@ const validateAssets=async(db,shop,design)=>{
  }
  const distinct=[...new Set(paths)];
  if(!distinct.length)return;
- for(const path of distinct.sort())await shopLock(db,shop,814519,'asset:'+path);
+ for(const path of distinct.sort())await (sharedGallery?lockGalleryAsset(db,path):shopLock(db,shop,814519,'asset:'+path));
  const {rows:[{count}]}=await db.query('SELECT count(*)::int AS count FROM intel_live.assets WHERE legacy_uri=ANY($1::text[])',[distinct]);
  failure(count===distinct.length,'design.images');
 };
@@ -176,11 +177,12 @@ const setParts=async(db,id,document)=>{
 };
 
 export class LiveStore extends Store{
- constructor(pool,{shopId='intel',writable=false,catalogWritable=false,workspaceWritable=false,writeImage=null}={}){
+ constructor(pool,{shopId='intel',writable=false,catalogWritable=false,workspaceWritable=false,writeImage=null,sharedGallery=false,sharedSources=false}={}){
   if(!Object.hasOwn(liveScopes,shopId))throw Error('unsupported live store');
   super(pool);this.writable=writable;
   this.workspaceWritable=workspaceWritable;this.shopId=shopId;this.dataSource=liveScopes[shopId].dataSchema;
-  this.catalog=new CatalogStore(pool,{shopId,tx:(mode,task)=>this.tx(mode,task),writable:catalogWritable,workspaceWritable,writeImage,
+  this.sharedGallery=sharedGallery;this.sharedSources=sharedSources;
+  this.catalog=new CatalogStore(pool,{shopId,tx:(mode,task)=>this.tx(mode,task),writable:catalogWritable,workspaceWritable,writeImage,sharedGallery,sharedSources,
    applyTemplate:(db,document,body)=>this.applyTemplate(db,document,body)});
  }
  async applyTemplate(db,template,body){
@@ -230,7 +232,7 @@ export class LiveStore extends Store{
    ...c.parts.map(p=>['display',p]),...c.actualParts.map(p=>['actual',p])]));
   if(deps.effective.some(a=>!a.available))throw new Fault('INVALID_DEPENDENCY',400,{field:'addons.sourceId'});
   const urls=[...new Set(documents.flatMap(c=>[c.caseImage,...(c.posterImages||[]).map(image=>image.url)]).filter(Boolean))];
-  await validateAssets(db,shop,{posterImages:urls.map(url=>({url}))});
+  await validateAssets(db,shop,{posterImages:urls.map(url=>({url}))},this.sharedGallery);
   for(const document of documents){
    const columns=[document.id,shop,product,document.name,document.skuId,document.spu,document.workspaceOrder,document.price===null?null:Math.round(document.price*100),
     JSON.stringify(omit(document,['id','shopId','productId','name','skuId','spu','workspaceOrder','price','parts','actualParts','addons',...designKeys])),
@@ -246,7 +248,9 @@ export class LiveStore extends Store{
   try{
    await connection.query(write?'BEGIN':'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
    // 同一店的配置和目录写入共用一个短事务门，各店锁号独立。
-   if(write&&this.workspaceWritable)await connection.query('SELECT pg_advisory_xact_lock(814518,$1::integer)',[liveScopes[this.shopId].writeLock]);
+   if(write==='shared'){
+    for(const scope of Object.values(liveScopes))await connection.query('SELECT pg_advisory_xact_lock(814518,$1::integer)',[scope.writeLock]);
+   }else if(write&&this.workspaceWritable)await connection.query('SELECT pg_advisory_xact_lock(814518,$1::integer)',[liveScopes[this.shopId].writeLock]);
    const result=await use(connection);
    await connection.query('COMMIT');return result;
   }catch(error){try{await connection.query('ROLLBACK');}catch{}throw error;}
@@ -290,6 +294,11 @@ export class LiveStore extends Store{
   });
  }
  async resource(shop,kind,id){
+  if(kind==='gallery'&&this.sharedGallery){
+   const [row]=await sharedGalleryRows(this.pool,shop,id);
+   if(!row)throw new Fault('NOT_FOUND',404);
+   return {id:row.id,version:row.version,document:{...row.document,url:'/images/'+row.sha256+'.'+row.extension}};
+  }
   if(kind==='costs'){
    const [row]=await effectiveCosts(this.pool,shop,[id],this.workspaceWritable);
    if(!row)throw new Fault('NOT_FOUND',404);
@@ -341,10 +350,11 @@ export class LiveStore extends Store{
    const costs=await effectiveCosts(db,shop,null,this.workspaceWritable),costSource=costs.map(row=>row.document);
    const [shopOverride]=this.workspaceWritable?(await db.query('SELECT settings,version::text FROM intel_live.intel_settings_overrides WHERE shop_id=$1',[shop])).rows:[];
    // 原主编辑器选图仍保存登记的 /uploads 引用，实际内容由摘要路由单独读取。
-   const caseGallery=(await db.query(`SELECT g.attrs||jsonb_build_object('id',g.gallery_id,'brand',g.brand,'model',g.model,
+   const galleryRows=this.sharedGallery?await sharedGalleryRows(db,shop):(await db.query(`SELECT g.attrs||jsonb_build_object('id',g.gallery_id,'brand',g.brand,'model',g.model,
     'color',g.color,'edition',g.edition,'url',g.legacy_uri) AS document FROM intel_live.gallery g
     JOIN intel_live.assets a USING(legacy_uri) WHERE (g.owner_shop=$1 OR g.owner_shop='shared' OR g.shared)
-    AND g.attrs->>'deletedAt' IS NULL ORDER BY g.gallery_id`,[shop])).rows.map(r=>r.document);
+    AND g.attrs->>'deletedAt' IS NULL ORDER BY g.gallery_id`,[shop])).rows;
+   const caseGallery=galleryRows.map(row=>row.document);
    return {dataVersion:3,shops:[entry.profile],shopSettings:{[shop]:shopOverride?.settings??entry.settings},sourceCatalog,costSource,caseGallery,templates:[],logs:[],
     ...(this.workspaceWritable?{costVersions:Object.fromEntries(costs.map(row=>[row.goodsid,row.version])),settingsVersion:shopOverride?.version??null}:{})};
   });
@@ -378,7 +388,7 @@ export class LiveStore extends Store{
     const deps=await dependencies(db,shop,parts,{lock:true,addons:document.addons,overrides:this.workspaceWritable});
     checkDependencies(body.dependencies,deps,oldSet,[...document.parts.map(p=>['display',p]),...document.actualParts.map(p=>['actual',p])]);
     if(deps.effective.some(item=>!item.available))throw new Fault('INVALID_DEPENDENCY',400,{field:'addons.sourceId'});
-    await validateAssets(db,shop,document);
+    await validateAssets(db,shop,document,this.sharedGallery);
     const columns=[id,shop,document.productId,document.name,document.skuId,document.spu,document.workspaceOrder,document.price===null?null:Math.round(document.price*100),
      JSON.stringify(omit(document,['id','shopId','productId','name','skuId','spu','workspaceOrder','price','parts','actualParts','addons',...designKeys])),
      JSON.stringify(pick(document,designKeys))];
@@ -389,7 +399,7 @@ export class LiveStore extends Store{
     next=(await db.query(query,columns)).rows[0].version;
     await setParts(db,id,document);
    }else if(action==='design'){
-    await validateAssets(db,shop,body.design);
+    await validateAssets(db,shop,body.design,this.sharedGallery);
     next=(await db.query('UPDATE intel_live.configurations SET design=$3,version=version+1 WHERE configuration_id=$1 AND shop_id=$2 RETURNING version::text',[id,shop,JSON.stringify(body.design)])).rows[0].version;
    }else{
     next=(await db.query('UPDATE intel_live.configurations SET archived_at=CASE WHEN $3::boolean THEN now() ELSE NULL END,version=version+1 WHERE configuration_id=$1 AND shop_id=$2 RETURNING version::text',[id,shop,action==='archive'])).rows[0].version;
@@ -660,6 +670,8 @@ export class LiveStore extends Store{
      updated=(BigInt(previousVersion||'0')+1n).toString();
      await db.query(`INSERT INTO intel_live.intel_cost_overrides(goodsid,document,version) VALUES($1,$2,$3)
       ON CONFLICT(goodsid) DO UPDATE SET document=excluded.document,version=excluded.version`,[id,JSON.stringify(document),updated]);
+     if(this.sharedSources&&action!=='erp_snapshot'&&document.tax!==old?.document.tax)
+      await db.query('SELECT workbench_sources.note_tax($1,$2,$3,$4,$5::jsonb)',[shop,member.workspaceId,member.uid,id,JSON.stringify(document.tax)]);
     }else if(kind==='settings'){
      const {rows:[old]}=await db.query(`SELECT coalesce(o.settings,s.settings) AS settings,o.version::text FROM intel_live.shops s
       LEFT JOIN intel_live.intel_settings_overrides o USING(shop_id) WHERE s.shop_id=$1`,[shop]);

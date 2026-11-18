@@ -41,8 +41,12 @@ struct CachedPlan {
 impl CloudRuntime {
     // 创建共享传输会话及身份、原图、首次绑定的独立互斥门，避免任务相互覆盖。
     pub fn new(data_dir: &std::path::Path) -> Result<Self, String> {
+        #[cfg(feature="nas-acceptance")]
+        let transport = crate::nas_acceptance::transport()?;
+        #[cfg(not(feature="nas-acceptance"))]
         let path = data_dir.join("integrations.json");
         // 外部文件优先；只有文件完全不存在才使用构建注入的默认认证，错误配置不静默回退。
+        #[cfg(not(feature="nas-acceptance"))]
         let transport = match fs::File::open(&path) {
             Ok(file) => {
                 let mut bytes = Vec::new();
@@ -78,7 +82,10 @@ impl CloudRuntime {
         if cfg!(feature="formal-nas-client")&&nas.is_some()&&nas_deployment.is_none(){
             return Err("正式 NAS 连接配置缺失，请检查程序旁的 nas-launch.json".into());
         }
-        if nas_deployment.is_some()&&(!nas_main||!nas.as_ref().is_some_and(production_nas_endpoint)){
+        let valid_endpoint=nas.as_ref().is_some_and(|url|{
+            if cfg!(feature="nas-acceptance") {url.host_str()==Some("127.0.0.1")} else {production_nas_endpoint(url)}
+        });
+        if nas_deployment.is_some()&&(!nas_main||!valid_endpoint){
             return Err("正式 NAS 需要独立的局域网 HTTPS 地址，不能使用试验端口".into());
         }
         // 虚拟路径仅作凭据管理器的命名范围，不创建目录，也不轮换原本机工作区的登录记录。
@@ -101,8 +108,9 @@ impl CloudRuntime {
             }}
         }
         if let Some(id)=&nas_deployment {transport=transport.with_nas_deployment(id.clone())?;}
+        let transport=if cfg!(feature="nas-acceptance") {transport} else {transport.with_persistence(&scope)?};
         Ok(Self {
-            transport: Arc::new(transport.with_persistence(&scope)?),
+            transport: Arc::new(transport),
             nas,
             nas_deployment,
             nas_main,
@@ -219,11 +227,11 @@ fn nas_route(base: &reqwest::Url, method: &str, route: &str) -> Option<(reqwest:
         ("POST", ["operations", "workspace", "profit", "start" | "status" | "history" | "reset"]) |
         ("POST", ["operations", "workspace", "price-history", "list" | "detail" | "day" | "handle"]) |
         ("GET", ["operations", "workspace", "receipts" | "quotations", _]) |
-        ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates"]) |
-        ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "receipts", _]) |
-        ("POST", ["operations", "catalog", "sources" | "gallery" | "templates"]) |
+        ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "shared-sources"]) |
+        ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "receipts" | "shared-sources", _]) |
+        ("POST", ["operations", "catalog", "sources" | "gallery" | "templates" | "shared-sources"]) |
         ("POST", ["operations", "catalog", "sources" | "gallery" | "templates", _, "archive" | "restore" | "copy" | "apply"]) |
-        ("PUT", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates", _]) |
+        ("PUT", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "shared-sources", _]) |
         ("GET", ["operations", "save-receipts" | "sources" | "costs" | "templates" | "gallery", _]) |
         ("GET", ["operations" | "sales", "configurations"]) |
         ("GET", ["operations" | "sales", "configurations", _]) |
@@ -277,7 +285,7 @@ pub async fn nas_native_request(
     let runtime = Arc::clone(runtime.inner());
     if method == "GET" && route == "/settings" {
         let endpoint_id = runtime.nas.as_ref().map(|url|nas_endpoint_id(url,runtime.nas_deployment.as_deref()));
-        return Ok(response(200, json!({"configured":runtime.nas.is_some(),"endpoint_id":endpoint_id,"main_editor":runtime.nas_main,"deployment_id":runtime.nas_deployment})));
+        return Ok(response(200, json!({"configured":runtime.nas.is_some(),"endpoint_id":endpoint_id,"main_editor":runtime.nas_main,"deployment_id":runtime.nas_deployment,"acceptance":cfg!(feature="nas-acceptance")})));
     }
     let rejected = |status, code| Ok(response(status, json!({"ok":false,"error":code})));
     let Some(base) = &runtime.nas else { return rejected(400, "NAS_NOT_CONFIGURED"); };
@@ -407,7 +415,7 @@ pub async fn nas_erp_read(
     // 只开放固定只读查询和原生文件选择；英特尔对外报价表不用于其他店铺。
     let shop=shop_id.unwrap_or_else(||"intel".into());
     if !matches!(shop.as_str(),"intel"|"gigabyte"|"jonsbo")||(kind=="quote-file"&&shop!="intel")||
-        !matches!(kind.as_str(),"erp"|"erp-saved"|"erp-status"|"erp-clear"|"erp-form"|"tax-file"|"tax-status"|"tax-choose"|"tax-read"|"quote-file")||
+        !matches!(kind.as_str(),"erp"|"erp-saved"|"erp-status"|"erp-clear"|"erp-form"|"tax-file"|"tax-status"|"tax-choose"|"tax-read"|"tax-current"|"quote-file")||
         matches!(kind.as_str(),"erp-form"|"tax-read")!=connection.is_some()||goods_ids.len()>5000||
         goods_ids.iter().any(|id|id.is_empty()||id.len()>20||!id.bytes().all(|c|c.is_ascii_digit())) {
         return Err("ERP 查询范围无效".into());
@@ -431,6 +439,7 @@ pub async fn nas_erp_read(
         verify_nas_reader(runtime,expected_actor,shop.clone()).await?;
         return Ok(response(200,json!({"ok":true,"settings":settings})));
     }
+    let mut workbook_info=Value::Null;
     let result=if kind=="erp-saved"{
         // 只能从原生文件对话框选择，页面不能提交凭据或磁盘路径。
         let file=tauri::async_runtime::spawn_blocking(||rfd::FileDialog::new()
@@ -445,12 +454,17 @@ pub async fn nas_erp_read(
         worker.nas_form_request(&scope,input).await?
     }else{
         let quote=kind=="quote-file";
-        let mut workbook=if kind=="tax-read"{nas_cost_preference(&tax_preference()?)?}else{NasCostWorkbook::default()};
-        let file=if kind=="tax-read"{workbook.path.clone()}else{tauri::async_runtime::spawn_blocking(move||if quote{
+        let mut workbook=match kind.as_str(){
+            "tax-current"=>nas_current_cost_workbook(&tax_preference()?)?,
+            "tax-read"=>nas_cost_preference(&tax_preference()?)?,
+            _=>NasCostWorkbook::default(),
+        };
+        let read_existing=matches!(kind.as_str(),"tax-read"|"tax-current");
+        let file=if read_existing{workbook.path.clone()}else{tauri::async_runtime::spawn_blocking(move||if quote{
             rfd::FileDialog::new().set_title("选择英特尔主机维护表").add_filter("维护表",&["xlsb"]).pick_file()
         }else{rfd::FileDialog::new().set_title("选择当前店铺含税成本表").add_filter("Excel 表格",&["xlsb","xlsx"]).pick_file()})
             .await.map_err(|_|"打开文件选择器失败")?};
-        if kind=="tax-read"&&file.is_none(){return Err("请先选择 Excel 文件".into());}
+        if read_existing&&file.is_none(){return Err("请在 ERP 资料中选择主机成本表".into());}
         let Some(path)=file else{return Ok(response(200,json!({"ok":true,"cancelled":true})));};
         verify_nas_reader(Arc::clone(&runtime),expected_actor.clone(),shop.clone()).await?;
         if kind=="tax-choose" {
@@ -466,6 +480,11 @@ pub async fn nas_erp_read(
             json!({"action":"sql_cost_file","settings":{"mode":"nas","path":path.to_string_lossy(),"sheet":workbook.sheet,"goodsColumn":workbook.goods_column,"taxColumn":workbook.tax_column}})
         };
         let rows=worker.sql_request(input).await?;
+        if kind=="tax-current"{
+            let modified=fs::metadata(&path).and_then(|file|file.modified()).ok()
+                .and_then(|time|time.duration_since(std::time::UNIX_EPOCH).ok()).map(|elapsed|elapsed.as_millis() as u64);
+            workbook_info=json!({"name":path.file_name().and_then(|name|name.to_str()),"modified":modified});
+        }
         if kind=="tax-read"{save_nas_cost_preference(&tax_preference()?,&workbook)?;}
         rows
     };
@@ -477,7 +496,7 @@ pub async fn nas_erp_read(
     let wanted=goods_ids.into_iter().collect::<BTreeSet<_>>();
     let rows=result["rows"].as_array().ok_or("ERP 查询返回无效")?.iter().filter(|row|
         row[if matches!(kind.as_str(),"erp"|"erp-saved"|"erp-form"){"goodsId"}else{"goods_id"}].as_str().is_some_and(|id|wanted.contains(id))).collect::<Vec<_>>();
-    Ok(response(200,json!({"ok":true,"rows":rows,"settings":result["settings"],"invalidCount":result["invalidCount"].as_u64().unwrap_or(0)})))
+    Ok(response(200,json!({"ok":true,"rows":rows,"settings":result["settings"],"workbook":workbook_info,"invalidCount":result["invalidCount"].as_u64().unwrap_or(0)})))
 }
 
 // 设置白名单避免把未知字段、路径、SQL 或原始校验错误带进凭据存储。
@@ -518,6 +537,13 @@ fn nas_cost_preference(preference:&std::path::Path)->Result<NasCostWorkbook,Stri
     let settings:NasCostWorkbook=serde_json::from_slice(&data).map_err(|_|"本机成本表设置无效")?;
     if settings.path.as_deref().is_some_and(|path|!valid_nas_cost_path(path)){return Err("原成本表路径不可用，请重新选择 Excel 文件".into());}
     Ok(settings)
+}
+// 共用文件路径来自本机配置。每次打开都读取已保存的工作簿，摘要有变化即重新解析。
+fn nas_current_cost_workbook(preference:&std::path::Path)->Result<NasCostWorkbook,String>{
+    let root=preference.ancestors().nth(3).ok_or("找不到本机成本表目录")?;
+    let settings=nas_cost_preference(&root.join("nas-host-cost-workbook.json"))?;
+    if settings.path.is_some(){return Ok(settings);}
+    nas_cost_preference(preference)
 }
 fn valid_nas_cost_path(path:&std::path::Path)->bool{
     path.is_absolute()&&path.extension().and_then(|x|x.to_str()).is_some_and(|ext|["xlsb","xlsx"].iter().any(|a|ext.eq_ignore_ascii_case(a)))

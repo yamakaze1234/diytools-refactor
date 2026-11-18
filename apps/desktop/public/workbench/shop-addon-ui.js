@@ -5,7 +5,8 @@ import {sourceAddon,sourceAddonFields,validateAddon,sourceAddonOptions,addonItem
 import {addonStatusHtml} from './addon-ui.js';
 import {mountAddonChoices} from './addon-choices-ui.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function initialChoices(row){
+/** 把仍使用单项形式的历史记录装入原有加购商品卡片。 */
+export function initialChoices(row){
  if(row.addonChoices!==undefined)return structuredClone(row.addonChoices);
  return sourceAddonOptions(row).filter(a=>addonItems(a).length<=1&&a.text?.trim()).map((a,i)=>{const item=addonItems(a)[0]||{goodsId:'',qty:1};return {id:a.variantId||'legacy-'+row.sourceId+'-'+i,goodsId:item.goodsId,qty:item.qty,priceCents:a.priceCents??null,label:!item.goodsId?a.text:(a.text||'').replace(/^[【\[]?[+＋]\s*\d+(?:\.\d{1,2})?\s*元/,'').replace(/[】\]]$/,''),enabled:a.showTogether!==false,...(a.originalQty!==undefined?{originalQty:a.originalQty}:{})};});
 }

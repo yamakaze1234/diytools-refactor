@@ -103,11 +103,11 @@ export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,
   },
   async importPreview(images){return (await request('operations/workspace/import-preview',{shop_id:shopId},'POST',{images})).data;},
   async catalog(kind,id=null){
-   if(!['sources','addons','gallery','templates'].includes(kind))throw new NasApiError('INVALID_RESOURCE');
+   if(!['sources','addons','gallery','templates','shared-sources'].includes(kind))throw new NasApiError('INVALID_RESOURCE');
    return (await request('operations/catalog/'+kind+(id?'/'+segment(id):''),{shop_id:shopId})).data;
   },
   async saveCatalog(kind,id,action,body){
-   if(!['sources','addons','gallery','templates'].includes(kind)||!['create','replace','archive','restore','copy','apply'].includes(action))throw new NasApiError('INVALID_ACTION');
+   if(!['sources','addons','gallery','templates','shared-sources'].includes(kind)||!['create','replace','archive','restore','copy','apply'].includes(action))throw new NasApiError('INVALID_ACTION');
    const leaf=action==='create'?'':'/'+segment(id)+(action==='replace'?'':'/'+action);
    return (await request('operations/catalog/'+kind+leaf,{shop_id:shopId},action==='replace'?'PUT':'POST',body)).data;
   },

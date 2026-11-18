@@ -94,7 +94,7 @@ export function createImageWriter(root,legacyRoot){
 export function createImageHandler(pool,root,uploads=null){
  const directories=[root,uploads].filter(Boolean).map(dir=>resolve(dir));
  const verified=new Map();
- return async(sha,extension,req,res)=>{
+ return async(sha,extension,req,res,{download=false}={})=>{
   const {rows:[asset]}=await pool.query('SELECT byte_count::text FROM intel_live.assets WHERE sha256=$1 AND extension=$2',[sha,extension]);
   if(!asset)throw new Fault('NOT_FOUND',404);
   let file=null;
@@ -119,6 +119,12 @@ export function createImageHandler(pool,root,uploads=null){
    }
    const headers={'content-type':extension==='png'?'image/png':'image/jpeg','content-length':String(stat.size),
     'cache-control':'public, max-age=31536000, immutable','access-control-allow-origin':'*','x-content-type-options':'nosniff',etag:'"'+sha+'"'};
+   if(download){
+    // 无账号下载需要重新检查图库状态，避免回收后仍从浏览器缓存读取。
+    headers['content-disposition']='attachment; filename="'+sha+'.'+extension+'"';
+    headers['cache-control']='no-store';
+    delete headers['access-control-allow-origin'];
+   }
    if(req.headers['if-none-match']===headers.etag){
     delete headers['content-length'];res.writeHead(304,headers);res.end();return;
    }
@@ -132,10 +138,10 @@ export function createImageHandler(pool,root,uploads=null){
 export function combineImageHandlers(handlers){
  if(!handlers.length)return undefined;
  if(handlers.length===1)return handlers[0];
- return async(sha,extension,req,res)=>{
+ return async(sha,extension,req,res,options)=>{
   let unavailable=null;
   for(const serveImage of handlers){
-   try{return await serveImage(sha,extension,req,res);}
+   try{return await serveImage(sha,extension,req,res,options);}
    catch(error){
     if(res.headersSent)throw error;
     // 同一个公开摘要只会返回校验匹配的字节；登记或目录不可用时继续核对其他店。

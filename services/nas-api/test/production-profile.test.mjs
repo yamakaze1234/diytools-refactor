@@ -32,6 +32,8 @@ test('新增店铺配置必须完整且只绑定固定正式身份与本店批�
  assert.equal(shop.shopId,'gigabyte');assert.equal(shop.pg.user,'diy_api_gigabyte_production');
  assert.equal(shop.pg.database,'diy_workbench');assert.equal(shop.imagesWriteRoot,'/uploads/gigabyte');
  assert.equal(settings(production).additionalShops.length,0);
+ assert.equal(settings(production).lanCaseGallery,false);
+ assert.throws(()=>settings({...env,NAS_IMAGE_ROOT:'/assets',NAS_ENABLE_LAN_CASE_GALLERY:'true'}),/LAN_GALLERY_REQUIRES_THREE_STORE_TLS/);
  for(const change of [{NAS_GIGABYTE_IMAGE_ROOT:''},{NAS_GIGABYTE_BOOTSTRAP_BATCH_ID:production.NAS_BOOTSTRAP_BATCH_ID},
   {NAS_PROFILE:'trial',PGDATABASE:'diy_workbench_trial',PGUSER:'diy_api_operations'}]){
   assert.throws(()=>settings({...env,...change}),/INVALID_ADDITIONAL_SHOP_CONFIG/);

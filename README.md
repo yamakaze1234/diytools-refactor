@@ -2,7 +2,7 @@
 
 面向 DIY 整机业务的 Windows 工作台。配置、价格、成本和历史由 NAS 服务端集中保存；桌面端负责编辑、图片预览与导出，并保留本机草稿。
 
-**Windows x64 · 0.2.42 · 服务端数据库版本**
+**Windows x64 · 0.2.43 · 服务端数据库版本**
 
 旧版本停止更新。后续功能与修复统一在服务端数据库版本提供；旧 `refactor-updates` 通道冻结，不会自动将旧本地数据迁到新版。
 
@@ -10,9 +10,9 @@
 
 | 下载入口 | 用途 |
 | --- | --- |
-| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.42/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.42.zip) | 首次使用，完整解压 |
-| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.42/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.42.zip) | 同一程序和使用包 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.42) | 更新内容与附件 |
+| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.43/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.43.zip) | 首次使用，完整解压 |
+| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.43/DIY-0.2.43.zip) | 同一程序和使用包 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.43) | 更新内容与附件 |
 
 1. 完整解压到独立可写目录，运行 `DIY配置工作台.exe`，无需 CMD。
 2. 组织测试包可内置默认账号认证接入，无需另放 integrations.json；首次连接所需的服务地址与 CA 由管理员提供。员工账号、密码和会话不随包分发。
@@ -27,8 +27,9 @@
 
 - 按店铺和商品链接管理配置，维护配件、到手价、加购和版式。
 - 查询 ERP 成本和库存，预览后明确应用；查看价格变化、利润和操作历史。
+- 新增输出源可按 ERP ID 查询尚未同步的配件。查看当前店铺核算价时读取已配置主机成本表的保存值。
 - 本机草稿与服务端保存分离；提交检查版本，遇到冲突保留编辑内容。
-- 长图与 SKU 图导出，预览使用受限分辨率，切换和导出后释放画布。
+- 长图、SKU 图及配置导出。维护表的配件展开公式可按店铺和表格布局设置。
 - 黑白黄界面，浅色/深色主题统一，界面配色不改变导出图片主题。
 
 服务端自动历史清理本次未上线。桌面端不直接连接 PostgreSQL，不分发数据库账号。

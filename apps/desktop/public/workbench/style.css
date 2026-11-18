@@ -383,3 +383,22 @@ dialog.global-batch-dialog{width:min(1120px,96vw)}
 #source-hardware .hardware-footnote { margin:10px 0 0; font-size:11px; line-height:1.8; color:var(--ef-ink-2,#657893); }
 #source-capacity>.inline-grid { grid-template-columns:minmax(0,320px); }
 #source-hardware[hidden], #source-capacity[hidden], #source-detail [data-maintenance-kind][hidden] { display:none!important; }
+/* 共用来源沿用原工作台输入和按钮，投影在窄窗口内自动换行。 */
+#source-shared-scope{max-width:260px}
+.source-shared-field-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
+.source-shared-field-state button{padding:3px 7px;font-size:12px}
+.source-shared-field-state select{max-width:100%}
+#source-maintenance-fields{border-top:1px solid var(--ef-rule,var(--line));padding-top:8px}
+#source-maintenance-fields summary{cursor:pointer;font-weight:600}
+#source-shared-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:8px}
+#source-shared-preview section{border:1px solid var(--ef-rule,var(--line));padding:8px;overflow-wrap:anywhere}
+#source-shared-preview dl{margin:4px 0 0;font-size:12px}
+#source-shared-preview dt{color:var(--ef-ink-2,var(--legacy-muted))}
+#source-shared-preview dd{margin:0 0 4px}
+/* 公式设置作为导出弹窗内的折叠区域，沿用工作台主题和字段样式。 */
+#part-export-formula-settings{border:1px solid var(--ef-rule,var(--line));padding:9px 12px;margin:8px 0}
+#part-export-formula-settings summary{cursor:pointer;font-weight:600}
+.part-formula-controls{display:flex;gap:12px;flex-wrap:wrap}
+.part-formula-controls select{min-width:125px}
+#dialog-body #part-formula-input{min-height:80px;resize:vertical;white-space:pre-wrap}
+#part-export-formula-settings .actions{justify-content:flex-start;align-items:center;flex-wrap:wrap;margin-top:8px}

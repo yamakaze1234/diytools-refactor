@@ -25,9 +25,10 @@ async function jsonBody(req){
 function capabilities(store,operations,dataSource){
  return {data_source:dataSource,configuration_writes:operations&&store?.writable===true,
   catalog_writes:operations&&store?.catalog?.writable===true,
+  ...(store?.sharedSources?{shared_sources:operations}:{}),
   workspace_writes:operations&&store?.workspaceWritable===true,image_upload:operations&&!!store?.catalog?.writeImage};
 }
-export function createHandler({authenticate,store:defaultStore,shopStores=null,serveImage,clientOrigins=[],deploymentId=null}){
+export function createHandler({authenticate,store:defaultStore,shopStores=null,serveImage,clientOrigins=[],deploymentId=null,lanGallery=null}){
  const live=!!shopStores||typeof defaultStore?.lookupReceipt==='function';
  return async(req,res)=>{
   const requestId=randomUUID(),cors={};
@@ -40,6 +41,21 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
   try{
    const url=new URL(req.url,'http://localhost'),method=req.method;
    if(url.pathname==='/healthz'&&method==='GET')return send(200,{ok:true,checks:{process:true},...(deploymentId?{deployment_id:deploymentId}:{})});
+   if(url.pathname.startsWith('/case-gallery/v1/')){
+    // 无账号入口在 TLS 的真实来源检查之后执行，只开放图库列表与在用原图。
+    requireValue(lanGallery&&serveImage,'NOT_FOUND',404);
+    if(url.pathname==='/case-gallery/v1/images'){
+     requireValue(method==='GET','METHOD_NOT_ALLOWED',405);
+     return send(200,{ok:true,...await lanGallery.list(url.searchParams)});
+    }
+    const download=/^\/case-gallery\/v1\/download\/([0-9a-f]{64})\.(png|jpg|jpeg)$/.exec(url.pathname);
+    requireValue(download,'NOT_FOUND',404);
+    requireValue(method==='GET'||method==='HEAD','METHOD_NOT_ALLOWED',405);
+    requireValue(!url.search,'INVALID_REQUEST',400);
+    const [,sha,extension]=download;
+    requireValue(await lanGallery.hasImage(sha,extension),'NOT_FOUND',404);
+    return await serveImage(sha,extension,req,res,{download:true});
+   }
    const image=/^\/images\/([0-9a-f]{64})\.(png|jpg|jpeg)$/.exec(url.pathname);
    if(image&&serveImage&&['GET','HEAD'].includes(method))return await serveImage(image[1],image[2],req,res);
    if(req.headers.origin&&clientOrigins.includes(req.headers.origin)){
@@ -79,7 +95,7 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
    const store=shopStores?shopStores.get(shop):defaultStore;
    requireValue(store&&(!live||shopStores||shop==='intel'),'FORBIDDEN',403);
    authorize(await store.roles(member),shop,sales);
-   const catalogRoute=live&&!sales&&/^\/api\/v1\/operations\/catalog\/(sources|addons|gallery|templates|assets|receipts)(?:\/([^/]+)(?:\/(archive|restore|copy|apply))?)?$/.exec(url.pathname);
+   const catalogRoute=live&&!sales&&/^\/api\/v1\/operations\/catalog\/(sources|addons|gallery|templates|assets|receipts|shared-sources)(?:\/([^/]+)(?:\/(archive|restore|copy|apply))?)?$/.exec(url.pathname);
    const isUpload=catalogRoute?.[1]==='assets'&&!catalogRoute[2]&&method==='POST';
    const activityPage=live&&!sales&&url.pathname==='/api/v1/operations/workspace/activity';
    const allowed=activityPage?['shop_id','page','page_size','from','to']:catalogRoute?['shop_id',...(isUpload?['operation_id']:[])]:live&&!sales?['shop_id','limit','offset','search','archived']:['shop_id','limit','offset','search'];
@@ -189,7 +205,7 @@ export function lanAllowed(network,prefix){
  };
 }
 export function serve(deps,tls=null,{healthOnly=false}={}){
- const handler=createHandler(deps);
+ const handler=createHandler({...deps,lanGallery:tls?deps.lanGallery:null});
  const server=tls?(()=>{const inside=lanAllowed(tls.network,tls.prefix);
   return createTlsServer({cert:tls.cert,key:tls.key,minVersion:'TLSv1.2'},(req,res)=>{
    if(!inside(req.socket.remoteAddress)){

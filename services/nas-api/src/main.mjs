@@ -9,6 +9,7 @@ import {LiveStore} from './live-store.mjs';
 import {createImageHandler,createImageWriter,combineImageHandlers} from './images.mjs';
 import {serve} from './http.mjs';
 import {scopedDatabase} from './shop-scope.mjs';
+import {createLanCaseGallery} from './lan-case-gallery.mjs';
 const pools=[];
 const servers=[];
 const listen=(server,port,host)=>new Promise((resolve,reject)=>{
@@ -41,7 +42,7 @@ try {
  const groupAccess=config.additionalShops.length>0;
  const profiles=[{...config,shopId:'intel'},...config.additionalShops];
  if(groupAccess)await checkImageRoots(profiles);
- const shopStores=new Map(),imageHandlers=[];
+ const shopStores=new Map(),imageHandlers=[],galleryDatabases=new Map();
  let store;
  for(const profile of profiles){
   const pool=connect(profile.pg);
@@ -55,13 +56,28 @@ try {
    if(state.rows.length!==1||profile.batch&&state.rows[0].batch_id!==profile.batch)throw Error('missing or wrong live bootstrap');
    if(config.catalogWritable||profile.shopId!=='intel')await db.query('SELECT resource_kind FROM intel_live.catalog_shared_editors LIMIT 0');
    if(config.workspaceWritable)await db.query('SELECT operation_id FROM intel_live.workspace_receipts LIMIT 0');
+   if(config.sharedGallery){
+    await db.query('SELECT gallery_id FROM workbench_gallery.catalog LIMIT 0');
+    await db.query('SELECT configurations FROM workbench_gallery.image_references(NULL) WHERE false');
+    const {rows:[{installed}]}=await db.query(`SELECT EXISTS(
+     SELECT 1 FROM pg_trigger WHERE tgrelid='intel_live.gallery'::regclass AND tgname='share_gallery_original'
+      AND tgenabled IN ('O','A') AND tgfoid='workbench_gallery.publish_gallery_asset()'::regprocedure
+    ) AS installed`);
+    if(!installed)throw Error('missing shared gallery trigger');
+   }
+   if(config.sharedSources){
+    const {rows:[{installed}]}=await db.query("SELECT has_function_privilege('workbench_sources.list(text,text,text,text)','EXECUTE') AS installed");
+    if(!installed)throw Error('missing shared source catalog');
+   }
    shopStores.set(profile.shopId,new LiveStore(db,{shopId:profile.shopId,writable:config.writable,catalogWritable:config.catalogWritable,
-    workspaceWritable:config.workspaceWritable,writeImage:config.catalogWritable?createImageWriter(profile.imagesWriteRoot,profile.imagesRoot):null}));
+    workspaceWritable:config.workspaceWritable,sharedGallery:config.sharedGallery,sharedSources:config.sharedSources,
+    writeImage:config.catalogWritable?createImageWriter(profile.imagesWriteRoot,profile.imagesRoot):null}));
    if(profile.imagesRoot||profile.imagesWriteRoot)imageHandlers.push(createImageHandler(db,profile.imagesRoot,profile.imagesWriteRoot));
+   if(config.lanCaseGallery)galleryDatabases.set(profile.shopId,db);
   }else store=new Store(db);
  }
  const handlers={authenticate:createAuth(config),store,shopStores:live?shopStores:null,clientOrigins:config.clientOrigins,deploymentId:config.deploymentId,
-  serveImage:combineImageHandlers(imageHandlers)};
+  serveImage:combineImageHandlers(imageHandlers),lanGallery:config.lanCaseGallery?createLanCaseGallery(galleryDatabases):null};
  servers.push(serve(handlers,null,{healthOnly:!!config.tls}));
  if(config.tls)servers.push(serve(handlers,config.tls));
  await Promise.all(servers.map((server,i)=>listen(server,i===0?config.port:config.tls.port,i===0?config.host:config.tls.host)));

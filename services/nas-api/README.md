@@ -10,6 +10,21 @@
 
 准备脚本：`tools/build-production-three.py data` 生成一个固定批次的导入和只读回核；`access` 接收两个已核批次和审核过的云 UID 名单生成一条原子授权 SQL。生成的业务快照及含服务密码的权限 SQL 仅保存在私有目录。测试快照可以用 `tools/build-production-three-fixture.py` 生成；`tools/verify-production-three.mjs` 与 `test/production-three-api.integration.mjs` 使用隔离 PostgreSQL，不连接生产。
 
+### 工作台三店共用机箱图库
+
+管理员在三店正式库 `diy_workbench` 整条执行 [016-shared-case-gallery.sql](sql/016-shared-case-gallery.sql)，再给现有 NAS 服务启用 `NAS_ENABLE_SHARED_CASE_GALLERY=true`。三个店铺的工作台都能从同一份有效图库选图。任意店铺保存图库后，数据库在同一事务内为各店登记原图摘要，原图文件存放在上传所在的素材目录，其他店可直接保存到配置或模板。只上传文件但尚未保存图库资料时，原图仍留在上传店。
+
+图库创建、换图和归档等维护仍由原归属店和现有授权处理。回收站按归属店显示，归档前核对三店引用。更新图库原图时，已保存的配置和模板继续引用当时的原图。回退服务时保留数据库中的摘要登记，以便共享图片已被其他店铺引用的配置继续显示。
+
+### 内网机箱图库
+
+正式三店服务设置 `NAS_ENABLE_LAN_CASE_GALLERY=true` 后，内网客户端可以在同一个 HTTPS 地址调用 `GET /case-gallery/v1/images`。调用无需账号和请求头，忽略店铺归属，返回三店当前有效的机箱图库。服务按连接来源检查内网范围，接入方沿用该 HTTPS 地址的 NAS CA。
+
+- `brand`、`model`、`color`、`edition` 分别精确筛选四级分类，忽略大小写。参数 `q` 在名称和分类中按空格拆分关键词。未填分类在 `categoryPath` 里显示为“待分类”或“通用”，可直接用于筛选。
+- `limit` 为每页 1–100 张，默认 100。请求后续页时保留筛选条件，并传回 `nextCursor`。列表内容在 `items`，同分类同原图跨店合并。
+- `view=categories` 返回四类选项 `enums` 和四级分类树 `categories`。可带分类筛选和关键词。
+- `items[].downloadUrl` 为相对于接口地址的同源路径。对该路径发起 `GET` 下载原图，或用 `HEAD` 检查链接。归档会从列表移除条目，且无其他可用条目引用的原图会停止通过此入口下载。
+
 ## 运行区与运营试验入口
 
 `sql/003-intel-live.sql` 是单条事务 SQL。在 DBX 编辑器中选中全文件执行，初始化 `intel_live` 并逐条回组核对，不改接收区、旧样本、既有角色或正式库。首次初始化后再次执行不覆盖运营修改。全量验证命令：

@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.2.42"
+version = "0.2.43"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -12,6 +12,8 @@ review-host = []
 agent-tools = ["dep:diytools-agent-core"]
 # 独立正式包从程序旁配置直接启动，禁止无配置时退回本机工作区。
 formal-nas-client = []
+# 使用独立目录、合成账号和真实 API 的本机验收包。
+nas-acceptance = ["formal-nas-client"]
 
 [[bin]]
 name = "agent-review-host"

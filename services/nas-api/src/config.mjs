@@ -65,7 +65,14 @@ export function settings(env=process.env){
   requireValue(password!==pg.password&&additionalShops.every(shop=>shop.pg.password!==password),'STORE_CREDENTIALS_MUST_DIFFER');
   additionalShops.push({shopId:scope.shopId,batch,imagesRoot,imagesWriteRoot,pg:{...pg,user:scope.role,password}});
  }
- return {authOrigin:auth.origin,workspace:env.WORKSPACE_ID,sessionCacheMs:30000,port,dataset,writable,clientOrigins,profile,deploymentId,batch,additionalShops,
+ const lanCaseGallery=env.NAS_ENABLE_LAN_CASE_GALLERY==='true';
+ requireValue(!lanCaseGallery||production&&!!tls&&additionalShops.length===2&&env.NAS_IMAGE_ROOT,'LAN_GALLERY_REQUIRES_THREE_STORE_TLS');
+ const sharedGallery=env.NAS_ENABLE_SHARED_CASE_GALLERY==='true';
+ requireValue(!sharedGallery||production&&additionalShops.length===2&&catalogWritable&&env.NAS_IMAGE_ROOT&&env.NAS_IMAGE_WRITE_ROOT,
+  'SHARED_GALLERY_REQUIRES_THREE_STORE_WRITES');
+ const sharedSources=env.NAS_ENABLE_SHARED_SOURCES==='true';
+ requireValue(!sharedSources||production&&additionalShops.length===2&&workspaceWritable,'SHARED_SOURCES_REQUIRE_THREE_STORE_WRITES');
+ return {authOrigin:auth.origin,workspace:env.WORKSPACE_ID,sessionCacheMs:30000,port,dataset,writable,clientOrigins,profile,deploymentId,batch,additionalShops,lanCaseGallery,sharedGallery,sharedSources,
   imagesRoot:env.NAS_IMAGE_ROOT||null,imagesWriteRoot:catalogWritable?env.NAS_IMAGE_WRITE_ROOT||null:null,catalogWritable,workspaceWritable,
   host:env.LISTEN_HOST||'0.0.0.0',tls,pg};
 }

@@ -34,5 +34,5 @@ const slots = ['CPU','散热','主板','内存','硬盘','显卡','电源','机�
 const contractParts = {CPU:['10001','1'], 内存:['10002','2'], 电源:['10003','1'], 风扇:['10004','8']};
 export const legacyRow = slots.flatMap(slot => {
   const [id, qty] = contractParts[slot] || ['0','1'];
-  return [id, `=IF([@[${slot}_id]]<>"",INDEX('[主机成本表V2新_修复版.xlsb]库存数据'!$W:$W,MATCH([@[${slot}_id]],'[主机成本表V2新_修复版.xlsb]库存数据'!$M:$M,0)),"")`, qty, ''];
+  return [id, `=IF(OR([@[${slot}_id]]="",[@[${slot}_id]]=0,[@[${slot}_id]]="0"),"",INDEX('[主机成本表V2新_修复版.xlsb]库存数据'!$W:$W,MATCH([@[${slot}_id]],'[主机成本表V2新_修复版.xlsb]库存数据'!$M:$M,0)))`, qty, ''];
 });

@@ -18,6 +18,7 @@ try {
  import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;
  const {createWorkbenchReactRenderer}=await import('/src/legacy/react-workbench.tsx');
  const {openSourceEditor}=await import('/workbench/source-editor.js');
+ const {lookupNasSourceProduct}=await import('/workbench/nas-erp-ui-adapter.js');
  const {sourceBatch}=await import('/workbench/source-batch.js');
  const {sourceAddon,sourceAddonFields}=await import('/workbench/addon-data.js');
  const renderer=createWorkbenchReactRenderer(),dialog=document.querySelector('#dialog'),body=document.querySelector('#dialog-body');
@@ -29,6 +30,15 @@ try {
  dialog.addEventListener('close',()=>{if(dialog.open)return;window.workbenchSourceEditor?.detachForDialog?.();renderer.release(body);});
  const api={openDialog,shopId:()=> 'intel',getRows:()=>state.sourceCatalog.filter(r=>r.shopId==='intel'),getAllRows:()=>state.sourceCatalog,getCosts:()=>state.costSource,getConfigs:()=>state.configs,flush:async()=>{},download:()=>{throw Error('No fixture export requested');},lookupProduct:async()=>{throw Error('真实ERP调用禁止：隔离fixture');},setDeleted:async()=>{throw Error('No fixture deletion requested');},applySync:async()=>{throw Error('No fixture sync requested');},validateImage:async()=>{},updateLinkCosts:async()=>{throw Error('No fixture config update requested');},render:(container,model)=>renderer.dialog(container,'source-editor',model),renderDetail:(container,model)=>renderer.dialog(container,'source-editor-detail',model),release:container=>renderer.release(container),applyBatch:async entries=>{if(probe.failNext){probe.failNext=false;openDialog('隔离保存冲突','<p id="fixture-conflict">合成冲突：保留源表单</p>');throw Error('隔离版本冲突');}const result=sourceBatch(state,entries);state=result.next;probe.writes.push(structuredClone(entries));return result;}};
  probe.open=()=>openSourceEditor(api);probe.replace=()=>openDialog('隔离其他弹窗','<textarea id="source-name">另一弹窗同名字段</textarea>');probe.close=()=>dialog.close();probe.open();window.fixtureReady=true;
+ // 用合成商品验证正式版查询入口和连接选择，不调用真实 ERP。
+ probe.erpReads=[];probe.erpSaved=true;
+ probe.openNas=()=>openSourceEditor({...api,nas:true,canManage:true,lookupProduct:goodsId=>lookupNasSourceProduct(async(kind,ids=[])=>{
+  probe.erpReads.push({kind,ids});
+  if(kind==='erp-status')return {saved:probe.erpSaved};
+  if(kind==='erp-saved')return {cancelled:true};
+  if(ids[0]==='71998')return new Promise(resolve=>{probe.finishErp=()=>resolve({rows:[{goodsId:'71998',name:'过期商品',erp:88,stockAvailable:2}]});});
+  return {rows:ids[0]==='71999'?[{goodsId:'71999',name:'ERP 新品',erp:123,stockAvailable:7}]:[]};
+ },goodsId)});
  </script></body></html>`;
  await page.route('**/workbench/source-reui-fixture',route=>route.fulfill({contentType:'text/html',body:html}));
  await page.goto(base+'/workbench/source-reui-fixture');await page.waitForFunction(()=>window.fixtureReady);
@@ -63,12 +73,12 @@ try {
  // Keep exact nodes across a shared-dialog replacement, including legacy addon/capacity subforms.
  await page.locator('#source-name').fill('未保存中文名称');await page.locator('#source-tax').fill('123.45');
  await page.locator('[data-common-note]').fill('未保存加购说明');
- const capacity=page.locator('[data-capacity]').first();await capacity.fill('32');
+ const capacity=page.locator('[data-capacity="memoryGb"]');await capacity.fill('32');
  await page.evaluate(()=>{window.sourceProbe.retainedName=document.querySelector('#source-name');window.sourceProbe.replace();});
  assert.equal(await page.locator('#source-name').inputValue(),'另一弹窗同名字段');
  await page.evaluate(()=>window.sourceProbe.close());await page.evaluate(()=>window.sourceProbe.open());
  assert.equal(await page.evaluate(()=>document.querySelector('#source-name')===window.sourceProbe.retainedName),true);
- assert.equal(await page.locator('#source-name').inputValue(),'未保存中文名称');assert.equal(await page.locator('#source-tax').inputValue(),'123.45');assert.equal(await page.locator('[data-common-note]').inputValue(),'未保存加购说明');assert.equal(await page.locator('[data-capacity]').first().inputValue(),'32');checks.push('detached-draft-identical-node-and-all-fields');
+ assert.equal(await page.locator('#source-name').inputValue(),'未保存中文名称');assert.equal(await page.locator('#source-tax').inputValue(),'123.45');assert.equal(await page.locator('[data-common-note]').inputValue(),'未保存加购说明');assert.equal(await capacity.inputValue(),'32');checks.push('detached-draft-identical-node-and-all-fields');
  // Actual save failure replaces the dialog while source-controller remains busy.
  await page.evaluate(()=>window.sourceProbe.failNext=true);await page.locator('#source-save-all').click();await page.locator('#fixture-conflict').waitFor();
  await page.evaluate(()=>window.sourceProbe.close());await page.evaluate(()=>window.sourceProbe.open());
@@ -92,6 +102,40 @@ try {
  await page.waitForFunction(()=>!document.querySelector('#source-save-all').disabled);
  for(let i=0;i<3;i++){await page.evaluate(()=>window.sourceProbe.close());await page.waitForFunction(()=>!window.workbenchSourceEditor);await page.evaluate(()=>window.sourceProbe.open());await page.locator('#source-name').waitFor();assert.equal(await page.locator('.source-editor-root').count(),1);assert.equal(await page.locator('.source-changes-dialog').count(),2);}
  checks.push('three-clean-close-reopen-cycles');
+ await page.evaluate(()=>window.sourceProbe.close());await page.waitForFunction(()=>!window.workbenchSourceEditor);
+ await page.evaluate(()=>window.sourceProbe.openNas());
+ await page.locator('#source-new').click();
+ const lookup=page.locator('#source-erp-refresh'),goodsId=page.locator('#source-id'),lookupStatus=page.locator('#source-erp-status');
+ assert.equal(await lookup.isEnabled(),false);
+ await goodsId.fill('71998');await lookup.click();
+ await page.waitForFunction(()=>window.sourceProbe.finishErp);
+ await goodsId.fill('71999');
+ await page.evaluate(()=>window.sourceProbe.finishErp());
+ assert.equal(await page.locator('#source-name').inputValue(),'');
+ assert.match(await lookupStatus.innerText(),/暂无同步记录/);
+ await lookup.click();
+ await page.waitForFunction(()=>document.querySelector('#source-erp-status').textContent.includes('ERP 新品'));
+ assert.equal(await page.locator('#source-name').inputValue(),'ERP 新品');
+ assert.equal(await page.locator('#source-erp-price').inputValue(),'123.00');
+ assert.match(await page.locator('#source-stock').innerText(),/可销库存：7/);
+ await page.locator('#source-name').fill('本店新品名称');await lookup.click();
+ await page.waitForFunction(()=>!document.querySelector('#source-erp-refresh').disabled);
+ assert.equal(await page.locator('#source-name').inputValue(),'本店新品名称');
+ assert.equal(await page.evaluate(()=>window.sourceProbe.writes.length),2);
+ await page.locator('#source-save').click();await page.waitForFunction(()=>window.sourceProbe.writes.length===3);
+ const [saved]=await page.evaluate(()=>window.sourceProbe.writes.at(-1));
+ assert.equal(saved.row.erpName,'ERP 新品');
+ assert.equal(saved.row.name,'本店新品名称');
+ assert.equal(saved.row.tax,null);
+ await page.waitForFunction(()=>!document.querySelector('#source-save-all').disabled);
+ await page.locator('#source-new').click();
+ await goodsId.fill('71997');await lookup.click();
+ await page.waitForFunction(()=>document.querySelector('#source-erp-status').textContent.includes('未查到商品 71997'));
+ await page.evaluate(()=>window.sourceProbe.erpSaved=false);
+ await lookup.click();await page.waitForFunction(()=>document.querySelector('#source-erp-status').textContent.includes('未选择已保存的连接'));
+ assert.deepEqual(await page.evaluate(()=>window.sourceProbe.erpReads.slice(-2)),[{kind:'erp-status',ids:[]},{kind:'erp-saved',ids:['71997']}]);
+ assert.equal(await page.evaluate(()=>window.sourceProbe.writes.length),3);
+ checks.push('nas-fresh-erp-id-lookup-stale-response-custom-name-and-no-implicit-save');
  assert.deepEqual(errors,[]);assert.deepEqual(blockedRequests,[]);
  const result={passed:true,fixture:'real-react-renderer-source-controller-and-sourceBatch; memory synthetic storage',productionAccess:false,realUploadOrErp:false,checks,errors,blockedRequests,writeCount:await page.evaluate(()=>window.sourceProbe.writes.length)};
  await fs.writeFile(new URL('source-editor-reui-result.json',out),JSON.stringify(result,null,2));console.log(JSON.stringify(result));

@@ -72,7 +72,7 @@ export async function submitNasDraftSet(rows,{submit,isPending,onProgress=()=>{}
 }
 
 export function createNasMainWorkspace({nativeRequest,storage,createClient=createNasApiClient,planStorage=nasPlanStorage(),requestedShop=null}){
- let member=null,endpoint=null,identity=null,lookup=null,index=null,meta=null,closed=false,begin=null,catalogController=null;
+ let member=null,endpoint=null,catalogScope=null,identity=null,lookup=null,index=null,meta=null,closed=false,begin=null,catalogController=null;
  let queue=null,shopId=null,availableShops=[],capability=null;
  let client=createClient({nativeRequest});
  const controllers=new Map(),openings=new Map(),editors=new Map();
@@ -93,6 +93,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    capability=nasOperationsCapability(me,shopId);
    if(shopId!=='intel')client=createClient({nativeRequest,shopId});
    // 保留原英特尔的持久草稿键；新店采用各自键，重叠 ID 不会串店。
+   catalogScope=settings.endpoint_id;
    endpoint=settings.endpoint_id+':main'+(shopId==='intel'?'':':'+shopId);
    identity=JSON.stringify([me.workspace_id,me.uid]);
    member=me;client.bindIdentity(me.workspace_id,me.uid);
@@ -341,6 +342,13 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   sourceUsage:(sources,goods)=>call(()=>client.sourceUsage(sources,goods)),
   priceHistory:(action,input)=>call(()=>client.priceHistory(action,input)),
   queue:()=>{ready();return queue;},canPlan:()=>Boolean(capability?.workspace_writes===true),
+  hasSharedSources:()=>capability?.shared_sources===true,
+  sharedPreviewScope:()=>JSON.stringify([catalogScope,identity]),
+  sharedPreviewSnapshot:async()=>Object.fromEntries(await Promise.all(availableShops.map(async shop=>{
+   const reader=shop===shopId?client:createClient({nativeRequest,shopId:shop});
+   if(reader!==client)reader.bindIdentity(member.workspace_id,member.uid);
+   return [shop,await call(()=>reader.workspaceCatalog())];
+  }))),
   catalog:()=>{ready();return catalogController;},canManage:()=>Boolean(capability?.catalog_writes===true),canUpload:()=>Boolean(capability?.image_upload===true),
   canWrite:()=>!closed&&Boolean(capability?.configuration_writes===true)};
 }
@@ -363,6 +371,8 @@ export const nasErrorText=error=>({
  QUOTATION_REVIEW_REQUIRED:'修改已有维护表报价的 SPU 或 SKU 前，请先重新核价。',
  INVALID_DEPENDENCY:'选择的配件来源不可用。',VALIDATION_FAILED:'请检查要保存的配置内容。',
  CATALOG_SHARED_READ_ONLY:'此资料为共享或其他店铺所有，当前账号只能查看。',
+ SHARED_SOURCE_VALUE_REQUIRED:'该字段还没有三店共用值。请先维护共用值。',
+ SHARED_SOURCE_EDITOR_REQUIRED:'请使用新版输出源维护窗口。',
  CATALOG_IN_USE:'资料仍被配置或模板引用，不能移入回收站。',
  CATALOG_PENDING_RESOLVED:'原提交已确认，请查看最新资料后再提交这次更改。',
  INVALID_IMAGE:'图片无法解码，或超过支持的尺寸。',

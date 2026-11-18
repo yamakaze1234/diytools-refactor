@@ -130,6 +130,7 @@ def main():
     out = args.output
     out.mkdir(parents=True, exist_ok=False)
     three.output_text(out/'intel-fixture.sql', intel_fixture())
+    snapshot(out/'intel-source','intel')
     passwords, manifests = {}, {}
     for ix, shop in enumerate(three.SHOPS):
         incoming = getattr(args,shop+'_real')

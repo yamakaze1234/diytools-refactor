@@ -138,6 +138,17 @@ impl CloudTransport {
         Self::build(String::new(), Duration::from_secs(60), MAX_RESPONSE)
     }
 
+    #[cfg(feature="nas-acceptance")]
+    pub(crate) fn acceptance(url:&str,secret:&str)->Result<Self,String>{
+        let transport=Self::build(url.to_owned(),Duration::from_secs(15),MAX_RESPONSE)?;
+        transport.state()?.session=Some(Session{
+            tokens:Tokens{access:secret.into(),refresh:uuid::Uuid::new_v4().to_string(),
+                subject:"fixture_existing01".into(),expires:Instant::now()+Duration::from_secs(86400)},
+            member:json!({"uid":"fixture_existing01","workspaceId":"workbench-main","name":"验收账号"}),
+        });
+        Ok(transport)
+    }
+
     pub fn environment(&self) -> &str {
         &self.environment
     }
