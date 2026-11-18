@@ -35,7 +35,7 @@ test('回执丢失后先重放 A，再以新 operationId 保存期间输入的 B
  };
  context.acceptSavedState=(snapshot,remote)=>{context.acceptedState=structuredClone(remote);};
  context.pollDerivedStatus=()=>Promise.resolve();context.scheduleImageSave=()=>{};context.toast=()=>{};
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(saveCode+'\nglobalThis.runSave=save;',context);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+saveCode+'\nglobalThis.runSave=save;',context);
  context.state.configs[0].price=11;
  await assert.rejects(context.runSave(),/响应中断/);
  context.state.configs[0].price=12;
@@ -54,7 +54,7 @@ test('旧回执拉取远端同字段更新时保留草稿并阻止自动保存',
  const remote={revision:2,configs:[{id:'one',price:13}],shopSettings:{}};
  const context={...fullBranch,state:{revision:1,configs:[{id:'one',price:12}],shopSettings:{}},acceptedState:structuredClone(sent),
   clone:structuredClone,cloneEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,mergeEditingState,sameEditingState,history:[],redoHistory:[],trimHistory(){},dirty:true};
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(acceptCode+'\nglobalThis.accept=acceptSavedState;',context);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+acceptCode+'\nglobalThis.accept=acceptSavedState;',context);
  assert.throws(()=>context.accept(sent,remote),error=>error.status===409);
  assert.equal(context.state.configs[0].price,12);
  assert.equal(context.acceptedState.configs[0].price,13);
@@ -75,7 +75,7 @@ test('实际样式增量响应丢失后保留原请求，继续拖动与文本�
   if(interrupt){interrupt=false;throw Error('回执丢失');}
   return {operationId:payload.operationId,configs:payload.changes.map(c=>c.after),revision:requests.length+6,updatedAt:'2026-10-12T00:00:00Z',activityDelta:[],rebased:false};
  };
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(acceptCode+saveCode+'\nglobalThis.runSave=save;',context);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+acceptCode+saveCode+'\nglobalThis.runSave=save;',context);
  context.state.configs[0].textTransforms.long['header.title'].x=30;
  await assert.rejects(context.runSave(),/回执丢失/);
  context.state.configs[0].textTransforms.long['header.title'].x=50;

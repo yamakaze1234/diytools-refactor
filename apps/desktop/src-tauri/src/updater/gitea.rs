@@ -12,7 +12,7 @@ pub(super) fn download_matches(url: &Url, tag: &str, name: &str) -> bool {
 }
 fn tag_valid(tag: &str) -> bool {
     tag == CHANNEL_TAG
-        || tag.strip_prefix("refactor-v").is_some_and(|text| {
+        || tag.strip_prefix(TAG_PREFIX).is_some_and(|text| {
             Version::parse(text)
                 .is_ok_and(|v| v.pre.is_empty() && v.build.is_empty() && v.to_string() == text)
         })
@@ -35,9 +35,9 @@ fn allowed(url: &Url) -> bool {
         if let Some((tag, name)) = path.split_once('/') {
             return tag_valid(tag)
                 && (name == MANIFEST_NAME
-                    || (tag.starts_with("refactor-v")
+                    || (tag.starts_with(TAG_PREFIX)
                         && name
-                            == format!("diytools-refactor-{}-windows-x86_64.exe", &tag[10..])));
+                            == artifact_name(&tag[TAG_PREFIX.len()..])));
         }
     }
     url.path()
@@ -142,7 +142,7 @@ pub(super) fn artifact(
     client: &Client,
     manifest: &Manifest,
 ) -> Result<Option<reqwest::blocking::Response>, String> {
-    let tag = format!("refactor-v{}", manifest.version);
+    let tag = version_tag(&manifest.version);
     let Some(url) = release_asset(client, &tag, &manifest.artifact.name)? else {
         return Ok(None);
     };
@@ -169,7 +169,7 @@ mod tests {
         for path in [
             format!("/api/v1/repos/{REPO}/releases/tags/{CHANNEL_TAG}"),
             format!(
-                "/{REPO}/releases/download/refactor-v0.2.2/diytools-refactor-0.2.2-windows-x86_64.exe"
+                "/{REPO}/releases/download/{}{}/{}",TAG_PREFIX,"0.2.2",artifact_name("0.2.2")
             ),
             "/attachments/7a27b49e-c721-4f39-81e9-83a6dfbf4bac".into(),
         ] {

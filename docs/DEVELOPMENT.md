@@ -8,7 +8,7 @@ Windows 开发需要 PowerShell 7、Node.js 24+、pnpm 11、Rust stable、Window
 git clone https://gitea.cq360.top/CoreStudio/diy-tools-refactor.git
 Set-Location diy-tools-refactor
 pnpm install --frozen-lockfile
-pnpm dev
+pnpm --dir apps/desktop tauri dev --features formal-nas-client --config src-tauri/tauri.nas-intel-production.conf.json
 ```
 
 `pnpm dev:web` 仅运行前端。保存、同步、ERP 和软件更新需要 Tauri 宿主。开发数据与发行版数据独立；可选 ERP 环境见 [ERP worker](../services/erp-worker/README.md)。
@@ -17,9 +17,9 @@ pnpm dev
 
 ```powershell
 node --test apps/desktop/tests/*.test.mjs apps/desktop/tests/legacy/*.test.mjs packages/*/tests/*.test.mjs tools/*.test.mjs
-cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --features formal-nas-client
 pnpm build:web
-pnpm build:desktop --no-bundle
+pnpm --dir apps/desktop tauri build --no-bundle --features formal-nas-client --config src-tauri/tauri.nas-intel-production.conf.json
 ```
 
 按改动范围运行必要测试。集成服务、原生窗口与实际数据流程需要各自验收，不能由构建成功代替。可分发程序按[发布流程](PUBLIC-RELEASE.md)打包。
@@ -44,7 +44,7 @@ README 面向首次使用者，保留下载入口与产品简介。docs 只维�
 
 本机 Agent 入口的使用与协议见 [Agent 工具入口](AGENT-TOOLS.md)。
 
-正式发行的构建顺序：先 `cargo build --release --locked --manifest-path packages/agent-cli/Cargo.toml`，再 `pnpm build:desktop --no-bundle --features agent-tools`。主EXE嵌入CLI，首次启动自动准备连接；自定义CLI路径可用 `DIYTOOLS_AGENT_CLI_PATH`，共享输出目录遵循 `CARGO_TARGET_DIR`。不含feature的普通开发构建保持关闭。
+正式发行使用 `formal-nas-client`，不启用旧 Agent/CLI。先准备下述 Excel 只读组件，再按上方命令构建。旧 `agent-tools` 仅为兼容路径，不能用于新版发布。完整结构与模块边界见 [项目结构与架构图](PUBLIC-ARCHITECTURE.md)。
 
 ## 内置 Excel 只读组件
 
@@ -55,3 +55,9 @@ Windows release 构建前执行 `pwsh -File tools/build-cost-reader.ps1`，设�
 连续配置表位于 src/legacy/continuous-workbench.tsx，配件领域操作位于 public/workbench/continuous-parts.js。UI 写入仍走工作台原有保存、撤销和冲突检测，不另建业务状态。主题层位于 public/workbench/endfield-workbench.css，界面主题与图片主题分别维护。
 
 启动前端后，设置 REACT_TEST_URL 为其地址，运行 apps/desktop/tests/docs-screenshots.browser.mjs 可重建三张公开界面例图。脚本使用合成数据和替代接口，不访问用户库。连续表、输入、自由编辑和外围弹窗的浏览器检查位于 apps/desktop/tests/*.browser.mjs，依次运行并保留结果。
+
+## 组织默认认证构建
+
+正式特性可设置 `DIYTOOLS_AUTH_DEFAULTS_PATH` 指向源码外的版本 1 接入 JSON。build.rs 严格提取 cloud.envId 和 cloud.endpoint；不嵌入其他字段或原文件。未设置时写入空默认值，防止增量构建复用上一组织参数。运行时只有外部 integrations.json 完全不存在才回退内置值，外部格式错误不能静默切换账号环境。
+
+默认接入不是保密信息，可从 EXE 提取。构建输入不得含员工密码、令牌或数据库凭据。通过 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --features formal-nas-client embedded_auth -- --test-threads=1` 验证新目录、外部覆盖和错误配置行为。

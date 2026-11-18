@@ -60,7 +60,8 @@ test('ERP回载失败或拒绝时清除本次待提示，成功留给解锁后�
  }
 });
 test('全量加载期间打开其他弹窗，自动展示再次检查而手动入口仍可用',async()=>{
- const opened=[],c={priceNotifications:[{revision:11}],pricePopupBlocked:()=>false,ensureFullWorkspace:async()=>{c.pricePopupBlocked=()=>true;},openPriceChanges:async()=>opened.push(1),openDialog(){},request(){},toast(){},downloadBlob(){},acceptedState:{configs:[]}};
+ // 本例验证本机兼容路径，显式提供正式版新增的模式标记。
+ const opened=[],c={nasMain:false,priceNotifications:[{revision:11}],pricePopupBlocked:()=>false,ensureFullWorkspace:async()=>{c.pricePopupBlocked=()=>true;},openPriceChanges:async()=>opened.push(1),openDialog(){},request(){},toast(){},downloadBlob(){},acceptedState:{configs:[]}};
  vm.runInNewContext(extract('async function showPriceChanges(','// 仅本次本机同步成功回执'),c);
  assert.equal(await c.showPriceChanges({automatic:true}),false);assert.equal(opened.length,0);
  await c.showPriceChanges();assert.equal(opened.length,1);assert.equal(c.priceNotifications.length,0);

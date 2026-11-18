@@ -921,3 +921,14 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:rela
  html[data-workbench-design] #image-export-panel .image-export-actions {display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;align-items:center!important;}
  html[data-workbench-design] #image-export-panel .image-export-actions button {width:100%!important;min-width:0!important;height:36px!important;min-height:36px!important;margin:0!important;padding:0 6px!important;line-height:1.2!important;font-size:12px!important;white-space:nowrap!important;}
 }
+
+/* 连接引导与登录沿用工作台同一套中性色、黄色强调和直角控件。 */
+@layer endfield-theme {
+ html[data-workbench-design] .connection-shell {background:var(--ef-paper)!important;color:var(--ef-ink)!important;}
+ html[data-workbench-design] .connection-card {background:var(--ef-panel)!important;color:var(--ef-ink)!important;border:1px solid var(--ef-rule)!important;border-radius:0!important;box-shadow:none!important;font-family:var(--ef-font-text)!important;}
+ html[data-workbench-design] :is(.connection-tabs,.connection-card footer,.connection-certificate) {border-color:var(--ef-rule)!important;border-radius:0!important;}
+ html[data-workbench-design] :is(.connection-intro,.connection-help,.connection-eyebrow,.connection-detail,.connection-result) {color:var(--ef-ink-2)!important;}
+ html[data-workbench-design] .connection-result .connection-error {color:var(--ef-danger)!important;}
+ html[data-workbench-design] .connection-tabs button[aria-pressed=true] {background:var(--ef-signal)!important;color:var(--ef-on-signal)!important;}
+ html[data-workbench-design] :is(.connection-card input[type=checkbox],.startup-login-remember input) {accent-color:var(--ef-trace)!important;}
+}

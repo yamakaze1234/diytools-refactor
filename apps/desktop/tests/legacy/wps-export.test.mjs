@@ -13,11 +13,11 @@ const fixture=()=>({name:'配置一',price:8899,parts:[
 ]});
 test('重构入口等待完整配置并重新读取当前链接',async()=>{
  const source=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
- const start=source.indexOf('function renderProduct(){'),end=source.indexOf('\n',start);
+ const start=source.indexOf('function renderProduct(){'),end=source.indexOf('// 通过导航令牌',start);
  const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,{});return nodes.get(id);};
  const initial={name:'测试链接',configs:[{id:'a'}]},complete={...initial,configs:[{id:'a',...fixture()}]};
  let product=initial,exported,loaded=false;
- const context={$ ,selected:new Set(["a"]),currentProduct:()=>product,esc:String,openProduct(){},openOverview(){},openCopy(){},openTemplates(){},openSaveProductTemplate(){},openPosterTitles(){},openDialog(){},
+ const context={$ ,selected:new Set(["a"]),nasMain:false,currentProduct:()=>product,esc:String,openProduct(){},openOverview(){},openCopy(){},openTemplates(){},openSaveProductTemplate(){},openPosterTitles(){},openDialog(){},
   fullAction:fn=>async()=>{await Promise.resolve();product=complete;loaded=true;return fn();},
   openWpsExport:(configs,options)=>{assert.equal(loaded,true);assert.equal(options.selectedIds.has("a"),true);exported=configs;}};
  vm.runInNewContext(source.slice(start,end)+'\nrenderProduct();',context);

@@ -18,7 +18,7 @@ Windows 可选 worker 放在本机 `data/runtime/erp-worker.exe`。主程序仅�
 
 ```powershell
 uv sync --directory services/erp-worker --locked
-uv run --directory services/erp-worker --locked python -B -m unittest -v
+uv run --directory services/erp-worker --locked --with httpx==0.28.1 python -B -m unittest -v
 pwsh -File tools/build-erp-worker.ps1
 ```
 
@@ -31,3 +31,5 @@ HTTP 只读请求核验配置域名和三个允许的路径，拒绝重定向、
 SQL 入口独立于网页 ERP，保留固定的只读查询及本机预览/确认应用协议。SQL 密码使用 Windows 当前用户 DPAPI，路径由宿主固定为 `data/sql-credentials.dpapi.json`，不会写入业务状态或公开配置；只有读取、规范化和输出大小检查均成功后才保存。公开配置中不要填写账号和密钥。
 
 已有用户升级时，先在用户本机保留对应运行时和 `integrations.json`，之后只替换主程序。私有目录、SQLite、凭据封套、登录信息和本机适配器都不属于 Release 附件。
+
+英特尔 NAS 工作台通过专用原生只读动作复用已保存的公司 SQL 连接，没有保存/清除凭据或写 ERP 的动作。原生文件选择器把工作簿交给 worker：含税成本按《主机成本表V2新_修复版.xlsb》「库存数据」M 列商品编号与 Z 列主机含税成本读取；报价仍按英特尔主机维护表「综合表」的 INTEL 文本 SPU/SKU 和 H 列到手价读取，保留摘要及行号。两者都只读取已保存的文件字节，解析后回读摘要，不执行 Excel 重算或回写。

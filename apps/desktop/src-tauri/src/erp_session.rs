@@ -25,6 +25,7 @@ pub struct SessionInput {
 pub struct ErpSessionState {
     worker: Mutex<Option<Worker>>,
     cost_worker: Mutex<Option<Worker>>,
+    nas_read: Mutex<()>,
     vault: std::sync::OnceLock<std::path::PathBuf>,
 }
 
@@ -37,13 +38,13 @@ struct Worker {
 
 impl Worker {
     // 启动常驻 worker 并建立独立管道；凭据文件位置仅由宿主初始化传入。
-    fn spawn(vault: Option<&std::path::PathBuf>, cost: bool) -> Result<Self, String> {
+    fn spawn(vault: Option<&std::path::PathBuf>, cost: bool, selected_read_vault: Option<&std::path::Path>) -> Result<Self, String> {
         let data_dir = vault
             .and_then(|path| path.parent())
             .ok_or("ERP_RUNTIME_UNAVAILABLE: 本机数据目录尚未配置")?;
         let mut command = if cost {erp_runtime::cost_command(data_dir)?} else {erp_runtime::command(data_dir)?};
         command.env_remove("DIYTOOLS_SQL_VAULT");
-        if let Some(vault) = vault.filter(|_|!cost) {
+        if let Some(vault) = selected_read_vault.or_else(||vault.filter(|_|!cost).map(|path|path.as_path())) {
             command.env("DIYTOOLS_SQL_VAULT", vault);
         }
         let mut child = command
@@ -89,15 +90,66 @@ impl ErpSessionState {
             .map_err(|_| "本机凭据目录已经配置".into())
     }
 
+    // 独立主程序同一数据目录下按部署及成员分开保存；页面不能提供路径。
+    pub(crate) fn nas_scope_dir(&self, scope: &str) -> Result<std::path::PathBuf, String> {
+        if scope.len()!=64||!scope.bytes().all(|byte|byte.is_ascii_hexdigit()) {return Err("本机连接范围无效".into());}
+        let root=self.vault.get().and_then(|path|path.parent()).ok_or("本机数据目录尚未配置")?.join("nas-erp-connections");
+        let directory=root.join(scope);
+        for path in [&root,&directory] {
+            if let Ok(entry)=std::fs::symlink_metadata(path) {
+                if !entry.file_type().is_dir() {return Err("独立连接目录无效".into());}
+                #[cfg(windows)]
+                { use std::os::windows::fs::MetadataExt; if entry.file_attributes()&0x400!=0{return Err("独立连接目录不能是链接".into());} }
+            }
+        }
+        Ok(directory)
+    }
+
+    pub(crate) async fn nas_form_request(&self, scope:&str, mut input:Value) -> Result<Value,String> {
+        let action=input["action"].as_str().ok_or("本机连接操作无效")?;
+        if !matches!(action,"sql_read_nas"|"sql_read_nas_form"|"sql_credentials_status"|"sql_credentials_clear") {
+            return Err("本机连接操作无效".into());
+        }
+        let maximum=if action.starts_with("sql_read_"){32*1024*1024}else{64*1024};
+        let _slot=self.nas_read.try_lock().map_err(|_|"ERP 正在处理请求，请稍后重试")?;
+        let id=uuid::Uuid::new_v4().to_string();input["id"]=json!(id);
+        let mut bytes=serde_json::to_vec(&input).map_err(|_|"ERP 请求格式无效")?;
+        if bytes.len()>64*1024{return Err("ERP 请求超过 64 KiB 限制".into());}
+        bytes.push(b'\n');
+        let vault=self.nas_scope_dir(scope)?.join("sql-credentials.dpapi.json");
+        if std::fs::symlink_metadata(&vault).is_ok_and(|value|value.file_type().is_symlink()){
+            return Err("独立连接文件不能是链接".into());
+        }
+        let mut worker=Worker::spawn(self.vault.get(),false,Some(&vault))?;
+        let reply=tokio::time::timeout(std::time::Duration::from_secs(75),worker.exchange(&bytes,maximum))
+            .await.map_err(|_|"ERP 只读查询超时，请检查公司网络后重试。")??;
+        unpack_response(reply,&id)
+    }
+
     // SQL 入口只开放读取和本机凭据管理，拒绝辅助程序的其他动作。
     pub(crate) async fn sql_request(&self, input: Value) -> Result<Value, String> {
         let input: SessionInput = serde_json::from_value(input).map_err(|_| "SQL 请求字段无效")?;
-        if !["sql_cost_file", "sql_read", "sql_credentials_load", "sql_credentials_clear"]
+        if !["sql_cost_file", "nas_quotation_file", "sql_read", "sql_read_nas", "sql_credentials_load", "sql_credentials_clear"]
             .contains(&input.action.as_str())
         {
             return Err("不支持此 SQL 操作".into());
         }
         self.request(input).await
+    }
+
+    // 被显式选中的封套只交给一个短期只读查询进程，普通 SQL 保存/清除仍使用本程序路径。
+    pub(crate) async fn nas_read_selected_vault(&self, path: &std::path::Path) -> Result<Value, String> {
+        if !path.is_absolute() || path.file_name().and_then(|name|name.to_str()) != Some("sql-credentials.dpapi.json") || !path.is_file() {
+            return Err("请选择工作台已保存的 sql-credentials.dpapi.json。".into());
+        }
+        let _slot=self.nas_read.try_lock().map_err(|_|"ERP 正在处理请求，请稍后重试")?;
+        let id=uuid::Uuid::new_v4().to_string();
+        let mut bytes=serde_json::to_vec(&json!({"id":id,"action":"sql_read_nas"})).map_err(|_|"ERP 请求格式无效")?;
+        bytes.push(b'\n');
+        let mut worker=Worker::spawn(self.vault.get(),false,Some(path))?;
+        let response=tokio::time::timeout(std::time::Duration::from_secs(75),worker.exchange(&bytes,32*1024*1024))
+            .await.map_err(|_|"ERP 只读查询超时，请检查公司网络后重试。")??;
+        unpack_response(response,&id)
     }
     // 用状态与断开动作验证 worker 协议，完成后释放辅助进程。
     pub async fn offline_probe(&self) -> Result<Value, String> {
@@ -138,7 +190,9 @@ impl ErpSessionState {
             "query_goods",
             "disconnect",
             "sql_cost_file",
+            "nas_quotation_file",
             "sql_read",
+            "sql_read_nas",
             "sql_credentials_load",
             "sql_credentials_clear",
         ]
@@ -147,7 +201,7 @@ impl ErpSessionState {
             return Err("不支持此 ERP 操作".into());
         }
         let id = uuid::Uuid::new_v4().to_string();
-        let maximum = if matches!(input.action.as_str(), "sql_read" | "sql_cost_file") {
+        let maximum = if matches!(input.action.as_str(), "sql_read" | "sql_read_nas" | "sql_cost_file" | "nas_quotation_file") {
             32 * 1024 * 1024
         } else {
             2 * 1024 * 1024
@@ -176,11 +230,12 @@ impl ErpSessionState {
             return Err("ERP 请求超过 64 KiB 限制".into());
         }
         // 已有请求占用 worker 时立即返回忙碌提示，不能把两条响应交错读入同一管道。
-        let mut state = (if input.action=="sql_cost_file" {&self.cost_worker} else {&self.worker})
+        let file_action=matches!(input.action.as_str(),"sql_cost_file"|"nas_quotation_file");
+        let mut state = (if file_action {&self.cost_worker} else {&self.worker})
             .try_lock()
             .map_err(|_| "ERP 正在处理请求，请稍后重试")?;
         if state.is_none() {
-            *state = Some(Worker::spawn(self.vault.get(),input.action=="sql_cost_file")?);
+            *state = Some(Worker::spawn(self.vault.get(),file_action,None)?);
         }
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(75),
@@ -201,6 +256,15 @@ impl ErpSessionState {
         // 请求编号和成功标记必须同时匹配，否则断开会话以免把旧响应当成本次结果。
         if response["id"] != id || !response["ok"].is_boolean() {
             *state = None;
+            return Err("ERP 响应校验失败，连接已断开。".into());
+        }
+        unpack_response(response,&id)
+    }
+}
+
+// 只接受固定协议和白名单错误；不回传辅助程序的任意错误正文。
+fn unpack_response(response: Value, id: &str) -> Result<Value,String> {
+        if response["id"] != id || !response["ok"].is_boolean() {
             return Err("ERP 响应校验失败，连接已断开。".into());
         }
         if response["ok"] == true {
@@ -239,10 +303,12 @@ impl ErpSessionState {
                 "无法读取或保存本机加密连接，请重新填写后重试。"
             }
             "SQL_CREDENTIALS_UNAVAILABLE" => "当前环境无法使用本机加密连接存储。",
+            "SQL_CREDENTIALS_NOT_SAVED" => "这个程序没有保存 ERP 连接。可点“选用已保存的 ERP 连接”，选择当前 Windows 用户在原工作台保存的连接。",
+            "QUOTATION_FILE_ERROR" => "无法读取英特尔维护表，请核对文件与综合表列。",
+            "COST_FILE_ERROR" => "无法读取含税成本表，请核对文件与库存数据列。",
             _ => "ERP 请求未完成，请检查输入和公司网络后重试。",
         }
         .into())
-    }
 }
 
 #[tauri::command]
@@ -251,7 +317,7 @@ pub async fn erp_session_request(
     state: tauri::State<'_, ErpSessionState>,
     input: SessionInput,
 ) -> Result<Value, String> {
-    if input.action.starts_with("sql_") {
+    if !["status","connect","query_goods","disconnect"].contains(&input.action.as_str()) {
         return Err("SQL 操作请通过 ERP 同步入口使用。".into());
     }
     state.request(input).await

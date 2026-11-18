@@ -1,7 +1,13 @@
 // 桌面宿主装配入口：选择本机数据目录，注册存储、ERP、云同步和导出命令，并管理退出收尾。
+#[cfg(feature = "formal-nas-client")]
+mod nas_launch;
+#[cfg(feature = "formal-nas-client")]
+pub use nas_launch::prepare_formal_launch;
 mod asset_protocol;
 mod cloud_transport;
+mod embedded_auth;
 mod cloud_native;
+mod nas_connection;
 mod erp_environment;
 mod erp_runtime;
 mod erp_session;
@@ -29,6 +35,7 @@ pub use agent_review_host::run as run_agent_review_host;
 use tauri::Manager;
 
 pub use embedded_assets::run_embedded_asset_probe;
+pub use cloud_native::run_nas_tls_probe;
 
 // 优先处理离线 ERP 检查与更新助手命令，命中时不启动普通业务窗口。
 pub fn run_update_helper() -> Option<i32> {
@@ -78,9 +85,18 @@ pub fn run() {
             } else {
                 app.path().app_data_dir()?
             };
-            let path = folder.join("refactor.sqlite");
+            let cloud=std::sync::Arc::new(cloud_native::CloudRuntime::new(&folder).map_err(std::io::Error::other)?);
+            let nas_main=cloud.nas_main();
+            app.manage(cloud);
+            // 只向查询 worker 给出系统加密凭据位置；NAS 不打开任何本机业务库。
             app.state::<erp_session::ErpSessionState>().configure_vault(folder.join("sql-credentials.dpapi.json"))
                 .map_err(std::io::Error::other)?;
+            if nas_main {
+                // 服务端模式没有本机业务库，完成身份/运行时装配后仍须确认更新启动成功。
+                updater::acknowledge_startup().map_err(std::io::Error::other)?;
+                return Ok(());
+            }
+            let path = folder.join("refactor.sqlite");
             local_store::initialize(&path).map_err(std::io::Error::other)?;
             app.manage(local_store::LocalStore(path));
             let migration_path = folder.join("migration.sqlite");
@@ -125,7 +141,6 @@ pub fn run() {
                 }
             }
             app.manage(workbench);
-            app.manage(std::sync::Arc::new(cloud_native::CloudRuntime::new(&folder).map_err(std::io::Error::other)?));
             app.manage(asset_protocol::AssetRoot(folder.join("workbench-assets")));
             // 初始化和数据库迁移成功才确认更新，助手不能将进程存活误判为就绪。
             updater::acknowledge_startup().map_err(std::io::Error::other)?;
@@ -133,10 +148,26 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .register_uri_scheme_protocol("workbench-asset", |context, request| {
-            asset_protocol::serve(
-                &context.app_handle().state::<asset_protocol::AssetRoot>().0,
-                request,
-            )
+            if let Some(root)=context.app_handle().try_state::<asset_protocol::AssetRoot>() {
+                asset_protocol::serve(&root.0,request)
+            } else {
+                tauri::http::Response::builder().status(404).body(Vec::<u8>::new()).unwrap()
+            }
+        })
+        .register_asynchronous_uri_scheme_protocol("nas-workbench-asset", |context, request, responder| {
+            let runtime=context.app_handle().state::<std::sync::Arc<cloud_native::CloudRuntime>>().inner().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                let result=if request.method()=="GET" && request.uri().query().is_none() {
+                    runtime.nas_image(request.uri().path())
+                }else{ Err(405) };
+                let (status,mime,bytes)=match result {
+                    Ok((mime,body))=>(200,mime,body),
+                    Err(status)=>(status,"text/plain",Vec::new()),
+                };
+                responder.respond(tauri::http::Response::builder().status(status).header("Content-Type",mime)
+                    .header("Access-Control-Allow-Origin","*").header("X-Content-Type-Options","nosniff")
+                    .header("Cache-Control","no-store").body(bytes).unwrap());
+            });
         })
         .invoke_handler(tauri::generate_handler![
             agent_commands::agent_ui,
@@ -152,6 +183,15 @@ pub fn run() {
             sql_sync::sql_sync_request,
             cloud_native::cloud_native_request,
             cloud_native::cloud_native_json_request,
+            nas_connection::nas_connection_settings,
+            nas_connection::nas_connection_certificate,
+            nas_connection::nas_connection_test,
+            nas_connection::nas_connection_save,
+            nas_connection::nas_connection_restart,
+            cloud_native::nas_native_request,
+            cloud_native::nas_upload_request,
+            cloud_native::nas_identity_request,
+            cloud_native::nas_erp_read,
             local_store::list_configs,
             local_store::get_config,
             local_store::save_config,

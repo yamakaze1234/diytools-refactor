@@ -52,7 +52,7 @@ export function openNameFormatBatch({openDialog,closeDialog,esc,toast,getConfigs
  openDialog('批量修改简称格式','<div id="batch-name-format-mount"></div><div class="actions"><button id="batch-name-format-apply" class="primary" disabled>应用预览中的简称</button></div>');
  const button=document.querySelector('#batch-name-format-apply'),mount=document.querySelector('#batch-name-format-mount');
  const control=mountNameFormatPreview(mount,{getConfigs,shopId,esc,toast,scope,format,onPreview:plan=>button.disabled=!plan.rows.some(r=>!r.preserved),onInvalidate:()=>button.disabled=true});
- button.onclick=()=>{try{const plan=control.read();apply(plan);closeDialog();}catch(error){button.disabled=true;toast(error.message);}};
+ button.onclick=async()=>{try{const plan=control.read();if(await apply(plan)!==false&&button.isConnected)closeDialog();}catch(error){button.disabled=true;toast(error.message);}};
 }
 
 export function mountNameFormatEntry(open){

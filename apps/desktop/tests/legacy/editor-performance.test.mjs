@@ -75,7 +75,7 @@ test('实际普通增量保存不先比较完整草稿，两次并发调用与�
   const receipt={configs:payload.changes.map(c=>c.after),revision:requests.length+1,updatedAt:'2026-10-12T00:00:00Z',activityDelta:[{id:`log-${requests.length}`}],rebased:false};
   if(requests.length===1)return new Promise(resolve=>resolveFirst=()=>resolve(receipt));return receipt;
  };
- const code=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('));Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(receiptCode+code+'\nglobalThis.run=save;',context);
+ const code=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('));Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+receiptCode+code+'\nglobalThis.run=save;',context);
  context.state.configs[0].name='第一输入';const first=context.run(),second=context.run();assert.equal(requests.length,1);
  const pending=context.ordinaryPending;assert.equal(pending.sent.costSource,context.acceptedState.costSource);assert.notEqual(pending.sent.configs[1],context.state.configs[1]);
  context.state.configs[1].name='飞行输入';context.dirty=true;resolveFirst();await Promise.all([first,second]);
@@ -86,7 +86,7 @@ test('实际changed入口传递所编辑ID，实际checkpoint及跨配置撤销�
  assert.match(app,/syncDisplayEdits\(ids\)/);assert.doesNotMatch(app,/syncDisplayEdits\(message/);
  const code=app.slice(app.indexOf('function historySnapshot(){'),app.indexOf('function visiblePosterInput('));
  const s=state(),context={...fullBranch,...historyHelpers,state:s,...ui,history:[],redoHistory:[],captureHistorySnapshot,historySnapshotBytes,sameEditingState,clone:structuredClone,$:()=>({disabled:false}),localStorage:{setItem(){}},sourceCatalog:x=>x,costRows:(_,x)=>x,bindSources(){},alignDisplaySourceNames(){},available:()=>context.state.configs,changed(){},renderAll(){},restoringHistory:false,posterEditor:null};
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(receiptCode+code+'\nglobalThis.check=checkpoint;globalThis.undo=()=>stepHistory(history,redoHistory,"undo");globalThis.redo=()=>stepHistory(redoHistory,history,"redo");',context);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+receiptCode+code+'\nglobalThis.check=checkpoint;globalThis.undo=()=>stepHistory(history,redoHistory,"undo");globalThis.redo=()=>stepHistory(redoHistory,history,"redo");',context);
  context.check();context.state.configs[0].name='第一修改';context.active='two';context.check();context.state.configs[1].name='第二修改';context.undo();
  assert.equal(context.state.configs[0].name,'第一修改');assert.equal(context.state.configs[1].name,'two');context.state.configs[0].parts[0].qty=8;
  assert.equal(context.history[0].configs[0].parts[0].qty,1);assert.equal(context.redoHistory[0].configs[0].parts[0].qty,1);
@@ -97,14 +97,14 @@ test('实际回执重基更新撤销栈，历史内不复制服务器日志',()=
  const earlier=cloneEditorState(sent);earlier.configs[0].price=1;const history=[captureHistorySnapshot(earlier,ui)];
  const context={...fullBranch,saveFullState,...historyHelpers,state:live,acceptedState:null,history,redoHistory:[],cloneEditorState,withoutActivityLogs,mergeEditorState,mergeEditingState,sameEditingState,syncHistoryButtons(){},trimHistory(){},sourceCatalog:x=>x,dirty:true};
  const code=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'));
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(receiptCode+code+'\nglobalThis.accept=acceptSavedState;',context);context.accept(sent,remote);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+receiptCode+code+'\nglobalThis.accept=acceptSavedState;',context);context.accept(sent,remote);
  assert.equal(context.state.configs[1].name,'飞行输入');assert.equal(context.state.configs[0].parts[0].lineId,'new-line');assert.equal(context.history[0].configs[0].price,1);assert.equal(context.history[0].configs[0].parts[0].lineId,'new-line');assert.equal(context.history[0].logs,undefined);assert.equal(context.acceptedState.logs,remote.logs);
  context.state.configs[0].parts[0].qty=9;assert.equal(context.acceptedState.configs[0].parts[0].qty,1);assert.equal(context.history[0].configs[0].parts[0].qty,1);
 });
 test('相同编辑回执无需再复制基线，继续输入仍与回执隔离',()=>{
  const sent=state(),live=cloneEditorState(sent),remote=cloneEditorState(sent),context={...fullBranch,state:live,acceptedState:null,sameEditingState};
  const code=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'));
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(receiptCode+code+'\nglobalThis.accept=acceptSavedState;',context);context.accept(sent,remote);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+receiptCode+code+'\nglobalThis.accept=acceptSavedState;',context);context.accept(sent,remote);
  assert.equal(context.acceptedState,remote);assert.equal(context.state,live);context.state.configs[0].parts[0].qty=4;context.state.shopSettings.intel.coupon=30;
  assert.equal(context.acceptedState.configs[0].parts[0].qty,1);assert.equal(context.acceptedState.shopSettings.intel.coupon,0);
 });
@@ -121,6 +121,6 @@ test('实际完整保存不提交归档日志，响应等待期间输入继续�
   return {state:remote,revision:remote.revision,updatedAt:remote.updatedAt,logs:remote.logs};
  };
  const code=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('));
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(receiptCode+code+'\nglobalThis.run=save;',context);context.state.configs[0].name='第一次输入';await context.run();
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+receiptCode+code+'\nglobalThis.run=save;',context);context.state.configs[0].name='第一次输入';await context.run();
  assert.deepEqual(requests.map(p=>p.configs[0].name),['第一次输入','第二次输入']);assert.equal(context.state.configs[0].name,'第二次输入');assert.equal(context.acceptedState.configs[0].name,'第二次输入');assert.equal(context.acceptedState.logs,s.logs);assert.equal(context.dirty,false);
 });

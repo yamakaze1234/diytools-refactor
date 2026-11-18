@@ -82,7 +82,7 @@ test('本地全局移除配置后补全不误判远端删除，仍可先恢复�
 function harness(state=makeState()){
  const calls={changed:[],bound:[],aligned:[],rendered:[]};
  const context={...fullBranch,...helpers,...ui(),state,history:[],redoHistory:[],sameEditingState,mergeEditingState,clone:structuredClone,restoringHistory:false,posterEditor:null,catalog:state.sourceCatalog,$:()=>({disabled:false}),localStorage:{setItem(){}},sourceCatalog:rows=>rows,costRows:(_,rows)=>rows,bindSources:rows=>calls.bound.push(rows.map(row=>row.id)),alignDisplaySourceNames:rows=>calls.aligned.push(rows.map(row=>row.id)),available:()=>context.state.configs.filter(config=>!config.deletedAt),changed:(message,ids)=>calls.changed.push({message,ids}),renderAll:ids=>calls.rendered.push(ids)};
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(historyCode+'\nglobalThis.full=checkpoint;globalThis.scoped=checkpointConfig;globalThis.undo=()=>stepHistory(history,redoHistory,"undo");globalThis.redo=()=>stepHistory(redoHistory,history,"redo");globalThis.trim=trimHistory;',context);
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+historyCode+'\nglobalThis.full=checkpoint;globalThis.scoped=checkpointConfig;globalThis.undo=()=>stepHistory(history,redoHistory,"undo");globalThis.redo=()=>stepHistory(redoHistory,history,"redo");globalThis.trim=trimHistory;',context);
  return {context,calls};
 }
 const row=(context,id)=>context.state.configs.find(config=>config.id===id);
@@ -142,7 +142,7 @@ test('局部undo创建独立草稿，其他配置和全局集合保持引用；�
 });
 test('实际changed历史分支保留emptyLinkDraft/自动简称，且baseline仅刷新目标',()=>{
  const {context}=harness(),baseline=[];Object.assign(context,{acceptedState:null,dirty:false,changeCounter:0,pendingImages:new Set(),imageRecords:new Map(),timer:null,imageTimer:null,conflict:false,batchPromise:null,current:()=>row(context,context.active),document:{querySelector:()=>null},rememberDisplayParts:ids=>baseline.push(ids),visiblePosterInput:value=>JSON.stringify(value),updateHeading(){},updateSummary(){},refreshCurrentListPart(){},schedulePreview(){},setTimeout:()=>1,clearTimeout(){},suggestedName(){throw Error('不应重算已恢复简称');},$:(id)=>({disabled:false,textContent:'',classList:{add(){}}})});
- const changed=app.slice(app.indexOf("function changed(message="),app.indexOf('function downloadBlob('));Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(changed,context);
+ const changed=app.slice(app.indexOf("function changed(message="),app.indexOf('function downloadBlob('));Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+changed,context);
  row(context,'one').emptyLinkDraft=true;row(context,'one').shortNameAuto=true;row(context,'one').shortName='原自动简称';context.scoped();delete row(context,'one').emptyLinkDraft;row(context,'one').shortName='改后简称';row(context,'one').price=11;context.undo();
  assert.equal(row(context,'one').emptyLinkDraft,true);assert.equal(row(context,'one').shortName,'原自动简称');assert.deepEqual(baseline.at(-1),['one']);assert.equal(context.dirty,true);
 });
@@ -171,7 +171,7 @@ test('本次全局操作移除占位配置后，保留局部记录并允许先�
 });
 test('实际acceptSavedState重基混合栈，并保留保存期间当前输入',()=>{
  const {context}=harness();const sent=structuredClone(context.state);context.scoped();row(context,'one').price=11;context.full();row(context,'two').name='飞行输入';const remote=structuredClone(sent);remote.configs[0].parts[0].lineId='line';
- Object.assign(context,{acceptedState:null,dirty:true});const accept=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'));Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext(accept+'\nglobalThis.accept=acceptSavedState;',context);context.accept(sent,remote);
+ Object.assign(context,{acceptedState:null,dirty:true});const accept=app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'));Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+accept+'\nglobalThis.accept=acceptSavedState;',context);context.accept(sent,remote);
  assert.equal(row(context,'two').name,'飞行输入');assert.equal(context.history[0].historyScope,'configs');assert.equal(context.history[0].configs[0].parts[0].lineId,'line');assert.equal(context.history[1].configs[0].parts[0].lineId,'line');assert.equal(context.history[0].logs,undefined);
 });
 test('混合条目内存限制按每项真实bytes求和，次数仍保留30项限制',()=>{

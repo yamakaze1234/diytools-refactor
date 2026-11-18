@@ -9,20 +9,23 @@ import type { StartupLoginState } from './startup-login-controller';
 import './StartupLogin.css';
 
 /** 按控制器状态禁用重复操作，提交凭据后由控制器负责后续准备。 */
-export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogout, onChooseData }: {
+export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogout, onChooseData,onConnectionSettings,nasMain=false }: {
   desktop: boolean; state: StartupLoginState;
   onLogin: (username: string, password: string, remember: boolean) => Promise<void>;
   onRetry: () => Promise<void>; onLogout: () => Promise<void>;
   onChooseData: (source: 'cloud' | 'legacy') => Promise<void>;
+  nasMain?: boolean;
+  onConnectionSettings?:()=>void;
 }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword,setShowPassword]=useState(false);
   const [remember, setRemember] = useState(true);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (state.busy) return;
     let secret = password;
-    setPassword('');
+    setPassword('');setShowPassword(false);
     const request = onLogin(username, secret, remember);
     secret = '';
     await request;
@@ -51,15 +54,16 @@ export default function StartupLogin({ desktop, state, onLogin, onRetry, onLogou
           <label htmlFor="startup-username">账号</label>
           <Input id="startup-username" name="username" autoComplete="username" autoFocus value={username} onChange={event => setUsername(event.target.value)} disabled={state.busy} required />
           <label htmlFor="startup-password">密码</label>
-          <Input id="startup-password" name="password" type="password" autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} disabled={state.busy} required />
+          <div className="startup-password-field"><Input id="startup-password" name="password" type={showPassword?'text':'password'} autoComplete="off" value={password} onChange={event => setPassword(event.target.value)} disabled={state.busy} required /><Button type="button" variant="outline" aria-pressed={showPassword} disabled={state.busy} onClick={()=>setShowPassword(value=>!value)}>{showPassword?'隐藏密码':'显示密码'}</Button></div>
           <label className="startup-login-remember"><input id="startup-remember" type="checkbox" checked={remember} onChange={event => setRemember(event.target.checked)} disabled={state.busy} />保留登录信息</label>
           {state.error && <p className="startup-login-error" role="alert">{state.error}</p>}
           {state.busy && <p className="startup-login-progress" role="status">{state.message}</p>}
           <Button type="submit" className="startup-login-submit" disabled={state.busy}>{state.busy ? '请稍候…' : '登录'}</Button>
           {state.error && <Button variant="outline" type="button" className="startup-login-other" disabled={state.busy} onClick={() => void onRetry()}>重新检查登录状态</Button>}
         </form>}
+      {onConnectionSettings&&<Button type="button" variant="ghost" disabled={state.busy} onClick={()=>{setPassword('');setShowPassword(false);onConnectionSettings();}}>连接设置</Button>}
       {desktop && <DiagnosticExport />}
-      <p className="startup-login-storage">配置先保存在本机，登录后自动同步。</p>
+      <p className="startup-login-storage">{nasMain?'配置从服务端加载，编辑后保存到服务端。':'配置先保存在本机，登录后自动同步。'}</p>
     </section>
   </main>;
 }

@@ -46,9 +46,29 @@ export function applyPriceImport(plan,configs,settings,at=new Date().toISOString
 /** 绑定粘贴、预览和确认入口，避免输入尚未核验就修改配置。 */
 export function openPriceImport(api){
  const {openDialog,closeDialog,toast,esc,money,getConfigs,getSettings,apply,back}=api;
- const p=api.product();openDialog('从成本维护表更新价格',`<p class="hint">更新当前链接：<strong>${esc(p.name)}</strong> · ${p.configs.length} 套。按完整简称匹配，不按行号对应。</p><p class="hint">三列依次为：简称、库存、定价。库存仅供核对。到手价 = 定价 − 店铺券 ¥${money(getSettings().coupon)}。</p><textarea id="price-import-text" aria-label="成本维护表价格数据" placeholder="从 WPS 复制三列后粘贴，也支持 Markdown 表格"></textarea><div class="actions"><button id="price-import-check">预览价格差异</button></div><p id="price-import-status" role="status" class="hint"></p><div id="price-import-preview"></div><div class="actions"><button id="price-import-back">返回总览</button><button id="price-import-apply" class="primary" disabled>应用价格更新</button></div>`);
+ const p=api.product();openDialog('从成本维护表更新价格',`<p class="hint">更新当前链接：<strong>${esc(p.name)}</strong> · ${p.configs.length} 套。按完整简称匹配，不按行号对应。</p><p class="hint">三列依次为：简称、库存、定价。库存仅供核对。到手价 = 定价 − 店铺券 ¥${money(getSettings().coupon)}。${api.nas?'这里只更新工作台到手价。销售报价在“维护表报价 / 销售发布”中单独维护。':''}</p><textarea id="price-import-text" aria-label="成本维护表价格数据" placeholder="从 WPS 复制三列后粘贴，也支持 Markdown 表格"></textarea><div class="actions"><button id="price-import-check">预览价格差异</button></div><p id="price-import-status" role="status" class="hint"></p><div id="price-import-preview"></div><div class="actions"><button id="price-import-back">返回总览</button><button id="price-import-apply" class="primary" disabled>应用价格更新</button></div>`);
  const $=selector=>document.querySelector(selector);let plan=null;
  $('#price-import-text').oninput=()=>{plan=null;$('#price-import-apply').disabled=true;$('#price-import-preview').innerHTML='';$('#price-import-status').textContent='请重新预览价格差异';};
  $('#price-import-check').onclick=()=>{try{plan=priceImportPlan($('#price-import-text').value,getConfigs(),getSettings());const unmatched=plan.rows.filter(r=>!r.id).length;$('#price-import-status').textContent=plan.errors.length?plan.errors.slice(0,5).join('；'):`匹配 ${plan.rows.length-unmatched} 行，待更新 ${plan.changes.length} 套，未匹配 ${unmatched} 行，跳过 ${plan.skipped} 行空值、表头或相同重复。`;$('#price-import-status').classList.toggle('error',!!plan.errors.length);$('#price-import-preview').innerHTML=`<div class="price-import-table-wrap"><table class="price-import-table"><thead><tr><th>简称 / 状态</th><th>库存</th><th>原定价 → 新定价</th><th>新到手价</th></tr></thead><tbody>${plan.rows.map(r=>`<tr><td>${esc(r.name)}<small>${esc(r.status)}</small></td><td>${esc(r.stock)}</td><td>${r.oldList===undefined?'—':money(r.oldList)} → ${money(r.listPrice)}</td><td>${r.after===undefined?'—':money(r.after)}</td></tr>`).join('')}</tbody></table></div>`;$('#price-import-apply').disabled=!!plan.errors.length||!plan.changes.length;$('#price-import-apply').textContent=`更新 ${plan.changes.length} 套配置价格`;}catch(e){plan=null;$('#price-import-apply').disabled=true;$('#price-import-status').textContent=e.message;}};
- $('#price-import-back').onclick=back;$('#price-import-apply').onclick=()=>{try{if(!plan)return;apply(plan);closeDialog();toast(`已更新 ${plan.changes.length} 套配置价格，正在保存`);}catch(e){toast(e.message);$('#price-import-apply').disabled=true;}};
+ const applyButton=$('#price-import-apply'),input=$('#price-import-text'),check=$('#price-import-check'),backButton=$('#price-import-back'),status=$('#price-import-status');
+ backButton.onclick=back;
+ if(!api.nas){
+  applyButton.onclick=()=>{try{if(!plan)return;apply(plan);closeDialog();toast(`已更新 ${plan.changes.length} 套配置价格，正在保存`);}catch(e){toast(e.message);applyButton.disabled=true;}};
+  return;
+ }
+ // 提交期间保留这份预览；只有得到 NAS 确认才关闭当前对话框和提示成功。
+ const stillOpen=()=>applyButton.isConnected&&applyButton.closest('dialog')?.open;
+ applyButton.onclick=async()=>{
+  if(!plan?.changes.length||applyButton.disabled)return;
+  const confirmedPlan=plan;
+  for(const control of [applyButton,input,check,backButton])control.disabled=true;
+  status.classList.remove('error');status.textContent='正在保存工作台到手价…';
+  try{
+   const confirmed=await apply(confirmedPlan);
+   if(!stillOpen())return;
+   if(!confirmed){status.textContent='本次未提交，已保留预览。';return;}
+   closeDialog();toast(`已保存 ${confirmedPlan.changes.length} 套工作台到手价`);
+  }catch(error){if(stillOpen()){status.classList.add('error');status.textContent=error.message;}}
+  finally{if(stillOpen()){for(const control of [input,check,backButton])control.disabled=false;applyButton.disabled=plan!==confirmedPlan||!plan.changes.length;}}
+ };
 }

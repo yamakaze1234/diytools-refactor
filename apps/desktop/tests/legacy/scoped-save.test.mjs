@@ -66,7 +66,7 @@ const receiptCode=app.slice(app.indexOf('async function savedReceiptState('),app
 function harness(){const {base,live}=setup(),nodes=new Map(),requests=[];
  const context={...fullBranch,saveFullState,...editor,...scopes,state:live,acceptedState:base,dirty:false,conflict:false,savePromise:null,batchPromise:null,batchPending:null,ordinaryPending:null,changed:{message:'input'},operator:'test',history:[],redoHistory:[],sameEditingState,mergeEditingState,ordinarySaveChanges,crypto:{randomUUID},sourceCatalog:x=>x,syncHistoryButtons(){},trimHistory(){},renderAll(){},pollDerivedStatus:()=>Promise.resolve(),scheduleImageSave(){},toast(){},$:(id)=>{if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id);}};
  context.request=async(url,options)=>{const payload=JSON.parse(options.body);requests.push({url,payload});if(url==='/api/configs/batch')return {configs:payload.changes.map(row=>row.after),revision:requests.length+1,updatedAt:'2026-10-12T00:00:00Z',activityDelta:[],rebased:false};return {state:{...base,...payload,revision:requests.length+1,logs:[]},revision:requests.length+1,updatedAt:'2026-10-12T00:00:00Z',logs:[]};};
- vm.runInNewContext(receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('))+'\nglobalThis.run=save;',context);return {context,requests};
+ vm.runInNewContext('var nasMain=false;\n'+receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('))+'\nglobalThis.run=save;',context);return {context,requests};
 }
 test('实际save无变化完整捕获也确认scope，随后普通输入实际走局部增量',async()=>{
  const {context:c,requests}=harness();c.dirty=true;await c.run();assert.equal(requests.length,0);assert.equal(scopes.saveScopeStatus(c.state).full,false);

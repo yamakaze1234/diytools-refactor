@@ -32,7 +32,9 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
   const detail=await renderPoster({...c,layout:'long'},width,{beforeDraw});
   if(beforeDraw)await beforeDraw('padding');
   const scale=Math.min(width/detail.canvas.width,width/detail.canvas.height),contentWidth=detail.canvas.width*scale,contentHeight=detail.canvas.height*scale;
-  return {...detail,canvas:paddedSquare(detail.canvas,width),base:width,height:width,previewContentRect:{x:(width-contentWidth)/2,y:(width-contentHeight)/2,width:contentWidth,height:contentHeight},regions:[],textRegions:[],imageRegion:null,addedImageRegions:[],padding:true,readOnly:true};
+  // 补白完成即释放中间长图；只读方图不保留长图重绘闭包。
+  const canvas=paddedSquare(detail.canvas,width);detail.canvas.width=0;detail.canvas.height=0;
+  return {...detail,canvas,redrawImages:undefined,redrawLayout:undefined,base:width,height:width,previewContentRect:{x:(width-contentWidth)/2,y:(width-contentHeight)/2,width:contentWidth,height:contentHeight},regions:[],textRegions:[],imageRegion:null,addedImageRegions:[],padding:true,readOnly:true};
  }
  if(c.layout==='square'){c=normalizePosterDesign(structuredClone(c));c.textStyles=c.skuTextStyles||{};c.caseVisible=false;c.posterImages=[];}
  const square=c.layout==='square',image=c.caseVisible===false?null:await getImage(c.caseImage),dark=c.theme==='dark';
@@ -48,7 +50,9 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
  // All asynchronous font/material loads finish before admission to synchronous
  // layout. The preview leaves this callback undefined and adds no gate waits.
  if(beforeDraw)await beforeDraw('layout');
- const measure=document.createElement('canvas').getContext('2d');
+ // 文字测量只需要上下文，不需要默认 300×150 像素缓冲。
+ const measureCanvas=document.createElement('canvas');measureCanvas.width=measureCanvas.height=1;
+ const measure=measureCanvas.getContext('2d');
  if(autoWidth&&!fixed)base=modelCanvasWidth(measure,c,{tightRows,unifiedPanel});
  const font=s=>`${s.italic?'italic ':''}${s.weight} ${s.size}px "${s.fontFamily}",sans-serif`;
  const parts=posterParts(c).filter(p=>hasText(p.name)||(c.keepCorePartPlaceholders&&slots.slice(0,8).includes(p.slot))); 

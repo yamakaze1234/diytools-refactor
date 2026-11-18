@@ -237,6 +237,46 @@ class VaultAndProtocolTests(unittest.TestCase):
             self.assertEqual(result['settings'], sql.settings(CONFIG))
             self.assertEqual(result['rows'][0]['erp'], 20)
 
+    def test_nas_reuses_saved_read_only_connection_without_vault_mutation(self):
+        session = Session(version='offline')
+        request = {'id': 'x', 'action': 'sql_read_nas', 'remember': False, 'password': 'false-credential'}
+        with patch('sql_credentials.load', return_value={'saved': True, 'settings': CONFIG, 'password': SECRET}), \
+             patch('sql_service.read_bundle', return_value=bundle()) as read, \
+             patch('sql_credentials.save') as save, patch('sql_credentials.clear') as clear:
+            result = session.handle(request)
+            read.assert_called_once_with(CONFIG, SECRET)
+            self.assertEqual(set(result), {'rows'})
+            self.assertEqual(result['rows'][0]['stockAvailable'], 8)
+            save.assert_not_called()
+            clear.assert_not_called()
+
+        # 未配置与当前 Windows 用户无法解密不同；无封套时也不能触发 SQL 查询。
+        with patch('sql_credentials.load', return_value={'saved': False}), patch('sql_service.read_bundle') as read:
+            with self.assertRaises(WorkerError) as missing:
+                session.handle(request)
+            self.assertEqual(missing.exception.code, 'SQL_CREDENTIALS_NOT_SAVED')
+            read.assert_not_called()
+
+    def test_nas_form_does_not_return_password_or_clear_a_saved_connection(self):
+        session = Session(version='offline')
+        with patch('sql_credentials.load', return_value={'saved': True, 'settings': CONFIG, 'password': SECRET}):
+            self.assertEqual(session.handle({'id': 'status', 'action': 'sql_credentials_status'}), {'saved': True, 'settings': CONFIG})
+        for remember in (False, True):
+            request = {'id': 'form', 'action': 'sql_read_nas_form', 'settings': CONFIG, 'password': SECRET, 'remember': remember}
+            # 只有已验证的成功查询才写当前 NAS 档案，取消保存不会清掉之前凭据。
+            with patch('sql_service.read_bundle', return_value=bundle()) as read, \
+                 patch('sql_credentials.save') as save, patch('sql_credentials.clear') as clear:
+                result = session.handle(request)
+                read.assert_called_once_with(sql.settings(CONFIG), SECRET)
+                self.assertEqual(set(result), {'rows', 'settings'})
+                self.assertEqual(save.call_count, int(remember))
+                clear.assert_not_called()
+                read.side_effect = sql.SqlError('network', 'SQL_CONNECTION')
+                with self.assertRaises(WorkerError):
+                    session.handle(request)
+                self.assertEqual(save.call_count, int(remember))
+                clear.assert_not_called()
+
     def test_output_oversize_never_changes_saved_connection(self):
         request = {'id': 'x', 'action': 'sql_read', 'settings': CONFIG, 'password': SECRET, 'remember': True}
         with patch('sql_service.read_bundle', return_value=bundle()), \

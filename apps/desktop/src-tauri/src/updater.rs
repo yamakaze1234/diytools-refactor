@@ -21,11 +21,18 @@ mod recovery;
 pub(crate) mod retention;
 
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
-const MANIFEST_NAME: &str = "diytools-refactor-windows-x86_64.json";
+// 正式服务端工作台使用独立签名契约；旧客户端保持原通道且不再发布。
+const APP_ID: &str = if cfg!(feature="formal-nas-client") { "io.diytools.nas-intel-production" } else { "io.diytools.refactor" };
+const CHANNEL: &str = if cfg!(feature="formal-nas-client") { "workbench" } else { "refactor" };
+const TAG_PREFIX: &str = if cfg!(feature="formal-nas-client") { "workbench-v" } else { "refactor-v" };
+const ARTIFACT_PREFIX: &str = if cfg!(feature="formal-nas-client") { "diytools-workbench" } else { "diytools-refactor" };
+const MANIFEST_NAME: &str = if cfg!(feature="formal-nas-client") { "diytools-workbench-windows-x86_64.json" } else { "diytools-refactor-windows-x86_64.json" };
+fn version_tag(version:&str)->String {format!("{TAG_PREFIX}{version}")}
+fn artifact_name(version:&str)->String {format!("{ARTIFACT_PREFIX}-{version}-windows-x86_64.exe")}
 const MAX_METADATA: u64 = 128 * 1024;
 const MAX_BINARY: u64 = 512 * 1024 * 1024;
 const REPOSITORY: &str = "yamakaze1234/diytools-refactor";
-const CHANNEL_TAG: &str = "refactor-updates";
+const CHANNEL_TAG: &str = if cfg!(feature="formal-nas-client") { "workbench-updates" } else { "refactor-updates" };
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -126,8 +133,8 @@ fn verify_envelope(
         .map_err(|_| "更新清单签名验证失败")?;
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效")?;
     if manifest.schema != 1
-        || manifest.app_id != "io.diytools.refactor"
-        || manifest.channel != "refactor"
+        || manifest.app_id != APP_ID
+        || manifest.channel != CHANNEL
         || manifest.platform != "windows-x86_64"
     {
         return Err("更新清单不属于本重构版本/平台".into());
@@ -146,7 +153,7 @@ fn verify_envelope(
         return Err("发布日期或说明无效".into());
     }
     let artifact = &manifest.artifact;
-    if artifact.name != format!("diytools-refactor-{}-windows-x86_64.exe", manifest.version)
+    if artifact.name != artifact_name(&manifest.version)
         || artifact.size == 0
         || artifact.size > MAX_BINARY
         || artifact.sha256.len() != 64
@@ -161,11 +168,11 @@ fn verify_envelope(
         let url = Url::parse(url).map_err(|_| "更新下载地址无效")?;
         if !download_url_matches(
             &url,
-            &format!("refactor-v{}", manifest.version),
+            &version_tag(&manifest.version),
             &artifact.name,
         ) && !gitea::download_matches(
             &url,
-            &format!("refactor-v{}", manifest.version),
+            &version_tag(&manifest.version),
             &artifact.name,
         ) {
             return Err("更新下载地址超出受信仓库".into());
@@ -198,7 +205,7 @@ fn api_url_allowed(url: &Url) -> bool {
     }
     if let Some(tag) = rest.strip_prefix("tags/") {
         return tag == CHANNEL_TAG
-            || tag.strip_prefix("refactor-v").is_some_and(|value| {
+            || tag.strip_prefix(TAG_PREFIX).is_some_and(|value| {
                 Version::parse(value).is_ok_and(|version| {
                     version.pre.is_empty()
                         && version.build.is_empty()
@@ -425,7 +432,7 @@ fn github_artifact_response(
     manifest: &Manifest,
     token: Option<&str>,
 ) -> Result<reqwest::blocking::Response, String> {
-    let tag = format!("refactor-v{}", manifest.version);
+    let tag = version_tag(&manifest.version);
     let release: serde_json::Value =
         serde_json::from_slice(&get_metadata(client, &release_url(&tag)?, token)?)
             .map_err(|_| "发布信息格式无效")?;
@@ -463,7 +470,7 @@ fn artifact_response(
     client: &Client,
     manifest: &Manifest,
 ) -> Result<(reqwest::blocking::Response, String), String> {
-    let tag = format!("refactor-v{}", manifest.version);
+    let tag = version_tag(&manifest.version);
     let signed_source = |gitea_source: bool| {
         manifest.artifact.urls.iter().any(|text| {
             Url::parse(text).is_ok_and(|url| {
@@ -544,6 +551,10 @@ fn portable_marker(root: &Path) -> Result<(), String> {
     }
     Ok(())
 }
+// 新版仅更新程序；即使目录中残留旧 SQLite，也不得打开、复制或恢复它。
+fn capture_data_for_update(root:&Path,directory:&Path)->Result<Option<recovery::Snapshot>,String>{
+    if cfg!(feature="formal-nas-client"){Ok(None)}else{recovery::Snapshot::capture(root,directory).map(Some)}
+}
 // 仅在可验证的便携安装布局下开放自动替换，其他环境保留手动处理。
 fn install_capability() -> Result<(), String> {
     if !cfg!(target_os = "windows") || !cfg!(target_arch = "x86_64") || cfg!(debug_assertions) {
@@ -582,6 +593,11 @@ fn create_directory(root: &Path) -> Result<PathBuf, String> {
 #[tauri::command]
 // 后台读取并校验发布信息，缓存已验证结果供下载阶段复用。
 pub async fn updater_check(app: tauri::AppHandle) -> Result<CheckReport, String> {
+    // 试验宿主即使通过环境变量进入 NAS，也不能误走旧本地版更新通道。
+    if !cfg!(feature="formal-nas-client") && app.try_state::<std::sync::Arc<crate::cloud_native::CloudRuntime>>()
+        .is_some_and(|runtime|runtime.nas_main()) {
+        return Err("当前客户端未编入新版更新通道，请使用正式工作台程序".into());
+    }
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<UpdaterState>();
         let mut inner = state.0.try_lock().map_err(|_| "另一项更新操作正在进行")?;
@@ -1127,9 +1143,9 @@ fn apply_update(plan_path: &Path) -> Result<(), String> {
     {
         return Err("等待退出期间文件发生变化，拒绝替换".into());
     }
-    // 旧进程已完全退出，先备份包含 WAL 提交的数据库，再替换可执行文件。
+    // 服务端版本只替换 EXE，不备份或回滚本机/服务端数据；旧本地版本保留既有恢复流程。
     let snapshot =
-        match recovery::Snapshot::capture(target.parent().ok_or("便携目录无效")?, directory) {
+        match capture_data_for_update(target.parent().ok_or("便携目录无效")?, directory) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 // 备份失败尚未修改程序或业务库，恢复用户的旧程序入口。
@@ -1183,22 +1199,22 @@ fn apply_update(plan_path: &Path) -> Result<(), String> {
                 std::thread::sleep(Duration::from_millis(100));
             }
         },
-        || snapshot.restore(),
+        || match &snapshot { Some(snapshot)=>snapshot.restore(), None=>Ok(()) },
     )?;
     if confirmed {
         write_status(
             directory,
             "installed",
-            "新版本已完成数据库及本机运行时初始化；更新前程序与一致性数据库备份已保留",
+            if cfg!(feature="formal-nas-client") { "新版工作台已启动，原程序已保留，data 和连接配置未被替换" } else { "新版本已完成数据库及本机运行时初始化；更新前程序与一致性数据库备份已保留" },
         )?;
         // 清理失败不改变安装成功状态，更不能触发业务数据库回滚。
-        retention::run(directory.parent().and_then(Path::parent).ok_or("更新目录无效")?);
+        if !cfg!(feature="formal-nas-client") { retention::run(directory.parent().and_then(Path::parent).ok_or("更新目录无效")?); }
         Ok(())
     } else {
         write_status(
             directory,
             "started-unconfirmed",
-            "新进程仍运行或状态不能确认，尚未收到初始化完成回执；保留更新前程序和数据库备份，未回滚活动数据库",
+            "新进程仍运行或状态不能确认，尚未收到初始化完成回执；保留更新前程序，未回滚活动数据",
         )
     }
 }
@@ -1212,7 +1228,7 @@ pub(crate) fn acknowledge_startup() -> Result<(), String> {
     let Some(directory) = std::env::var_os("DIYTOOLS_UPDATE_RECEIPT") else {
         // 普通启动重试此前因文件占用而未完成的清理，不阻塞初始化。
         if let Ok((_, root)) = executable_root() {
-            if portable_marker(&root).is_ok() {
+            if !cfg!(feature="formal-nas-client") && portable_marker(&root).is_ok() {
                 std::thread::spawn(move || retention::run(&root));
             }
         }

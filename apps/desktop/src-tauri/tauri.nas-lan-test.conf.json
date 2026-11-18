@@ -1,0 +1,15 @@
+{
+  "productName": "DIY Tools NAS LAN Test",
+  "identifier": "io.diytools.nas-lan-test",
+  "app": {
+    "windows": [{
+      "title": "DIY Tools · NAS 内网测试",
+      "dragDropEnabled": false,
+      "width": 1440,
+      "height": 900,
+      "minWidth": 760,
+      "minHeight": 560
+    }]
+  },
+  "bundle": { "active": false }
+}

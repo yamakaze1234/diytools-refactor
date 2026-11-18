@@ -29,3 +29,8 @@ test('旧仓库、重复地址和缺少 Gitea 地址均拒绝', () => {
     assert.throws(() => verifyGiteaPackage(fixture(p => p.artifact.urls = [])), /下载地址/);
 });
 test('已签名的其他版本也不得作为当前源码版本发布', () => assert.throws(() => verifyGiteaPackage(fixture(p => p.version = '0.2.3')), /版本/));
+
+// 发布侧也必须要求明确选择新版契约，不能把旧通道清单误认作新版。
+test('新版发布校验拒绝旧产品身份',()=>{
+ const old=fixture();assert.throws(()=>verifyGiteaPackage({...old,profile:'workbench'}),/标识/);
+});

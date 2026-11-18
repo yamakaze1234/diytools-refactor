@@ -9,6 +9,9 @@
 .topbar .erp-sync-controls, .topbar .workspace-sync-controls { border: 0; padding: 0; min-width: 0; }
 .topbar button { min-height: 30px; padding: 5px 10px; }
 .topbar #save-status { max-width: 210px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-right: 2px; }
+/* NAS 状态使用两行只读文本，避免新增长按钮挤压顶部操作。 */
+.topbar #nas-server-status { display: grid; color: var(--ef-muted, var(--legacy-muted)); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.topbar #nas-server-status small { font-size: 10px; line-height: 1.35; }
 .topbar #operator-open { border-color: transparent; color: var(--legacy-muted); }
 .workspace-step { display: none; }
 .main .page-heading { margin-bottom: 12px; }

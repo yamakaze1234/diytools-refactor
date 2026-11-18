@@ -80,7 +80,7 @@ export function openStandardProduct(api){
  $('#standard-file').onchange=async e=>{const file=e.target.files[0];if(!file)return;try{if(file.size>5*1024*1024)throw Error('JSON 文件请小于 5MB');const text=await file.text();if(!alive())return;$('#standard-json').value=text;receive(text);}catch(e){message(e.message);}};
  $('#standard-export').onclick=()=>{try{const result=exportStandardProduct(api.state(),p,{erpShopId:shopId()});api.download(new Blob([JSON.stringify(result,null,2)],{type:'application/json'}),`${p.name.replace(/[<>:"/\\|?*]/g,'_')}-商品标准.json`);message('标准 JSON 已导出');}catch(e){message(e.message);}};
  $('#standard-shop').oninput=()=>{if(payload)preview($('#standard-prices')?.checked);};
- const unavailable='当前离线版尚未接入实时 ERP 商品查询';
+ const unavailable=api.nas?'NAS 模式可用标准 JSON，连接脚本的 ERP 刷新未启用':'当前离线版尚未接入实时 ERP 商品查询';
  $('#standard-query').disabled=true;$('#standard-query').title=unavailable;
  $('#standard-account').disabled=true;$('#standard-account').closest('label').hidden=true;
  $('#standard-json-tools').open=true;

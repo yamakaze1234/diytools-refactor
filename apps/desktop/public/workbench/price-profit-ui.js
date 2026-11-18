@@ -35,6 +35,7 @@ export function mountPriceProfit(root,api){
  const workspace=root.closest('.workspace');
  let shop=api.activeShop(),product='',basis='erp',filter='all',sort='order',grouped=true;
  let statusFilter=new Set();
+ let initialGroups=false;
  let chosen=new Set(),collapsed=new Set(),rendering=false,pointerDown=false,deferredDraw=false,renderTimer=0,drawnIds=[];
  const $=selector=>root.querySelector(selector);
  const dialog=()=>document.querySelector('#dialog-body');
@@ -153,7 +154,13 @@ export function mountPriceProfit(root,api){
     const value=parseArrival(el.value);
     plan=current.quote.arrival===value?[]:[{id,fields:{price:value}}];
    }else plan=planIdEdit(api.allConfigs(),key,[id],[el.value],{allowBlank:true});
-   if(plan.length)api.apply(plan,key==='price'?'调整到手价':'修改 '+fieldNames[key]);
+   if(plan.length){
+    const pending=api.apply(plan,key==='price'?'调整到手价':'修改 '+fieldNames[key]);
+    if(api.nas){
+     const old=el.defaultValue;
+     pending.then(()=>refresh({force:true}),error=>{if(el.isConnected)el.value=el.defaultValue=old;announce(error.message);});
+    }
+   }
    el.defaultValue=el.value;
    return true;
   }catch(error){el.value=el.defaultValue;announce(error.message);return false;}
@@ -180,7 +187,10 @@ export function mountPriceProfit(root,api){
    const values=parseIdPaste(event.clipboardData?.getData('text/plain')??'',key),i=drawnIds.indexOf(input.dataset.rowId);
    if(i<0)throw Error('当前行已改变，请重新选择单元格。');
    const ids=drawnIds.slice(i),plan=planIdEdit(api.allConfigs(),key,ids,values);
-   if(plan.length)api.apply(plan,'表格粘贴 '+fieldNames[key]);
+   if(plan.length){
+    const pending=api.apply(plan,'表格粘贴 '+fieldNames[key]);
+    if(api.nas){pending.then(()=>{refresh({force:true});announce('NAS 已确认粘贴修改。');},error=>announce(error.message));return;}
+   }
    refresh({force:true});
    announce(plan.length?(key==='spu'?'SPU 已更新，同一链接的配置已同步。':'已粘贴 '+values.length+' 行 SKU。'):'编号没有变化。');
   }catch(error){announce(error.message);}
@@ -240,9 +250,27 @@ export function mountPriceProfit(root,api){
  $('#pp-alert').onclick=()=>openAlert();
  $('#pp-new-link').onclick=()=>api.newLink(shop==='all'?api.activeShop():shop);
  $('#pp-batch').onclick=()=>openBatch();
- $('#pp-undo').onclick=()=>api.undo();
- $('#pp-redo').onclick=()=>api.redo();
- $('#pp-save').onclick=()=>api.save();
+ $('#pp-undo').onclick=()=>{api.undo();if(api.nas)refresh({force:true});};
+ $('#pp-redo').onclick=()=>{api.redo();if(api.nas)refresh({force:true});};
+ const saveButton=$('#pp-save');
+ saveButton.onclick=async()=>{
+  if(saveButton.disabled)return;saveButton.disabled=true;
+  try{await api.save();if(api.nas)refresh({force:true});}
+  catch(error){announce(error.message);}
+  finally{saveButton.disabled=false;}
+ };
+ if(api.nas){
+  saveButton.textContent='保存到服务端';
+  const discard=document.createElement('button');discard.type='button';discard.className=saveButton.className;
+  discard.textContent='处理旧版价格草稿';discard.onclick=()=>{
+   const old=api.oldPriceDraft?.()||[];
+   if(!old.length)return announce('没有未合入的旧版价格草稿。当前编辑可用撤销处理。');
+   api.openDialog('旧版价格利润草稿','<p class="hint">与当前版本一致且无同字段冲突的旧草稿会在手动保存时合入。冲突草稿保留供核对。</p><ul>'+
+    old.map(row=>'<li>'+esc(api.allConfigs().find(c=>c.id===row.id)?.name||row.id)+' · '+esc(JSON.stringify(row.fields))+'</li>').join('')+
+    '</ul><button id="pp-drop-old" type="button">放弃旧版草稿</button>');
+   dialog().querySelector('#pp-drop-old').onclick=()=>{api.discard();api.closeDialog();refresh({force:true});};
+  };saveButton.after(discard);
+ }
 
  function openDetail(id){
   const row=currentPriceRow(id);if(!row)return;
@@ -270,7 +298,7 @@ export function mountPriceProfit(root,api){
    mode.onchange=()=>{loss.value=0;target.value=mode.value==='rate'?2:100;};
    return {key,label,check,mode,loss,target};
   });
-  d.querySelector('#pp-alert-apply').onclick=()=>{
+  d.querySelector('#pp-alert-apply').onclick=async event=>{
    const bases=controls.filter(c=>c.check.checked).map(c=>c.key),next={...rules,bases};
    const error=d.querySelector('#pp-alert-error');
    if(!bases.length){error.textContent='请至少选择一个检测口径。';return;}
@@ -279,7 +307,13 @@ export function mountPriceProfit(root,api){
     if(check.checked&&!rule){error.textContent=label+'：请填写有效数值；目标线必须不小于零和亏损线。';return;}
     if(rule)next[key+'Profit']=rule;
    }
-   api.setAlert(targetShop,next);api.closeDialog();refresh({force:true});
+   const button=event.currentTarget;if(button.disabled)return;
+   button.disabled=true;
+   try{
+    const outcome=api.setAlert(targetShop,next);if(api.nas)await outcome;
+    if(button.isConnected)api.closeDialog();refresh({force:true});
+   }catch(failure){if(button.isConnected)error.textContent=failure.message;}
+   finally{button.disabled=false;}
   };
  }
  function openBatch(){
@@ -298,13 +332,22 @@ export function mountPriceProfit(root,api){
    }catch(e){error.textContent=e.message;}
   }
   mode.onchange=value.oninput=update;
-  apply.onclick=()=>{
+  apply.onclick=async()=>{
    update();if(apply.disabled)return;
    const plan=read().filter(x=>x.price!=null&&x.price!==x.from).map(x=>({id:x.id,fields:{price:x.price}}));
-   api.apply(plan,'批量调价');api.closeDialog();refresh({force:true});announce('已调整 '+plan.length+' 套价格，可撤销。');
+   apply.disabled=true;
+   try{
+    const outcome=api.apply(plan,'批量调价');if(api.nas)await outcome;
+    if(apply.isConnected)api.closeDialog();refresh({force:true});announce(api.nas?'已暂存 '+plan.length+' 套工作台价格，点击“保存表内草稿到 NAS”后提交。':'已调整 '+plan.length+' 套价格，可撤销。');
+   }catch(failure){if(apply.isConnected)error.textContent=failure.message;}
+   finally{if(apply.isConnected)apply.disabled=false;}
   };
  }
  function show(){
+  // 大店铺首次按链接折叠，避免同时创建上千行可编辑输入框；筛选与汇总仍覆盖全店。
+  if(api.nas&&!initialGroups&&api.rows().length>200){
+   collapsed=new Set(groupedConfigs().keys());initialGroups=true;
+  }
   if(!visible()){shop=api.activeShop();product='';chosen.clear();}
   root.hidden=false;workspace.classList.add('price-profit-active');
   refresh({force:true});$('#pp-search').focus();

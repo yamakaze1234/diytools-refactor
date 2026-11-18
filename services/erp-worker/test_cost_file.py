@@ -17,6 +17,10 @@ class CostFileTests(unittest.TestCase):
  def test_readonly_two_columns_errors_and_duplicates(self):
   r=self.read([['goods_id','含税成本','unused'],['9007199254740993',23.5,'private'],[1,0],[1,0],[2,'#VALUE!'],[3,None]])
   self.assertEqual(r['rows'],[{'goods_id':'9007199254740993','tax':23.5},{'goods_id':'1','tax':0}]);self.assertEqual(r['invalidCount'],1)
+ def test_repaired_host_cost_header_not_single_item_tax(self):
+  # 两个新列都含税，只有主机口径可以进入主机成本。
+  self.assertEqual(self.read([['goods_id','主机含税成本'],['23',0],['24',None]])['rows'],[{'goods_id':'23','tax':0}])
+  with self.assertRaises(ValueError):self.read([['goods_id','单品含税'],['23',100]])
  def test_cache_matches_content_and_does_not_share_mutable_rows(self):
   with TemporaryDirectory() as d:
    path=Path(d)/'cost.xlsx';settings={'path':str(path),'sheet':'库存数据','goodsColumn':1,'taxColumn':2}

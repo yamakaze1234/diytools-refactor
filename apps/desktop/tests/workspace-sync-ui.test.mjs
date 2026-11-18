@@ -15,7 +15,7 @@ async function harness({diagnosticExport,diagnosticText,save=async()=>{},stop=as
  const document={querySelector:selector=>elements.get(selector)||null,querySelectorAll:selector=>selector==='[data-cloud-idle]'?[...elements.values()].filter(n=>n.idle):[]};
  const parent={postMessage:(value,origin)=>posted.push({value,origin}),workbenchClosePending:false,workbenchUpdatePending:false};
  const context=vm.createContext({Date:class extends Date{static now(){return now;}},shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch:async(url,options)=>url.endsWith('/maintain')?{ok:true,json:maintenance}:fetcher(url,options),location:{origin:'http://workbench'},window:{parent,workbenchExportDiagnostics:diagnosticExport,workbenchDiagnosticText:diagnosticText,addEventListener(){}},setTimeout,clearInterval(){},setInterval:(fn,ms)=>{intervals.push({fn,ms});return intervals.length;},bindVersionHistory:opts=>{historyOptions=opts;return{open(){calls.push('history');},restore(){calls.push('restore');}};},bindLegacyHistory:opts=>{legacyOptions=opts;return{open(){calls.push('legacy');}};},createCloudWorker(){},createCloudController:opts=>{options=opts;return controller;}});
- vm.runInContext(source,context);
+ vm.runInContext('var nasMain=false;\n'+source,context);
  const ui=await context.bindWorkspaceSync({flush:async()=>{calls.push('save');await save();},receive:async()=>true,esc:String,toast:text=>messages.push(text),openDialog:(title,html)=>{elements.get('#dialog').open=true;dialogs.push({title,html});for(const match of html.matchAll(/<[^>]+id="([^"]+)"[^>]*>/g)){const element=node();element.idle=match[0].includes('data-cloud-idle');elements.set('#'+match[1],element);}}});
  await new Promise(resolve=>setImmediate(resolve));
  return{ui,controller,view,options,elements,calls,messages,posted,intervals,dialogs,parent,historyOptions,legacyOptions,window:context.window,advance:ms=>now+=ms};
@@ -153,7 +153,7 @@ function historyHarness(kind,{fetcher,save=async()=>{}}={}){
   }
   return{ok:true,json:async()=>result};
  };
- const context=vm.createContext({shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch});vm.runInContext(code,context);
+ const context=vm.createContext({shops,localStorage:{getItem:()=>null,setItem(){}},document,fetch});vm.runInContext('var nasMain=false;\n'+code,context);
  const ui=context[binding]({flush:async()=>{calls.push('save');await save();},receive:async()=>calls.push('receive'),openDialog,esc:String,toast:message=>messages.push(message),runMutation:async operation=>{calls.push('mutation');if(running)throw Error('同步正在后台进行');return operation();}});
  return{ui,elements,document,dialog,requests,calls,messages,dialogs,setRunning:value=>{running=value;}};
 }
@@ -250,7 +250,7 @@ test('new save requests wait for local maintenance before starting their request
  const code=app.split('\n').find(line=>line.startsWith('async function request('));
  const gate=deferred(),calls=[];const window={workbenchMaintenancePromise:gate.promise};
  const context=vm.createContext({window,AbortSignal,fetch:async url=>{calls.push(url);return {ok:true,json:async()=>({revision:12})};}});
- vm.runInContext(code,context);let completed=false;
+ vm.runInContext('var nasMain=false;\n'+code,context);let completed=false;
  const save=context.request('/api/configs/patch',{method:'POST'}).then(()=>{completed=true;});
  await new Promise(resolve=>setImmediate(resolve));assert.equal(completed,false);assert.equal(calls.length,0);
  gate.resolve();await save;assert.equal(completed,true);assert.deepEqual(calls,['/api/configs/patch']);

@@ -9,6 +9,7 @@ export function priceMovement(row,metric='erp'){
 }
 export function trackedProfit(config,settings){
  if(!config)return null;
+ if(!config.actualParts&&!config.parts&&config.loggedProfit)return config.loggedProfit;
  const t=totals(config,settings??{pricingRule:config.shopPricingRule});
  const cents=v=>v==null?null:Math.round(v*100);
  return {tax:cents(t.taxProfitAfter),erp:cents(t.erpProfitAfter),fallback:t.erpFallback>0};

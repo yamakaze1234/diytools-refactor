@@ -11,11 +11,11 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function harness({ request, save = async () => {} }) {
+function harness({ request, save = async () => {}, nas = false, configs = [{ id: 'a', shopId: 'intel' }] }) {
   let elements = new Map(), serial = 0;
   const calls = [], messages = [];
-  const node = () => ({ isConnected: true, open: true, textContent: '', innerHTML: '', disabled: false,
-    classList: { add() {} }, querySelectorAll: () => [],
+  const node = () => ({ isConnected: true, open: true, textContent: '', innerHTML: '', disabled: false, value: '',
+    classList: { add() {}, toggle() {} }, querySelectorAll(selector) { return this.lists?.get(selector) ?? []; },setAttribute() {},
     querySelector(selector) { return this.children?.get(selector) ?? null; } });
   const document = { querySelector: key => elements.get(key) ?? null,
     getElementById: key => elements.get('#' + key) ?? null };
@@ -30,13 +30,16 @@ function harness({ request, save = async () => {} }) {
         elements = new Map(['#profit-output', '#profit-start', '#profit-history', '#dialog', '.profit-scope',
           '#profit-publish-save', '#profit-publish-enabled', '#profit-publish-directory', '#profit-publish-status']
           .map(key => [key, node()]));
-        elements.get('#profit-output').children = new Map(['#profit-category-note', '#profit-results'].map(key => [key, node()]));
+        const output=elements.get('#profit-output');
+        output.children = new Map(['#profit-category-note', '#profit-results','#profit-result-search','#profit-result-prev',
+          '#profit-result-next','#profit-result-page'].map(key => [key, node()]));
+        output.lists = new Map([['[data-profit-category]', ['missing','profit','all'].map(profitCategory => ({...node(),dataset:{profitCategory}}))]]);
       },
       request: async (path, options) => {
         const body = JSON.parse(options.body); calls.push({ path, body });
         return request(path, body);
-      }, save, shopId: () => 'intel',
-      configs: () => [{ id: 'a', shopId: 'intel' }], selected: () => [],
+      }, save, nas, shopId: () => 'intel',
+      configs: () => configs, selected: () => [],
       esc: String, toast: text => messages.push(text),
     });
     return { start: elements.get('#profit-start'), history: elements.get('#profit-history'), output: elements.get('#profit-output'), dialog: elements.get('#dialog') };
@@ -119,4 +122,29 @@ test('save failure remains visible and does not create a profit run', async () =
   assert.equal(env.calls.length, 0);
   assert.equal(dialog.output.textContent, 'save failed');
   assert.equal(dialog.start.disabled, false);
+});
+
+test('NAS detection reads all receipt pages, filters the original result list and keeps history enabled',async()=>{
+ const configs=Array.from({length:61},(_,i)=>({id:'nas-'+String(i).padStart(2,'0'),shopId:'intel'}));
+ const rows=configs.map((c,i)=>({id:'observation-'+i,metric:'accounting',shop_id:'intel',config_id:c.id,
+  valid:true,loss:false,changed:true,reason:'',profit_cents:i,cost_cents:100,
+  snapshot:{product:'实际链接',name:'配置 '+i,spu:'spu-'+i,priceCents:200,parts:[{slot:'CPU',name:'真实配件',qty:1,taxCents:100,costCents:100}]}}));
+ const env=harness({nas:true,configs,save:()=>assert.fail('不允许保存配置草稿'),request:(path,input)=>{
+  if(path==='/api/profit/start'){
+   assert.equal(input.configIds.length,61);return {runId:'from-nas'};
+  }
+  if(path==='/api/profit/history')return {runs:[{id:'from-nas',started_at:'example',status:'completed',covered:61}]};
+  assert.equal(path,'/api/profit/status');
+  return {run:{id:'from-nas',status:'completed',covered:61},results:rows.slice(input.offset??0,input.offset?61:60),nextOffset:input.offset?null:60};
+ }});
+ const dialog=env.open();await dialog.start.onclick();
+ assert.equal(env.calls.length,3);assert.equal(env.calls[2].body.offset,60);
+ assert.equal(dialog.output.children.get('#profit-result-page').textContent,'1 / 3 页 · 61 套');
+ const list=dialog.output.children.get('#profit-results');assert.match(list.innerHTML,/真实配件/);assert.doesNotMatch(list.innerHTML,/配置 60/);
+ dialog.output.children.get('#profit-result-next').onclick();
+ assert.equal(dialog.output.children.get('#profit-result-page').textContent,'2 / 3 页 · 61 套');
+ const search=dialog.output.children.get('#profit-result-search');search.value='spu-60';search.oninput();
+ assert.equal(dialog.output.children.get('#profit-result-page').textContent,'1 / 1 页 · 1 套');assert.match(list.innerHTML,/配置 60/);
+ assert.match(dialog.output.innerHTML,/ERP 利润未知/);
+ assert.equal(dialog.history.disabled,false);await dialog.history.onclick();assert.match(dialog.output.innerHTML,/61 套 · NAS核算/);
 });

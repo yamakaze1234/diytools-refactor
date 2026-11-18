@@ -27,6 +27,9 @@ export async function renderPreviewPoster(config,options={}){
  if(!options.geometry&&config.layout!=='square')width=Math.min(width,160);
  let result=await renderPoster(config,width,{interactive:true});
  const boundedWidth=previewRasterWidth({...input,geometry:result});
- if(boundedWidth!==width){width=boundedWidth;result=await renderPoster(config,width,{interactive:true});}
+ if(boundedWidth!==width){
+  // 测量用画布立即归零，避免与正式预览同时保留像素缓冲。
+  result.canvas.width=0;result.canvas.height=0;
+  width=boundedWidth;result=await renderPoster(config,width,{interactive:true});}
  return Object.assign(result,{preview:true,previewRasterWidth:width,previewLayout:config.layout,exportWidth});
 }

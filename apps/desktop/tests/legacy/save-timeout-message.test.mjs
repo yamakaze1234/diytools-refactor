@@ -9,7 +9,7 @@ test('save timeout is an unconfirmed result and never fabricates a receipt or re
  let calls=0;
  const timeout=new DOMException('signal timed out','TimeoutError');
  const context=vm.createContext({AbortSignal,fetch:async()=>{calls++;throw timeout;}});
- vm.runInContext(requestCode,context);
+ vm.runInContext('var nasMain=false;\n'+requestCode,context);
  for(const url of ['/api/state','/api/configs/batch','/api/configs/patch']){
   await assert.rejects(context.request(url,{method:'POST',body:'{}'}),error=>error.name==='TimeoutError'&&/尚未确认是否写入/.test(error.message)&&/输入已保留/.test(error.message));
  }

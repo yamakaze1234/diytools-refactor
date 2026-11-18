@@ -1,0 +1,41 @@
+# 使用官方预构建镜像和已打包程序，NAS无需npm安装或构建。
+services:
+  diy-workbench-api:
+    image: node:24-bookworm-slim
+    restart: unless-stopped
+    # 必须与NAS挂载文件属主一致；部署时显式填写，不能假定所有NAS均为1000。
+    user: "${NAS_UID:?填写NAS文件属主UID}:${NAS_GID:?填写NAS文件属组GID}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    working_dir: /app
+    command: [node, /app/server.mjs]
+    environment:
+      AUTH_ORIGIN: "${AUTH_ORIGIN:?填写原认证HTTPS地址}"
+      WORKSPACE_ID: workbench-main
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: diy_workbench_trial
+      PGUSER: diy_api_reader
+      PGPASSWORD_FILE: /run/secrets/database-password
+    volumes:
+      - type: bind
+        source: /volume3/运营部共享盘/Yyb/运营部共享盘/diy-workbench-api/app
+        target: /app
+        read_only: true
+      - type: bind
+        source: /volume3/运营部共享盘/Yyb/运营部共享盘/diy-workbench-api/config/database-password
+        target: /run/secrets/database-password
+        read_only: true
+    networks: [database]
+    # 仅绑定NAS本机回环，用于已有HTTPS反向代理；不直接开放局域网明文认证。
+    ports: ["127.0.0.1:18080:8080"]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  database:
+    external: true
+    name: diy-workbench-db_default

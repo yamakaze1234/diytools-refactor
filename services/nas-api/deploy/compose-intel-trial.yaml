@@ -1,0 +1,54 @@
+# 长期 NAS 接口服务的试验库候选配置；更新现有项目时沿用服务名和回环端口。
+services:
+  diy-workbench-api:
+    image: node:24-bookworm-slim
+    restart: unless-stopped
+    user: "${NAS_UID:?填写挂载属主UID}:${NAS_GID:?填写挂载属组GID}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    working_dir: /app
+    command: [node, /app/server.mjs]
+    environment:
+      AUTH_ORIGIN: "${AUTH_ORIGIN:?填写原账号核验HTTPS地址}"
+      WORKSPACE_ID: workbench-main
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: diy_workbench_trial
+      PGUSER: diy_api_operations
+      PGPASSWORD_FILE: /run/secrets/database-password
+      NAS_DATASET: intel_live
+      NAS_ENABLE_WRITES: "true"
+      NAS_ENABLE_CATALOG_WRITES: "true"
+      NAS_ENABLE_WORKSPACE_WRITES: "true"
+      NAS_IMAGE_ROOT: /images
+      NAS_IMAGE_WRITE_ROOT: /new-images
+    volumes:
+      - type: bind
+        source: "${NAS_APP_DIR:?填写隔离接口程序目录}"
+        target: /app
+        read_only: true
+      - type: bind
+        source: "${NAS_ASSET_DIR:?填写已回读导入资产目录}"
+        target: /images
+        read_only: true
+      # 单独挂载新素材，仅此目录允许应用写入；既有素材目录继续只读。
+      - type: bind
+        source: "${NAS_UPLOAD_DIR:?填写隔离的新素材可写目录}"
+        target: /new-images
+      - type: bind
+        source: "${NAS_SECRET_FILE:?填写NAS管理员私有密码文件路径}"
+        target: /run/secrets/database-password
+        read_only: true
+    networks: [database]
+    # 沿用原回环端口，只允许运行在 NAS 本机的 HTTPS 入口转发。
+    ports: ["127.0.0.1:18080:8080"]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+networks:
+  database:
+    external: true
+    name: diy-workbench-db_default

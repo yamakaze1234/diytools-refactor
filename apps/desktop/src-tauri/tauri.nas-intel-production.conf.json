@@ -1,0 +1,17 @@
+{
+  "productName": "DIY Tools Refactor",
+  "identifier": "io.diytools.nas-intel-production",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "DIY Tools",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 980,
+        "minHeight": 680,
+        "dragDropEnabled": false
+      }
+    ]
+  }
+}

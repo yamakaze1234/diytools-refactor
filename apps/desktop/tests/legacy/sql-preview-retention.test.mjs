@@ -14,6 +14,7 @@ function harness(){
  };
  return {document,dialog,openDialog,get:selector=>nodes.get(selector)};
 }
+// 表单事件不返回后台读取 Promise；等待下一轮事件循环再检查预览。
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 const plan={id:'plan1',source:{server:'fixture',port:1433,database:'fixture'},total:101,matched:101,unmatched:0,unknown:0,changes:Array.from({length:101},(_,i)=>({goodsId:String(i),name:'配件',before:1,after:2}))};
 test('SQL读取关闭后继续、重新打开保留分页与预览，版本变化拒绝应用并支持重新读取',async()=>{
@@ -23,12 +24,12 @@ test('SQL读取关闭后继续、重新打开保留分页与预览，版本变�
  try{
   const api=bindSqlSync({openDialog:h.openDialog,flush:async()=>{},context:()=>revision,hasPending:()=>false,operator:()=>'',receive:async()=>true,toast:()=>{}});
   api.setup();await tick();const reading=h.get('#sql-connection-form').onsubmit({preventDefault(){}});await tick();assert.equal(reads,1);
-  h.dialog.close();api.setup();assert.ok(h.get('#sql-read-wait'));resolvePreview(plan);await reading;
+  h.dialog.close();api.setup();assert.ok(h.get('#sql-read-wait'));resolvePreview(plan);await reading;await tick();
   assert.ok(h.get('#sql-apply'));h.get('#sql-diff-next').onclick();assert.match(h.get('#sql-diff-page').textContent,/第 2/);
   h.dialog.close();api.setup();assert.equal(reads,1);assert.match(h.get('#sql-diff-page').textContent,/第 2/);
   const realNow=Date.now;try{const later=realNow()+600001;Date.now=()=>later;await h.get('#sql-apply').onclick();assert.equal(applies,0);assert.match(h.get('#sql-apply-message').textContent,/过期/);}finally{Date.now=realNow;}
   revision=2;await h.get('#sql-apply').onclick();assert.equal(applies,0);assert.equal(h.get('#sql-apply').disabled,true);
-  h.get('#sql-preview-refresh').onclick();assert.ok(h.get('#sql-connection-form'));await tick();const readingAgain=h.get('#sql-connection-form').onsubmit({preventDefault(){}});await tick();resolvePreview({...plan,id:'plan2'});await readingAgain;
+  h.get('#sql-preview-refresh').onclick();assert.ok(h.get('#sql-connection-form'));await tick();const readingAgain=h.get('#sql-connection-form').onsubmit({preventDefault(){}});await tick();resolvePreview({...plan,id:'plan2'});await readingAgain;await tick();
   await h.get('#sql-apply').onclick();assert.equal(applies,1);api.setup();assert.ok(h.get('#sql-connection-form'));
  }finally{globalThis.document=savedDocument;globalThis.fetch=savedFetch;}
 });
@@ -39,7 +40,7 @@ test('SQL已应用后关闭弹窗允许按需回载，页面回载完成才允�
  globalThis.fetch=async url=>({ok:true,json:async()=>url.endsWith('/credentials')?{saved:false}:url.endsWith('/preview')?plan:{}});
  try{
   const api=bindSqlSync({openDialog:h.openDialog,flush:async()=>{},context:()=>1,hasPending:()=>false,operator:()=>'',receive:()=>new Promise(resolve=>{assert.equal(h.dialog.open,false,'按需工作区不能在弹窗打开时刷新');received=true;resolveReceive=resolve;}),afterApply:()=>{assert.equal(h.document.body.inert,false,'价格提示不能阻塞ERP回载的输入解锁');notified++;},toast:()=>{toasts++;}});
-  api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});
+  api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});await tick();
   const applying=h.get('#sql-apply').onclick();await tick();assert.equal(received,true);
   assert.equal(h.dialog.open,false);
   assert.equal(h.document.body.inert,true,'SQL持久化完成但页面尚未接收，不能提前释放编辑界面');
@@ -54,7 +55,7 @@ test('SQL回载拒绝时保留替换后的冲突弹窗，不显示同步成功',
  globalThis.fetch=async url=>({ok:true,json:async()=>url.endsWith('/credentials')?{saved:false}:url.endsWith('/preview')?plan:{}});
  try{
   const api=bindSqlSync({openDialog:h.openDialog,flush:async()=>{},context:()=>1,hasPending:()=>false,operator:()=>'',receive:async()=>{h.openDialog('保存版本需要比较','<button id="conflict-backup">下载当前草稿</button>');return false;},toast:()=>{toasts++;}});
-  api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});await h.get('#sql-apply').onclick();
+  api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});await tick();await h.get('#sql-apply').onclick();
   assert.equal(h.dialog.open,true);assert.ok(h.get('#conflict-backup'));assert.equal(toasts,0);assert.equal(h.get('.dialog-title .close').disabled,false);assert.equal(h.document.body.inert,false);
  }finally{globalThis.document=savedDocument;globalThis.fetch=savedFetch;}
 });
@@ -65,7 +66,7 @@ test('SQL回载异常也恢复页面原有输入锁，不残留不可操作页�
   const h=harness();h.document.body.inert=previous;const messages=[];globalThis.document=h.document;
   globalThis.fetch=async url=>({ok:true,json:async()=>url.endsWith('/credentials')?{saved:false}:url.endsWith('/preview')?plan:{}});
   const api=bindSqlSync({openDialog:h.openDialog,flush:async()=>{},context:()=>1,hasPending:()=>false,operator:()=>'',receive:async()=>{assert.equal(h.document.body.inert,true);throw Error('fixture reload failure');},toast:value=>messages.push(value)});
-  api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});await h.get('#sql-apply').onclick();
+  api.setup();await tick();await h.get('#sql-connection-form').onsubmit({preventDefault(){}});await tick();await h.get('#sql-apply').onclick();
   assert.equal(h.document.body.inert,previous);assert.deepEqual(messages,['fixture reload failure']);
  }}finally{globalThis.document=savedDocument;globalThis.fetch=savedFetch;}
 });

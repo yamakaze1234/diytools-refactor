@@ -86,7 +86,7 @@ const erpCode=app.slice(app.indexOf('async function receiveErp('),app.indexOf('\
 function erpHarness(){
  const previous=state(),next=state();next.revision=2;next.configs[0].parts[0].erp=30;
  const calls={render:[],conflicts:[]},context={...fullBranch,state:previous,acceptedState:previous,catalog:[],baseCatalog:[],active:'c0',selected:new Set(['c0','missing']),imageRecords:new Map([['c0',{revision:1,url:'/saved/previous.png'}]]),history:[{}],redoHistory:[{}],dirty:false,savePromise:null,conflict:false,changeCounter:0,prepareWorkspaceState:async()=>({state:structuredClone(next),catalog:[]}),request:async url=>{assert.equal(url,'/api/state?logs=none');return next;},current:()=>context.state.configs.find(c=>c.id===context.active),available:()=>context.state.configs,syncHistoryButtons(){},renderAll:(...args)=>calls.render.push(args),openConflict:message=>calls.conflicts.push(message),$:()=>({textContent:''}),window:{workbenchHasPendingChanges:()=>context.dirty||!!context.savePromise}};
- vm.runInNewContext(erpCode+'\nglobalThis.receive=receiveErp;',context);return {context,calls,next,previous};
+ vm.runInNewContext('var nasMain=false;\n'+erpCode+'\nglobalThis.receive=receiveErp;',context);return {context,calls,next,previous};
 }
 test('实际ERP刷新只读取已提交状态，不调用changed/save，清栈筛选选中项并禁止归一触发二次保存',async()=>{
  const {context,calls,next}=erpHarness();context.changed=()=>assert.fail('ERP刷新不应标dirty');context.save=()=>assert.fail('ERP刷新不应再次保存');
@@ -130,14 +130,14 @@ test('真实大工作区save在分片重基期间输入后继续提交第二次�
   prepareSavedReceipt:(sent,remote,settings)=>editor.prepareSavedReceipt(sent,remote,{...settings,options:{budgetMs:0,yieldWork:async()=>{if(++yielded===5){context.state.configs[101].name='分片中的输入';context.changeCounter++;context.dirty=true;}}}})};
  context.state.configs[0].name='初次输入';
  context.request=async(url,options)=>{assert.equal(url,'/api/configs/batch');const payload=JSON.parse(options.body);requests.push(payload);const configs=payload.changes.map(item=>structuredClone(item.after));if(requests.length===1)configs[0].parts[0].lineId='server';return {configs,revision:requests.length+1,updatedAt:'2026-10-13T00:00:00Z',activityDelta:[],rebased:false};};
- vm.runInNewContext(receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('))+'\nglobalThis.runSave=save;',context);
+ vm.runInNewContext('var nasMain=false;\n'+receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function sendBatchPending('))+'\nglobalThis.runSave=save;',context);
  await context.runSave();assert.deepEqual(requests.map(payload=>payload.changes.map(row=>row.id)),[['c0'],['c101']]);
  assert.equal(context.state.configs[0].parts[0].lineId,'server');assert.equal(context.acceptedState.configs[101].name,'分片中的输入');assert.equal(context.dirty,false);assert.equal(context.savePromise,null);
 });
 test('真实大回执入口等待分片重基，保留飞行输入，远端与历史独立',async()=>{
  const sent=state(102),remote=structuredClone(sent),live=structuredClone(sent);remote.configs[0].parts[0].lineId='server';live.configs[101].name='飞行输入';
  const context={...fullBranch,...editor,state:live,acceptedState:sent,changeCounter:1,dirty:true,history:[editor.captureConfigHistorySnapshot(sent,ui,['c0'])],redoHistory:[],sameEditingState,sameEditingStateAsync,syncHistoryButtons(){},trimHistory(){},sourceCatalog:rows=>rows,renderAll(){}};
- vm.runInNewContext(receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'))+'\nglobalThis.accept=acceptSavedState;',context);
+ vm.runInNewContext('var nasMain=false;\n'+receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'))+'\nglobalThis.accept=acceptSavedState;',context);
  await context.accept(sent,remote);assert.equal(context.acceptedState,remote);assert.equal(context.state.configs[101].name,'飞行输入');assert.equal(context.state.configs[0].parts[0].lineId,'server');
  context.state.configs[0].parts[0].qty=4;assert.equal(remote.configs[0].parts[0].qty,1);assert.equal(context.history[0].configs[0].parts[0].qty,1);
 });
@@ -146,8 +146,8 @@ for(const count of [3,102])test(`${count}套回执物化后继续使用已绑定
  const input={dataset:{qty:'0'},value:'4',setCustomValidity(){}},boundParts=live.configs[0].parts;
  const context={...fullBranch,...editor,state:live,acceptedState:sent,changeCounter:1,dirty:true,history:[],redoHistory:[],sameEditingState,sameEditingStateAsync,syncHistoryButtons(){},trimHistory(){},sourceCatalog:rows=>rows,renderAll(){assert.fail('dirty编辑期间不能全量重绘失焦');},parts:boundParts,$$:()=>[input],checkpointConfig(){},changed(){context.dirty=true;context.changeCounter++;}};
  const handler=app.slice(app.indexOf("  $$('[data-qty]').forEach"),app.indexOf("  $$('[data-copy-part]').forEach"));
- vm.runInNewContext(handler,context);
- vm.runInNewContext(receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'))+'\nglobalThis.accept=acceptSavedState;',context);
+ vm.runInNewContext('var nasMain=false;\n'+handler,context);
+ vm.runInNewContext('var nasMain=false;\n'+receiptCode+app.slice(app.indexOf('function acceptSavedState('),app.indexOf('async function save(){'))+'\nglobalThis.accept=acceptSavedState;',context);
  await context.accept(sent,remote);input.oninput();
  assert.equal(context.state.configs[0].parts[0].qty,4);assert.equal(context.state.configs[0].parts[0].lineId,'server');assert.equal(remote.configs[0].parts[0].qty,1);
  assert.equal(context.state.configs[0],live.configs[0]);assert.equal(context.state.configs[0].parts,boundParts);

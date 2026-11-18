@@ -48,6 +48,8 @@ struct State {
 /// Optional OS credential storage; no background task, custom URL or admin authentication.
 pub struct CloudTransport {
     client: Client,
+    nas_client: Option<Client>,
+    nas_deployment: Option<String>,
     base: String,
     environment: String,
     device_id: String,
@@ -61,6 +63,40 @@ pub struct CloudTransport {
 enum HttpError {
     Unauthorized,
     Safe(String),
+}
+
+// 只返回固定认证阶段，不把 URL、代理地址、请求正文或底层错误带到界面。
+fn auth_stage(path: &str, body: &Value) -> Option<&'static str> {
+    match path {
+        "/auth/v1/signin" => Some("云端账号认证"),
+        "/auth/v1/token" => Some("云端登录续期"),
+        "/v1/functions/workbenchApi" if body["action"] == "session.get" => Some("云端成员权限核验"),
+        _ => None,
+    }
+}
+
+fn auth_transport_message(stage: Option<&str>, operation: &'static str, reason: &'static str) -> String {
+    match stage {
+        Some(stage) => format!("{stage}：{operation}{reason}，请检查网络或系统代理后重试"),
+        None if operation == "响应读取" => "云端响应读取超时或中断".into(),
+        None => "云端连接超时或不可用，请检查网络后重试".into(),
+    }
+}
+
+pub(crate) fn nas_tls_client(pem:&[u8])->Result<Client,String>{
+    if pem.is_empty()||pem.len()>16*1024{return Err("NAS 局域网根证书无效".into());}
+    let ca=reqwest::Certificate::from_pem(pem).map_err(|_|"NAS 局域网根证书无效")?;
+    Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy()
+        .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(15))
+        .tls_built_in_root_certs(false).add_root_certificate(ca)
+        .build().map_err(|_|"无法初始化 NAS 局域网 HTTPS 信任".into())
+}
+
+// 未选择自定义 CA 时仍使用 HTTPS 标准信任，不放宽主机名或证书验证。
+pub(crate) fn nas_system_tls_client()->Result<Client,String>{
+    Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy()
+        .connect_timeout(Duration::from_secs(5)).timeout(Duration::from_secs(15))
+        .build().map_err(|_|"无法初始化 HTTPS 信任".into())
 }
 
 impl CloudTransport {
@@ -124,6 +160,8 @@ impl CloudTransport {
             .map_err(|_| "无法初始化云端连接".to_string())?;
         Ok(Self {
             client,
+            nas_client: None,
+            nas_deployment: None,
             environment: base.clone(),
             base,
             device_id: uuid::Uuid::new_v4().to_string(),
@@ -132,6 +170,41 @@ impl CloudTransport {
             max_response,
             vault: None,
         })
+    }
+
+    // 专用 NAS 根证书仅给 NAS 请求，不进入原账号认证，也不改 Windows 根信任。
+    pub fn with_nas_ca(mut self, pem: &[u8]) -> Result<Self,String> {
+        self.nas_client=Some(nas_tls_client(pem)?);
+        Ok(self)
+    }
+
+    pub fn with_nas_system_ca(mut self)->Result<Self,String>{
+        self.nas_client=Some(nas_system_tls_client()?);Ok(self)
+    }
+
+    pub fn with_nas_deployment(mut self, deployment: String) -> Result<Self,String> {
+        if self.nas_client.is_none(){return Err("正式 NAS 工作区要求独立局域网 CA".into());}
+        self.nas_deployment=Some(deployment);
+        Ok(self)
+    }
+
+    // 先匿名核对目标环境，再发带凭据的请求；试验服务器不能收到正式账号的请求正文。
+    pub(crate) fn check_nas_deployment(&self, endpoint: &reqwest::Url) -> Result<(), (u16,&'static str)> {
+        let Some(expected)=&self.nas_deployment else{return Ok(());};
+        let bad=(409,"NAS_DEPLOYMENT_MISMATCH");
+        let endpoint=endpoint.join("/healthz").map_err(|_|bad)?;
+        let client=self.nas_client.as_ref().ok_or(bad)?;
+        let response=client.get(endpoint).timeout(Duration::from_secs(4)).send()
+            .map_err(|_|(503,"NETWORK_OR_RESPONSE_ERROR"))?;
+        if response.status().as_u16()!=200||response.headers().get("x-workbench-deployment").and_then(|value|value.to_str().ok())!=Some(expected.as_str()){
+            return Err(bad);
+        }
+        let mut bytes=Vec::new();
+        response.take(4097).read_to_end(&mut bytes).map_err(|_|(503,"NETWORK_OR_RESPONSE_ERROR"))?;
+        if bytes.len()>4096||!serde_json::from_slice::<Value>(&bytes).is_ok_and(|health|health["deployment_id"]==expected.as_str()&&health["ok"]==true){
+            return Err(bad);
+        }
+        Ok(())
     }
 
     pub fn with_persistence(mut self, data_dir: &std::path::Path) -> Result<Self, String> {
@@ -544,6 +617,75 @@ impl CloudTransport {
         Ok((state.epoch, session.tokens.access.clone()))
     }
 
+    // NAS 素材本身公开，不附带原账号令牌，避免与认证 JSON 请求混用。
+    pub(crate) fn nas_image(&self, url: reqwest::Url, mime: &str) -> Result<Vec<u8>, u16> {
+        const LIMIT: usize = 32 * 1024 * 1024;
+        let reply=self.nas_client.as_ref().unwrap_or(&self.client).get(url).timeout(Duration::from_secs(12)).send().map_err(|_|502u16)?;
+        if reply.status()!=reqwest::StatusCode::OK {return Err(if reply.status().as_u16()==404 {404} else {502});}
+        if reply.headers().get(reqwest::header::CONTENT_TYPE).and_then(|value| value.to_str().ok())!=Some(mime) {return Err(502);}
+        if reply.content_length().is_some_and(|n| n>LIMIT as u64){return Err(413);}
+        let mut bytes=Vec::new();
+        reply.take((LIMIT+1) as u64).read_to_end(&mut bytes).map_err(|_|502u16)?;
+        if bytes.len()>LIMIT {return Err(413);}
+        Ok(bytes)
+    }
+
+    // 原账号令牌始终留在进程内。目标 URL 由原生 NAS 边界从本机固定配置解析。
+    pub(crate) fn nas_request(
+        &self,
+        endpoint: reqwest::Url,
+        method: reqwest::Method,
+        body: Option<(String, Vec<u8>)>,
+        expected: Option<(String, String)>,
+    ) -> Result<(u16, Value), (u16, &'static str)> {
+        self.require_configured().map_err(|_| (401, "UNAUTHENTICATED"))?;
+        self.check_nas_deployment(&endpoint)?;
+        let (epoch, old_access) = {
+            let state = self.state().map_err(|_| (401, "UNAUTHENTICATED"))?;
+            let session = state.session.as_ref().ok_or((401, "UNAUTHENTICATED"))?;
+            if let Some((workspace, uid)) = expected.as_ref() {
+                if session.member["workspaceId"].as_str() != Some(workspace.as_str()) ||
+                    session.member["uid"].as_str() != Some(uid.as_str()) {
+                    return Err((403, "MEMBER_CHANGED"));
+                }
+            }
+            (state.epoch, session.tokens.access.clone())
+        };
+        let access = self.ensure_fresh(epoch, &old_access, false).map_err(|_| (401, "UNAUTHENTICATED"))?;
+        self.check_epoch(epoch).map_err(|_| (401, "UNAUTHENTICATED"))?;
+        let mut request = self.nas_client.as_ref().unwrap_or(&self.client).request(method, endpoint)
+            .header(AUTHORIZATION, HeaderValue::from_str(&format!("Bearer {access}"))
+                .map_err(|_| (401, "UNAUTHENTICATED"))?)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .timeout(Duration::from_secs(14));
+        if let Some(deployment)=&self.nas_deployment { request=request.header("x-workbench-deployment",deployment); }
+        if let Some((mime, body)) = body {
+            request = request.header(reqwest::header::CONTENT_TYPE, mime).body(body);
+        }
+        // 不跟随重定向、不自动重新发送任何业务写请求。
+        let reply = request.send().map_err(|_| (503, "NETWORK_OR_RESPONSE_ERROR"))?;
+        if let Some(deployment)=&self.nas_deployment{
+            if reply.headers().get("x-workbench-deployment").and_then(|value|value.to_str().ok())!=Some(deployment.as_str()){
+                return Err((409,"NAS_DEPLOYMENT_MISMATCH"));
+            }
+        }
+        let status = reply.status();
+        if status.is_redirection() { return Err((503, "NETWORK_OR_RESPONSE_ERROR")); }
+        let mut bytes = Vec::new();
+        const LIMIT: usize = 4 * 1024 * 1024;
+        reply.take((LIMIT + 1) as u64).read_to_end(&mut bytes)
+            .map_err(|_| (503, "NETWORK_OR_RESPONSE_ERROR"))?;
+        if bytes.len() > LIMIT { return Err((503, "INVALID_API_RESPONSE")); }
+        let mut output: Value = serde_json::from_slice(&bytes).map_err(|_| (503, "INVALID_API_RESPONSE"))?;
+        let state = self.state().map_err(|_| (503, "NETWORK_OR_RESPONSE_ERROR"))?;
+        if state.epoch != epoch {
+            return Err((503, "NETWORK_OR_RESPONSE_ERROR"));
+        }
+        let session = state.session.as_ref().ok_or((503, "NETWORK_OR_RESPONSE_ERROR"))?;
+        scrub_value(&mut output, &[&access, &session.tokens.access, &session.tokens.refresh]);
+        Ok((status.as_u16(), output))
+    }
+
     // 拒绝退出或切换身份前启动的请求结果，避免旧会话响应混入新成员。
     fn check_epoch(&self, epoch: u64) -> Result<(), String> {
         if self.state()?.epoch != epoch {
@@ -654,6 +796,7 @@ impl CloudTransport {
 
     fn post(&self, path: &str, body: &Value, access: Option<&str>) -> Result<Value, HttpError> {
         self.require_configured().map_err(HttpError::Safe)?;
+        let stage = auth_stage(path, body);
         let mut request = self
             .client
             .post(format!("{}{}", self.base, path))
@@ -665,9 +808,9 @@ impl CloudTransport {
             header.set_sensitive(true);
             request = request.header(AUTHORIZATION, header);
         }
-        let response = request
-            .send()
-            .map_err(|_| HttpError::Safe("云端连接超时或不可用，请检查网络后重试".into()))?;
+        let response = request.send().map_err(|error| HttpError::Safe(auth_transport_message(
+            stage, "连接", if error.is_timeout() { "超时" } else { "中断或不可用" },
+        )))?;
         let status = response.status();
         if status.as_u16() == 401
             || (path.starts_with("/auth/") && matches!(status.as_u16(), 400 | 403))
@@ -676,8 +819,8 @@ impl CloudTransport {
         }
         if !status.is_success() {
             return Err(HttpError::Safe(format!(
-                "云端请求失败（{}）",
-                status.as_u16()
+                "{}请求失败（{}）",
+                stage.unwrap_or("云端"), status.as_u16()
             )));
         }
         if response
@@ -690,7 +833,7 @@ impl CloudTransport {
         response
             .take(self.max_response as u64 + 1)
             .read_to_end(&mut bytes)
-            .map_err(|_| HttpError::Safe("云端响应读取超时或中断".into()))?;
+            .map_err(|_| HttpError::Safe(auth_transport_message(stage, "响应读取", "超时或中断")))?;
         if bytes.len() > self.max_response {
             return Err(HttpError::Safe("云端响应超过大小限制".into()));
         }

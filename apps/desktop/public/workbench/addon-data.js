@@ -56,6 +56,19 @@ export function selectedSourceAddons(row,previous=[]){
  return (previous.length?previous.map(a=>selectedSourceAddon(row,a)):[options[0]]).filter(a=>a.text?.trim());
 }
 export function selectedSourceAddon(row,previous){const options=sourceAddonOptions(row);return previous?.variantId?options.find(a=>a.variantId===previous.variantId)||copy(previous):options[0];}
+/** 只有明确标记 follow 才跟随来源；缺失或删除的定义不冒充当前报价。 */
+export function effectiveNasAddon(saved,row){
+ if(saved.followPolicy!=='follow')return {addon:copy(saved),available:true};
+ if(!row||row.deletedAt||row.sourceId!==saved.sourceId)return {addon:copy(saved),available:false};
+ const option=sourceAddonOptions(row).find(a=>(a.variantId||'')===(saved.variantId||''));
+ if(!option||!option.text?.trim())return {addon:copy(saved),available:false};
+ // 加购本身的识别确认等其它字段保留；商品、数量、说明和所有可选项以同一来源版本取回。
+ const next=copy(saved);
+ for(const key of ['text','note','goodsId','qty','priceCents','items','originalQty','choices','variants','mode','showTogether'])delete next[key];
+ Object.assign(next,copy(option));
+ next.items=copy(addonItems(next));
+ return {addon:next,available:true};
+}
 export function addonKey(a){if(a.choices!==undefined)return JSON.stringify(['choices',a.sourceId,a.choices]);const product=a.items?.length?'items:'+JSON.stringify(a.items.map(i=>[i.goodsId,i.qty]).sort()):a.goodsId?'goods:'+a.goodsId:a.sourceId?'source:'+a.sourceId:'manual';return JSON.stringify([product,a.variantId||'',a.text,a.note||'']);}
 export function addonGroups(configs){const groups=new Map();for(const c of configs.filter(c=>!c.deletedAt))for(const a of c.addons||[]){const key=addonKey(a);if(!groups.has(key))groups.set(key,{key,example:copy(a),configIds:new Set(),count:0});const g=groups.get(key);g.configIds.add(c.id);g.count++;}return [...groups.values()].map(g=>({...g,configIds:[...g.configIds]}));}
 /** 只生成目标加购的变更计划，是否联动定价由 updatePricing 明确指定。 */

@@ -1,0 +1,45 @@
+# 独立正式候选。需部署授权、宿主端口核对、专用 CA 和 04 角色安装后使用。
+services:
+  diy-workbench-api-intel-production:
+    image: node:24-bookworm-slim
+    user: "1029:100"
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    command: [node, /app/server.mjs]
+    environment:
+      AUTH_ORIGIN: ${DIY_AUTH_ORIGIN:?configure original account gateway}
+      WORKSPACE_ID: workbench-main
+      PGHOST: 192.168.50.10
+      PGPORT: "25432"
+      PGDATABASE: diy_workbench
+      PGUSER: diy_api_intel_production
+      PGPASSWORD_FILE: /run/secrets/database-password
+      NAS_DATASET: intel_live
+      NAS_PROFILE: intel-production
+      NAS_DEPLOYMENT_ID: ${DIY_INTEL_PRODUCTION_DEPLOYMENT:?configure the independent deployment ID}
+      NAS_BOOTSTRAP_BATCH_ID: ${DIY_INTEL_PRODUCTION_BATCH:?configure verified receiving batch}
+      NAS_ENABLE_WRITES: "true"
+      NAS_ENABLE_CATALOG_WRITES: "true"
+      NAS_ENABLE_WORKSPACE_WRITES: "true"
+      NAS_IMAGE_ROOT: /assets
+      NAS_IMAGE_WRITE_ROOT: /uploads
+      LISTEN_HOST: 127.0.0.1
+      PORT: "19080"
+      NAS_TLS_LISTEN_HOST: 192.168.50.10
+      NAS_TLS_PORT: "19443"
+      NAS_TLS_LAN_CIDR: 192.168.50.0/24
+      NAS_TLS_CERT_FILE: /run/secrets/nas-cert.pem
+      NAS_TLS_KEY_FILE: /run/secrets/nas-key.pem
+    volumes:
+      - ${DIY_INTEL_PRODUCTION_APP:?configure independent application directory}:/app:ro
+      - ${DIY_INTEL_PRODUCTION_ASSETS:?configure verified original image directory}:/assets:ro
+      - ${DIY_INTEL_PRODUCTION_UPLOADS:?configure independent upload directory}:/uploads:rw
+      - ${DIY_INTEL_PRODUCTION_SECRETS:?configure restricted credential directory}:/run/secrets:ro
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:19080/healthz').then(r=>{if(!r.ok)throw Error('health')}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

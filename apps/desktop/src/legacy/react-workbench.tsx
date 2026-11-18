@@ -47,9 +47,10 @@ function ConfigList({markup,document}: {markup: string; document: Document}) {
 function WorkbenchNavigation({doc}:{doc:Document}) {
  const [open,setOpen]=useState<string|null>(null),[shown,setShown]=useState<string|null>(null);const nav=useRef<HTMLDivElement>(null);const panel=useRef<HTMLElement>(null);const motion=useRef<Animation|null>(null);
  const changeMenu=(next:string|null)=>{setOpen(next);if(next)setShown(next);};
+ const nas=new URLSearchParams(doc.defaultView?.location.search).get('workspace')==='nas';
  const groups=[
   {label:'图片',title:'配置与图片',Icon:Images,items:[['配置模板','[data-nav="templates"]'],['机箱图库','#case-gallery-open']]},
-  {label:'维护',title:'批量维护',Icon:Boxes,items:[['批量修改配件 / 加购 / 导图','#global-batch-open'],['输出源维护','[data-nav="source"]'],['三店共用成本价','[data-nav="cost-source"]']]},
+  {label:'维护',title:'批量维护',Icon:Boxes,items:[['批量修改配件 / 加购 / 导图','#global-batch-open'],['输出源维护','[data-nav="source"]'],[nas?'英特尔成本价':'三店共用成本价','[data-nav="cost-source"]']]},
   {label:'库存',title:'库存与核算',Icon:PackageSearch,items:[['检查商品库存','#inventory-check-open'],['一键检测利润','#profit-check-open'],['检查价格变化','#price-changes-open'],['导出库存监控清单','#inventory-export-open']]},
  ];
  useEffect(()=>{const outside=(e:Event)=>{if(!nav.current?.contains(e.target as Node))setOpen(null);};const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'){setOpen(null);nav.current?.querySelector<HTMLButtonElement>('[aria-expanded=true]')?.focus();}};doc.addEventListener('pointerdown',outside);doc.addEventListener('keydown',escape);return()=>{motion.current?.cancel();doc.removeEventListener('pointerdown',outside);doc.removeEventListener('keydown',escape);};},[doc]);

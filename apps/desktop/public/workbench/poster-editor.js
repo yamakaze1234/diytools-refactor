@@ -72,12 +72,14 @@ export function bindPosterEditor(api){
  function setAddedImage(value){const layer=currentLayer();if(!layer)return;const c=api.current(),r=posterImageRegion(layer,c.layout,result.base,result.height,value);layer.transforms??={};layer.transforms[c.layout]={x:r.x,y:r.top,width:r.width,height:r.height};if($('#poster-image-size-value'))$('#poster-image-size-value').textContent=`${Math.round(r.width)} × ${Math.round(r.height)} px`;for(const [id,v] of [['poster-image-size',r.width],['poster-image-x',r.x],['poster-image-y',r.top]])if($('#'+id)&&document.activeElement!==$('#'+id))$('#'+id).value=Math.round(v);if($('#poster-image-x'))$('#poster-image-x').max=result.base-r.width;if($('#poster-image-y'))$('#poster-image-y').max=result.height-r.height;(api.imageChanged||api.changed)('移动或缩放添加的图片');}
  $('#poster-add-image').onclick=()=>{
   const target=api.current();if(!target)return;
-  api.openDialog('添加图片','<p class="hint">添加为独立图片，可拖动、缩放，不替换当前机箱图。本地可一次选择多张。</p><div class="actions"><button id="poster-image-local" class="primary">从本地导入</button><button id="poster-image-gallery">从机箱图库选择</button></div>');
-  $('#poster-image-local').onclick=()=>{api.closeDialog();$('#poster-image-file').click();};
-  $('#poster-image-gallery').onclick=()=>api.pickGallery(async row=>{
+  const choose=()=>api.pickGallery(async row=>{
    const image=await getImage(row.url);if(!image)throw Error('图片无法载入');if(api.current()!==target)throw Error('当前配置已变化，请重新添加');
    api.checkpoint();target.posterImages??=[];const layer={id:crypto.randomUUID(),url:row.url,name:row.name,naturalWidth:image.naturalWidth,naturalHeight:image.naturalHeight,transforms:{}};target.posterImages.push(layer);selected='poster-image:'+layer.id;refresh=true;api.changed('从机箱图库添加图片');
   });
+  if(api.allowLocalUpload===false){choose();return;}
+  api.openDialog('添加图片','<p class="hint">添加为独立图片，可拖动、缩放，不替换当前机箱图。本地可一次选择多张。</p><div class="actions"><button id="poster-image-local" class="primary">从本地导入</button><button id="poster-image-gallery">从机箱图库选择</button></div>');
+  $('#poster-image-local').onclick=()=>{api.closeDialog();$('#poster-image-file').click();};
+  $('#poster-image-gallery').onclick=choose;
  };
  $('#poster-image-file').onchange=async e=>{
   const files=[...e.target.files],c=api.current();e.target.value='';if(!files.length||!c)return;
@@ -183,7 +185,8 @@ export function bindPosterEditor(api){
  };
  window.addEventListener('keyup',e=>{if(e.code==='Space')spaceHeld=false;});window.addEventListener('blur',()=>{spaceHeld=false;cancelMove();});
  function cancelMove(){if(moveFrame!==null)cancelAnimationFrame(moveFrame);moveFrame=null;pendingPoint=null;drag=null;showGuides([]);stage.classList.remove('is-dragging');}
- return{render(next){const fitChanged=!result||result.base!==next.base||result.height!==next.height||configId!==api.current()?.id;result=next;if(configId!==api.current()?.id){selected=null;cancelMove();configId=api.current()?.id;paint();}if(selected&&!currentRegion()){selected=null;paint();}if(refresh){refresh=false;paint();}const layers=api.current()?.posterImages||[];$('#poster-layer-control').classList.toggle('hidden',!layers.length);const options='<option value="">选择添加的图片</option>'+[...layers].reverse().map((layer,i)=>`<option value="poster-image:${esc(layer.id)}">${i===0?'最上层 · ':''}${esc(layer.name)}</option>`).join('');if(options!==layerOptions){$('#poster-image-select').innerHTML=options;layerOptions=options;}$('#poster-image-select').value=currentLayer()?selected:'';
+ // 预览切换时断开旧绘图结果与交互状态的引用。
+ return{release(){cancelMove();result=null;selected=null;configId=null;box.classList.add('hidden');},render(next){const fitChanged=!result||result.base!==next.base||result.height!==next.height||configId!==api.current()?.id;result=next;if(configId!==api.current()?.id){selected=null;cancelMove();configId=api.current()?.id;paint();}if(selected&&!currentRegion()){selected=null;paint();}if(refresh){refresh=false;paint();}const layers=api.current()?.posterImages||[];$('#poster-layer-control').classList.toggle('hidden',!layers.length);const options='<option value="">选择添加的图片</option>'+[...layers].reverse().map((layer,i)=>`<option value="poster-image:${esc(layer.id)}">${i===0?'最上层 · ':''}${esc(layer.name)}</option>`).join('');if(options!==layerOptions){$('#poster-image-select').innerHTML=options;layerOptions=options;}$('#poster-image-select').value=currentLayer()?selected:'';
  const objects=[...next.textRegions,...(next.imageRegion?[{...next.imageRegion,label:'机箱图片'}]:[]),...next.addedImageRegions.map(r=>({...r,label:layers.find(l=>l.id===r.id)?.name||'图片'})),...next.regions.map(r=>({...r,label:'整个模块 · '+r.label}))];
   const menu='<option value="">选择画布对象</option>'+objects.map(r=>`<option value="${esc(r.key)}">${esc(r.label)}</option>`).join('');if(menu!==objectOptions){$('#poster-object-select').innerHTML=menu;objectOptions=menu;}$('#poster-object-select').value=selected||'';if(fitChanged)zoom();outline();},previewWidth(){return previewDisplayWidth;},clear(){selected=null;cancelMove();paint();outline();}};
 }

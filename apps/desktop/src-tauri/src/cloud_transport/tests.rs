@@ -133,6 +133,75 @@ fn token(access: &str) -> Value {
     json!({"token_type":"Bearer","access_token":access,"refresh_token":"test-refresh-secret","expires_in":3600,"sub":"member-1"})
 }
 
+#[test]
+fn formal_nas_never_sends_account_headers_to_an_unrecognized_endpoint() {
+    let account=Server::new(|wire| if wire.path=="/auth/v1/signin"{Reply::json(token("synthetic-access"))}else{Reply::json(member())});
+    let mut transport=account.transport();
+    transport.login("synthetic","synthetic-password").unwrap();
+    // 本地 HTTP 夹具单独注入测试客户端；正式装配只有专用 CA 的 HTTPS。
+    transport.nas_client=Some(Client::builder().no_proxy().build().unwrap());
+    let transport=transport.with_nas_deployment("intel-production-v1".into()).unwrap();
+    let hits=Arc::new(AtomicUsize::new(0));let observed=Arc::clone(&hits);
+    let legacy=Server::new(move |wire|{
+        observed.fetch_add(1,Ordering::SeqCst);
+        assert_eq!(wire.path,"/healthz");assert!(!wire.headers.to_ascii_lowercase().contains("authorization:"));
+        Reply::json(json!({"ok":true,"checks":{"process":true}}))
+    });
+    let guard=transport.nas_request(reqwest::Url::parse(&format!("{}/api/v1/me",legacy.url)).unwrap(),reqwest::Method::GET,None,None);
+    assert_eq!(guard.unwrap_err(),(409,"NAS_DEPLOYMENT_MISMATCH"));assert_eq!(hits.load(Ordering::SeqCst),1);
+    let good=Server::new(|wire|{
+        let mut reply=if wire.path=="/healthz"{Reply::json(json!({"ok":true,"deployment_id":"intel-production-v1"}))}else{
+            assert!(wire.headers.to_ascii_lowercase().contains("x-workbench-deployment: intel-production-v1"));
+            assert!(wire.headers.to_ascii_lowercase().contains("authorization: bearer synthetic-access"));
+            Reply::json(json!({"ok":true,"deployment_id":"intel-production-v1"}))
+        };
+        reply.extra_headers="x-workbench-deployment: intel-production-v1\r\n".into();reply
+    });
+    assert_eq!(transport.nas_request(reqwest::Url::parse(&format!("{}/api/v1/me",good.url)).unwrap(),reqwest::Method::GET,None,None).unwrap().0,200);
+}
+
+#[test]
+fn reports_the_stalled_auth_stage_without_replaying_requests_or_exposing_credentials() {
+    // 分别延迟认证链的三段，确认只暴露固定阶段提示，且不重复发送账号或续期请求。
+    for (blocked, stage) in [
+        ("/auth/v1/signin", "云端账号认证"),
+        ("/auth/v1/token", "云端登录续期"),
+        ("/v1/functions/workbenchApi", "云端成员权限核验"),
+    ] {
+        let requests=Arc::new(Mutex::new(Vec::new()));
+        let observed=Arc::clone(&requests);
+        let server=Server::new(move |wire|{
+            observed.lock().unwrap().push(wire.path.clone());
+            let stalled=wire.path==blocked;
+            let mut reply=if wire.path.starts_with("/auth/") {
+                Reply::json(token("test-access-secret"))
+            } else { Reply::json(member()) };
+            if stalled { reply.delay=Duration::from_millis(450); }
+            reply
+        });
+        let mut transport=CloudTransport::build(server.url.clone(),Duration::from_millis(300),MAX_RESPONSE).unwrap();
+        // 测试专用回环服务器独立于所在电脑的代理配置。
+        transport.client=Client::builder().no_proxy().timeout(Duration::from_millis(300)).build().unwrap();
+        let error=if blocked=="/auth/v1/token" {
+            transport.login("test-account","test-password-secret").unwrap();
+            transport.state().unwrap().session.as_mut().unwrap().tokens.expires=Instant::now();
+            transport.call(pull()).unwrap_err()
+        } else { transport.login("test-account","test-password-secret").unwrap_err() };
+        assert!(error.starts_with(stage) && error.contains("超时"),"{error}");
+        assert!(!error.contains("secret")&&!error.contains(&server.url));
+        drop(server);
+        assert_eq!(requests.lock().unwrap().iter().filter(|path|path.as_str()==blocked).count(),1);
+    }
+    // 服务已明确拒绝账号时仍显示原认证错误，且不会继续核验成员。
+    let server=Server::new(|wire|{
+        assert_eq!(wire.path,"/auth/v1/signin");
+        Reply::status(401,json!({"error":"invalid_grant"}))
+    });
+    let mut transport=server.transport();
+    transport.client=Client::builder().no_proxy().timeout(Duration::from_secs(2)).build().unwrap();
+    assert_eq!(transport.login("test-account","test-password-secret").unwrap_err(),"用户名或密码错误，或登录方式不可用");
+}
+
 #[cfg(windows)]
 struct VaultCleanup(session_vault::SessionVault);
 #[cfg(windows)]

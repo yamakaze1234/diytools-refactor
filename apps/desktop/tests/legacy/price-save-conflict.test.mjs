@@ -57,7 +57,7 @@ function harness({otherConflict=false,repeat=false,editDuringLoad=false}={}){
   syncHistoryButtons(){},rememberDisplayParts(){},renderAll(){},pruneDetails(){},setTimeout:()=>0,compactWorkspace:async()=>{},
   pollDerivedStatus:async()=>{},scheduleImageSave(){},toast(){},openConflict:message=>dialogs.push(message),
   $:id=>{if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id);}};
- vm.runInNewContext(saveCode+'\nglobalThis.run=save;',c);return {c,requests,dialogs};
+ vm.runInNewContext('var nasMain=false;\n'+saveCode+'\nglobalThis.run=save;',c);return {c,requests,dialogs};
 }
 test('实际导入保存入口收到409后以最新基线重试并覆盖价格',async()=>{
  const {c,requests,dialogs}=harness();await c.run();assert.equal(requests.length,2);

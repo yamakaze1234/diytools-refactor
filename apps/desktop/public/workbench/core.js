@@ -5,6 +5,7 @@ import {actualParts} from './actual-parts.js';
 import {shopServiceColor,shopServiceTextColor} from './poster-theme.js';
 import {isSpecialComponent} from './special-components.js';
 import {restoreConfigOrder} from './config-order.js';
+import {REPAIRED_HOST_COST} from './maintenance-workbook.js';
 export const slots=['CPU','散热','主板','内存','硬盘','显卡','电源','机箱','风扇','配件1','配件2','配件3','配件4','配件5','配件6','配件7'];
 export const clone=x=>structuredClone(x);
 export const cents=x=>x===''||x==null?null:Math.round(Number(x)*100);
@@ -40,10 +41,11 @@ export function totals(config,settings={},quote=pricing(config,settings)){
  const termErp=after(erpProfit),termTax=after(taxProfit);
  return {erp:toMoney(erpCost),tax:toMoney(taxCost),basis:toMoney(basis),erpDeduction:toMoney(erpDeduction),taxDeduction:toMoney(taxDeduction),erpProfit:toMoney(erpProfit),taxProfit:toMoney(taxProfit),erpProfitAfter:toMoney(termErp),taxProfitAfter:toMoney(termTax),erpMargin:priceCents>0&&termErp!=null?termErp/priceCents*100:null,taxMargin:priceCents>0&&termTax!=null?termTax/priceCents*100:null,missing,erpFallback,erpUnresolved,taxUnresolved};
 }
-/** 新版英特尔表按本行隐藏的定位列取名；旧版导出直接查新成本表的库存数据。 */
+/** 英特尔新版由维护表命名区域取名；旧版直接匹配修复版成本表的编号列并取优化名称。 */
 export function erpFormula(label,short=false){
  if(short)return `=IF([@[${label}_id]]<>"",INDEX(参名称,[@定位${label}]),"")`;
- return `=IF([@[${label}_id]]<>"",INDEX([主机成本表V2新.xlsb]库存数据!$BD:$BD,MATCH([@[${label}_id]],[主机成本表V2新.xlsb]库存数据!$BB:$BB,0)),"")`;}
+ const {file,sheet,goods,name}=REPAIRED_HOST_COST,source=`'[${file}]${sheet}'`;
+ return `=IF([@[${label}_id]]<>"",INDEX(${source}!$${name}:$${name},MATCH([@[${label}_id]],${source}!$${goods}:$${goods},0)),"")`;}
 const clean=x=>{const v=String(x??'').trim();return ['0','/','good id','数量'].includes(v.toLowerCase())?'':v;};
 /** 导出前检查 ERP 槽位、商品 ID 与正整数数量，再生成成本表可粘贴的数据行。 */
 export function erpRow(config,template){const short=config.shopId==='intel'&&template!=='legacy';const seen=new Set();for(const p of actualParts(config)){if(p.name&&!isSpecialComponent(p)&&!clean(p.goodsId)&&!(p.slot==='显卡'&&/不含|无卡|核显|不配/.test(p.name)))throw Error(`${p.slot} 尚未绑定 ERP ID，请先选择配件`);if(clean(p.goodsId)){if(!slots.includes(p.slot))throw Error(`未分配 ERP 槽位：${p.name}`);if(seen.has(p.slot))throw Error(`ERP 槽位重复：${p.slot}`);seen.add(p.slot);if(!Number.isInteger(Number(p.qty))||Number(p.qty)<=0)throw Error(`${p.slot} 数量必须为正整数`);}}

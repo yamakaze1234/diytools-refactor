@@ -1,0 +1,1 @@
+{"name":"@diytools/nas-api","version":"0.1.0","private":true,"type":"module","engines":{"node":">=24"},"scripts":{"start":"node src/main.mjs","test":"node --test test/*.test.mjs"},"dependencies":{"jpeg-js":"0.4.4","pg":"8.23.1","pngjs":"7.0.0"},"devDependencies":{"@electric-sql/pglite":"0.5.16","esbuild":"0.28.2"}}

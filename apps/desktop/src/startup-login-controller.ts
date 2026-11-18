@@ -40,12 +40,13 @@ function sessionOf(value: Record<string, unknown>, status = false): CloudSession
 
 /** Authenticate and connect before the legacy editor can normalize/save its initial state. */
 /** 复用正在进行的登录或准备任务，卸载后不再发布旧回执。 */
-export function createStartupLoginController({ desktop, invoke, onState, buildMigrationPlan = prepareLegacyProjection }: { desktop: boolean; invoke: CloudInvoke; onState: (state: StartupLoginState) => void; buildMigrationPlan?: (prepared: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown> }) {
+export function createStartupLoginController({ desktop, invoke, onState, nasMain = false, buildMigrationPlan = prepareLegacyProjection }: { desktop: boolean; invoke: CloudInvoke; onState: (state: StartupLoginState) => void; nasMain?: boolean; buildMigrationPlan?: (prepared: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown> }) {
   let state = initialStartupLoginState(desktop), flight: Promise<void> | null = null, disposed = false;
   const emit = (patch: Partial<StartupLoginState>) => { if (!disposed) { state = { ...state, ...patch }; onState(state); } };
   /** 在工作台 iframe 启动前幂等准备本机同步资料。 */
   async function prepare() {
     if (disposed || !state.session.authenticated) return;
+    if (nasMain) { emit({phase:'ready',localOnly:false,firstUse:false,error:'',message:''}); return; }
     emit({ phase: 'preparing', message: '正在准备工作台…' });
     const firstUse = await requestStartupCloud(invoke, 'firstUseStatus');
     if (disposed) return;
@@ -76,6 +77,7 @@ export function createStartupLoginController({ desktop, invoke, onState, buildMi
     const result = await requestStartupCloud(invoke, 'status');
     // 没有本机云服务配置时直接进入本地工作台；连接失败仍保留登录重试流程。
     if (result.configured === false || (result.session as { configured?: boolean } | undefined)?.configured === false) {
+      if(nasMain) throw Error('NAS 工作区需要配置原工作台账号登录。');
       emit({ session: emptySession(), localOnly: true, firstUse: false, phase: 'ready', message: '' });
       return;
     }
@@ -101,6 +103,7 @@ export function createStartupLoginController({ desktop, invoke, onState, buildMi
   function retry() { return state.session.authenticated ? perform(prepare) : initialize(); }
   /** 只有明确选择后才绑定空库或打开原生目录选择器；工作台在迁移提交前保持卸载。 */
   function chooseData(source: 'cloud' | 'legacy') { return perform(async () => {
+    if(nasMain)throw Error('NAS 工作区不导入本机或旧同步资料。');
     if (!state.session.authenticated || !state.firstUse || state.phase !== 'choosing-data') throw Error('请先完成登录并选择数据来源。');
     emit({ migrationMissingImages: 0, message: source === 'legacy' ? '请选择已退出的旧程序的 data 目录，随后将自动迁移…' : '正在接入云端，进入工作台后下载全部配置与原图…' });
     let result = await requestStartupCloud(invoke, source === 'legacy' ? 'migrateLegacy' : 'connect');

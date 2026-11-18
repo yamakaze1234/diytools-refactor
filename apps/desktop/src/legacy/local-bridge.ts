@@ -13,6 +13,7 @@ export interface WorkbenchBridgeOptions {
   invoke?: WorkbenchInvoke;
   native?: boolean;
   assetOrigin?: string;
+  nasMain?: boolean;
 }
 export type WorkbenchWindow = Window & {
   workbenchExportDiagnostics?: () => Promise<string>;
@@ -84,6 +85,15 @@ export function resolveWorkbenchAsset(url: string, origin?: string): string {
   return url;
 }
 
+/** 仅在图片读取时把迁移后的内容摘要映射到独立原生协议，不改业务文档。 */
+export function resolveNasWorkbenchAsset(url: string, origin: string): string {
+  const match=/^\/uploads\/([0-9a-f]{64}\.(?:png|jpg|jpeg))$/.exec(url);
+  if(match)return origin+'/images/'+match[1];
+  if(url.startsWith(origin+'/images/') || /^(?:blob:|data:image\/|\/workbench\/assets\/)/.test(url))return url;
+  if(url.startsWith('/assets/'))return '/workbench'+url;
+  return '/workbench/nas-asset-unavailable';
+}
+
 function abortError(signal: AbortSignal): unknown {
   return signal.reason ?? new DOMException('请求已取消', 'AbortError');
 }
@@ -127,14 +137,22 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
   const native = options.native ?? Boolean(options.invoke || '__TAURI_INTERNALS__' in globalThis);
   const invoke: WorkbenchInvoke | undefined = options.invoke ?? (native ? tauriInvoke : undefined);
   const originalFetch = targetWindow.fetch.bind(targetWindow);
+  const nasMain=options.nasMain??(new URLSearchParams(targetWindow.location.search).get('workspace')==='nas');
   const origin = native ? options.assetOrigin ?? nativeAssetOrigin() : undefined;
-  targetWindow.resolveWorkbenchAsset = url => resolveWorkbenchAsset(url, origin);
+  const nasOrigin=/Windows|Android/.test(globalThis.navigator?.userAgent??'')?'http://nas-workbench-asset.localhost':'nas-workbench-asset://localhost';
+  targetWindow.resolveWorkbenchAsset = url => nasMain?resolveNasWorkbenchAsset(url,nasOrigin):resolveWorkbenchAsset(url, origin);
 
   targetWindow.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = new URL(inputUrl(input), targetWindow.location.href);
     // Only this frame's local routes are adapted. No unrelated website request becomes a local API call.
     if (url.origin !== targetWindow.location.origin) return originalFetch(input, init);
     let path = url.pathname;
+    const nasIdentity=nasMain&&path==='/api/native-nas-identity/logout';
+    const nasUpload=nasMain&&path==='/api/native-nas/upload';
+    const nasErp=nasMain&&path==='/api/native-nas/erp-read';
+    // 在路由入口总拦截旧数据库、ERP、云同步和本机素材；即使误触旧按钮也不会调用旧 IPC。
+    if(nasMain&&(path==='/catalog.json'||assetPath(path)||path.startsWith('/api/'))&&
+      !path.startsWith('/api/native-nas/')&&!nasIdentity)return errorResponse('NAS 工作区不提供此本机功能',403);
     if (path === '/catalog.json') {
       // 真实配件目录只在本机 data 中读取，发布程序仅内置空目录。
       if (!invoke) return originalFetch(new URL('/workbench/catalog.json' + url.search, url).href, init);
@@ -145,14 +163,17 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
     }
     if (!path.startsWith('/api/') && !assetPath(path)) return originalFetch(input, init);
     const request = new Request(typeof input === 'object' && 'url' in input ? input : url.href, init);
+    if(nasIdentity&&(request.method!=='POST'||url.search||!invoke))return errorResponse('NAS 账号操作无效',400);
     const unavailable = unavailableWorkbenchOperation(path, request.method);
     if (request.signal.aborted) throw abortError(request.signal);
     if (unavailable) return errorResponse(unavailable);
     if (isSqlSyncRoute(path, request.method) && url.search) return errorResponse('公司数据库接口不接受 URL 参数', 400);
     const cloud = path.startsWith('/api/native-cloud/');
+    const nas = path.startsWith('/api/native-nas/');
     const cloudAction = cloud ? path.slice('/api/native-cloud/'.length) : '';
     if (cloud && (!CLOUD_ACTIONS.has(cloudAction) || url.search || request.method !== 'POST')) return errorResponse('云同步接口参数或方法无效', 400);
     if (cloud && !invoke) return errorResponse('请在 Windows 工作台中使用成员登录与云同步');
+    if (nas && !invoke) return new Response(JSON.stringify({ok:false,error:'NAS_NOT_CONFIGURED',configured:false}), {status:400,headers:JSON_HEADERS});
     if (!invoke) return originalFetch(input, init);
     const localSave = request.method === 'POST' && ['/api/state', '/api/configs/batch', '/api/configs/patch'].includes(path);
     const finishWait = localSave ? diagnostics.begin('local-save-wait') : undefined;
@@ -177,7 +198,32 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
       const sql = isSqlSyncRoute(path, request.method);
       // Credentials belong in the body only. SQL routes do not accept query parameters.
       try {
-        if (cloud) {
+        if(nasUpload){
+          if(request.method!=='POST'||url.search||!body)return errorResponse('NAS 图片请求无效',400);
+          const owner=request.headers.get('x-workbench-nas-owner');
+          if(!owner)return errorResponse('NAS 图片请求缺少已确认的身份',403);
+          const expectedActor:unknown=JSON.parse(decodeURIComponent(owner));
+          const image=JSON.parse(body) as {mime?:unknown;operationId?:unknown;base64?:unknown;shopId?:unknown};
+          if(typeof image.mime!=='string'||typeof image.operationId!=='string'||typeof image.base64!=='string')
+            return errorResponse('NAS 图片请求无效',400);
+          result=await invoke<WorkbenchResponse>('nas_upload_request',{mime:image.mime,operationId:image.operationId,base64:image.base64,shopId:image.shopId??'intel',expectedActor});
+        } else if(nasErp){
+          if(request.method!=='POST'||url.search||!body)return errorResponse('NAS ERP 只读请求无效',400);
+          const owner=request.headers.get('x-workbench-nas-owner');
+          if(!owner)return errorResponse('NAS ERP 请求缺少已确认的身份',403);
+          const input=JSON.parse(body) as {kind?:unknown;goodsIds?:unknown;connection?:unknown;shopId?:unknown};
+          if(!['erp','erp-saved','erp-status','erp-clear','erp-form','tax-file','tax-status','tax-choose','tax-read','quote-file'].includes(String(input.kind))||!Array.isArray(input.goodsIds))
+            return errorResponse('NAS ERP 查询范围无效',400);
+          // 连接表单只交给本机命令，不能进入 NAS HTTP 请求或诊断记录。
+          result=await invoke<WorkbenchResponse>('nas_erp_read',{kind:input.kind,goodsIds:input.goodsIds,shopId:input.shopId??'intel',connection:input.connection??null,expectedActor:JSON.parse(decodeURIComponent(owner))});
+        } else if(nasIdentity){
+          result=await invoke<WorkbenchResponse>('nas_identity_request',{action:'logout',payloadJson:'{}'});
+        } else if (nas) {
+          const route = path.slice('/api/native-nas'.length) + url.search;
+          const owner = request.headers.get('x-workbench-nas-owner');
+          const expectedActor: unknown = owner ? JSON.parse(decodeURIComponent(owner)) : null;
+          result = await invoke<WorkbenchResponse>('nas_native_request', { method: request.method, route, body, expectedActor });
+        } else if (cloud) {
           // Large snapshots are parsed by Rust/worker, never by the UI thread.
           result = await trackDiagnostic(cloudDiagnosticStage(cloudAction, body || ''), () => invoke<WorkbenchResponse>('cloud_native_json_request', { action: cloudAction, payloadJson: body || '{}' }));
         } else result = await trackDiagnostic(sql ? 'sql-request' : localSave ? 'local-save' : 'local-request', () => invoke<WorkbenchResponse>(sql ? 'sql_sync_request' : 'workbench_request', { method: request.method, path: path + url.search, body }));
@@ -195,7 +241,7 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
   // Native batch export preserves the old file contract; a failed native command rejects visibly.
   // Browser preview has no pywebview bridge, so the existing browser ZIP download remains active.
   if (invoke) {
-    if (typeof targetWindow.setInterval === 'function') installAgentBridge(targetWindow, invoke);
+    if (!nasMain && typeof targetWindow.setInterval === 'function') installAgentBridge(targetWindow, invoke);
     // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
     targetWindow.workbenchExportDiagnostics = () => exportDiagnostics(invoke);
     targetWindow.workbenchDiagnosticText = () => diagnosticText();
@@ -216,7 +262,7 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
       const resolved = targetWindow.resolveWorkbenchAsset!(source);
       // Some renderers already resolve src before inserting markup. They still
       // need CORS when their decoded image is later reused by a canvas.
-      if (origin && (resolved.startsWith(origin + '/uploads/') || resolved.startsWith(origin + '/saved/')) && element.getAttribute('crossorigin') !== 'anonymous') {
+      if ((nasMain&&resolved.startsWith(nasOrigin+'/images/')||origin && (resolved.startsWith(origin + '/uploads/') || resolved.startsWith(origin + '/saved/'))) && element.getAttribute('crossorigin') !== 'anonymous') {
         element.setAttribute('crossorigin', 'anonymous');
       }
       if (resolved !== source) {

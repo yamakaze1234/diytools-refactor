@@ -76,7 +76,7 @@ test('partial documents cannot reach full-state save and summary projection pres
 test('global UI action refuses to mutate after hydration failure; compact render never normalizes unseen configurations',async()=>{
  const text=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
  const action=text.slice(text.indexOf('function fullAction('),text.indexOf('async function prepareCompactSnapshot('));
- let changed=false;const context=vm.createContext({fullWorkspace:false,fullActionBusy:0,setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('revision changed');},toast(){}});vm.runInContext(action,context);
+ let changed=false;const context=vm.createContext({fullWorkspace:false,fullActionBusy:0,setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('revision changed');},toast(){}});vm.runInContext('var nasMain=false;\n'+action,context);
  await assert.rejects(context.fullAction(()=>{changed=true;})(),/revision changed/);assert.equal(changed,false);
  const compact=text.slice(text.indexOf('function renderCompact('),text.indexOf('let previewFrame='));
  assert.doesNotMatch(compact,/migrateSavedTemplates|applyPosterTheme|applyPosterView/);
@@ -89,7 +89,7 @@ test('rebased compact receipt carries fresh cost/source metadata into the local 
  const local=structuredClone(base);local.configs[0].name='本机新名称';
  const metadata={costSource:[{goodsId:'1',tax:20}],sourceCatalog:[{sourceId:'s',name:'云端新源名称'}],shopSettings:{}};
  const context=vm.createContext({fullWorkspace:false,acceptedState:base,loadedIds:()=>['c0'],lazyWorkspace:{refresh:async()=>({revision:2,updatedAt:'now',summaries:[summaryOf(config('c0'))],metadata}),load:async()=>[config('c0')]}});
- vm.runInContext(implementation,context);const remote=await context.savedReceiptState({rebased:true});const merged=mergeEditorState(base,local,remote);
+ vm.runInContext('var nasMain=false;\n'+implementation,context);const remote=await context.savedReceiptState({rebased:true});const merged=mergeEditorState(base,local,remote);
  assert.equal(merged.conflict,false);assert.equal(merged.state.configs[0].name,'本机新名称');assert.equal(merged.state.costSource[0].tax,20);assert.equal(merged.state.sourceCatalog[0].name,'云端新源名称');
 });
 
@@ -108,7 +108,7 @@ test('collapsed link groups create no hidden config DOM; searching renders only 
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',classList:{toggle(){}},querySelectorAll:()=>[]});return nodes.get(id);};
  // 测试使用真实兼容桥接收列表标记，React 节点稳定性另由浏览器专项覆盖。
  const context=vm.createContext({configurationSummaryHtml,reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){}});
- vm.runInContext(implementation,context);context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert.match(node('#config-list').innerHTML,/<header>链接<\/header>/);
+ vm.runInContext('var nasMain=false;\n'+implementation,context);context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert.match(node('#config-list').innerHTML,/<header>链接<\/header>/);
  node('#search').value='配置2999';context.renderList();assert.equal((node('#config-list').innerHTML.match(/class="config-item/g)||[]).length,1);assert.match(node('#config-list').innerHTML,/data-id="c2999"/);
  assert(context.collapsedProducts.has('link'));
 });
@@ -127,7 +127,7 @@ test('failed detail navigation releases the old preview and retains its active c
  const implementation=text.slice(text.indexOf('async function activate('),text.indexOf('function renderShop('));
  const stage={inert:true},inspector={inert:true},messages=[];
  const context=vm.createContext({activationGeneration:0,fullWorkspace:false,active:'old',loadDetail:async()=>{throw Error('加载失败');},$:id=>id==='#poster-stage'?stage:inspector,toast:value=>messages.push(value)});
- vm.runInContext(implementation,context);await context.activate('next');assert.equal(stage.inert,false);assert.equal(inspector.inert,false);assert.equal(context.active,'old');assert.deepEqual(messages,['加载失败']);
+ vm.runInContext('var nasMain=false;\n'+implementation,context);await context.activate('next');assert.equal(stage.inert,false);assert.equal(inspector.inert,false);assert.equal(context.active,'old');assert.deepEqual(messages,['加载失败']);
 });
 
 test('an unchanged compact cloud refresh leaves undo and detail state untouched',async()=>{
@@ -135,5 +135,5 @@ test('an unchanged compact cloud refresh leaves undo and detail state untouched'
  const implementation=text.slice(text.indexOf('async function refreshCompactWorkspace('),text.indexOf('function compactChanges('));
  const history=[{configId:'c0'}];let applied=false;
  const context=vm.createContext({compactRefresh:null,hasDraftDialog:()=>false,fullWorkspace:false,workspaceLoad:null,savePromise:null,batchPromise:null,ordinaryPending:null,batchPending:null,conflict:false,window:{},$:()=>({open:false}),state:{revision:7},acceptedState:{},lazyWorkspace:{index:()=>({revision:7})},loadedIds:()=>[],active:null,prepareCompactSnapshot:async skip=>{assert.equal(skip,true);return null;},history,applyCompactSnapshot(){applied=true;}});
- vm.runInContext(implementation,context);assert.equal(await context.refreshCompactWorkspace(),true);assert.equal(context.history,history);assert.equal(applied,false);
+ vm.runInContext('var nasMain=false;\n'+implementation,context);assert.equal(await context.refreshCompactWorkspace(),true);assert.equal(context.history,history);assert.equal(applied,false);
 });

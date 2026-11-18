@@ -1,80 +1,53 @@
 # DIY 配置工作台
 
-面向 DIY 整机业务的 Windows 工作台。按店铺和商品链接集中维护配置、配件、库存与利润，批量更新说明，制作配置清单图和 SKU 图。
+面向 DIY 整机业务的 Windows 工作台。配置、价格、成本和历史由 NAS 服务端集中保存；桌面端负责编辑、图片预览与导出，并保留本机草稿。
 
-**Windows x64 · 当前版本 0.2.41 · 解压即用**
+**Windows x64 · 0.2.42 · 服务端数据库版本**
 
-配件选择可同时查看价格与库存；批量替换、展示名称和加购描述支持多任务统一预览与保存。维护数据按配件类型显示 CPU 简称、主板板型、机箱支持板型或容量，识别已知的主板机箱搭配错误，并隐藏不兼容的主板加购。
+旧版本停止更新。后续功能与修复统一在服务端数据库版本提供；旧 `refactor-updates` 通道冻结，不会自动将旧本地数据迁到新版。
 
-## 下载与开始使用
+## 下载与首次使用
 
-| 下载入口 | 说明 |
+| 下载入口 | 用途 |
 | --- | --- |
-| **[下载 Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v0.2.41/DIYTools-0.2.41-Windows-x64.zip)** | 推荐下载，完整解压后运行 DIYTools.exe |
-| [下载同一使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v0.2.41/DIYTools-0.2.41-Windows-x64.zip) | 备用下载源 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/refactor-v0.2.41) | 完整变化和下载附件 |
+| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.42/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.42.zip) | 首次使用，完整解压 |
+| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.42/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.42.zip) | 同一程序和使用包 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.42) | 更新内容与附件 |
 
-1. 下载并完整解压到可写目录，不要直接在压缩包内运行。
-2. 无团队配置时使用本机模式；团队成员登录后，按提示下载资料或迁移旧数据。
-3. 选择店铺、链接和配置，编辑配件与价格，确认保存状态后导出。
+1. 完整解压到独立可写目录，运行 `DIY配置工作台.exe`，无需 CMD。
+2. 组织测试包可内置默认账号认证接入，无需另放 integrations.json；首次连接所需的服务地址与 CA 由管理员提供。员工账号、密码和会话不随包分发。
+3. 在首次连接页填写名称、服务端地址，按需选择自定义 CA，测试成功后保存并重启。
+4. 使用工作台成员账号登录。密码支持显示/隐藏，可选择保留登录信息。
 
-需要 Windows x64 和 Microsoft Edge WebView2 Runtime；使用者无需安装 Node.js、Rust 或 Python。便携版资料存放于程序旁的 data。0.2.39 及更早版本需手动升级一次至 0.2.41：保存并退出程序，下载本次 Release 的 EXE，改成原程序文件名后替换原目录中的 EXE；保留 data、图片、本机配置及 diytools-portable.json。0.2.41 起后续可继续通过“更多 → 检查更新”升级。
+以后从“更多 → 连接设置”修改连接，从“更多 → 检查更新”升级。更新只替换 EXE，保留连接文件和 `data`。首次切换不要覆盖旧工作台的数据目录；旧目录在确认所需数据完整后再清理。
 
-## 界面例图
+需要 Windows x64 和 Microsoft Edge WebView2 Runtime。当前构建支持既有正式局域网服务与原账号认证；通用自部署的独立认证发现尚未实现，不能仅安装 PostgreSQL 后直接连接。部署契约见 [NAS 服务](services/nas-api/README.md) 和 [客户端接入](docs/NAS-CLIENT.md)。
 
-以下为当前工作台的真实界面截图，使用合成商品、配件、价格和库存，仅用于展示操作布局。
+## 主要功能
 
-### 浅色界面
+- 按店铺和商品链接管理配置，维护配件、到手价、加购和版式。
+- 查询 ERP 成本和库存，预览后明确应用；查看价格变化、利润和操作历史。
+- 本机草稿与服务端保存分离；提交检查版本，遇到冲突保留编辑内容。
+- 长图与 SKU 图导出，预览使用受限分辨率，切换和导出后释放画布。
+- 黑白黄界面，浅色/深色主题统一，界面配色不改变导出图片主题。
 
-![浅色工作台：链接目录、连续配置表与图片预览](docs/screenshots/workbench-light.png)
+服务端自动历史清理本次未上线。桌面端不直接连接 PostgreSQL，不分发数据库账号。
 
-### 深色界面
+## 项目结构
 
-![深色工作台：配件、库存、成本与利润集中展示](docs/screenshots/workbench-dark.png)
-
-### 自由编辑
-
-![自由编辑：画布、排版工具、对象属性与导出](docs/screenshots/free-editor.png)
-
-[查看界面与操作说明](docs/UI-GUIDE.md)
-
-## 可以做什么
-
-| 功能 | 使用方式 |
+| 目录 | 责任 |
 | --- | --- |
-| 连续编辑 | 同一链接的配置连续显示，直接搜索展示/实际配件，编辑数量、独立核算价、展示名称和加购描述 |
-| 配件复制与增删 | 点击行名选行，Shift 连选、Ctrl 多选，复制后按目标位置粘贴；底部新增配件6及后续行，新增行可删除，固定栏位可清空 |
-| 库存与利润 | 显示实际配件库存、ERP/核算成本及利润；区分缺货、低库存和未知，分期扣费前后利润分别显示 |
-| 批量维护 | 按链接或店铺批量修改配件、加购说明、展示名称、配色格式和平台 ID，预览后应用 |
-| 配件识别与搭配 | 人工维护 CPU 简称、主板板型和机箱支持范围；只显示当前配件对应字段，校验板型搭配并过滤不兼容加购 |
-| 输出源维护 | 分别查看本次变动和待确认差异，保留手动内容或采用源更新，支持对应图片导出 |
-| 配置与 SKU 图片 | 自由编辑文字和布局；选择全部或仅变动配置导出，预览支持放大内容和完整画布 |
-| 价格与利润 | 左侧“价格”打开全店表格，可筛选、直接编辑到手价、粘贴单列 SPU/SKU、批量调价和撤销。店铺默认的扣点、固定费用与 6/12/24 期息点可由链接独立覆盖。 |
-| WPS 与 ERP | WPS 复制数量、展示名称和到手价到 F:H；ERP 成本库存和核算成本提供只读预览后应用 |
-| 数据维护 | 本机保存、历史、恢复草稿、备份、选择店铺同步和本机缓存清理 |
-| AI / CLI | 主程序自动准备本机 CLI，支持查询、预览修改、批量导出和显式同步 |
+| `apps/desktop/src` | React 宿主、首次连接、登录、连续配置表与桌面桥接 |
+| `apps/desktop/public/workbench` | 配置领域逻辑、草稿、NAS 接口、价格利润与图片绘制 |
+| `apps/desktop/src-tauri` | Rust HTTPS、账号会话、连接落盘、ERP 和签名更新 |
+| `services/nas-api` | NAS API、权限边界、PostgreSQL 操作及部署模板 |
+| `services/erp-worker`、`services/cost-reader` | 本机 ERP 查询与 Excel 只读组件 |
+| `packages` | 共享模块及旧 Agent 兼容代码；新版正式包不启用 Agent |
+| `tools` | 本地检查、构建、验签及发布 |
+| `docs` | 当前使用、开发、架构与发布说明 |
 
-界面深浅色与配置图片主题分别设置。配置名称不会因增删自动重新编号；需要时使用“一键重新编号”。编辑器可保存配件8及更多行，既有 ERP 固定格式仍最多到配件7，超出时会提示处理，不会静默截断。
+[项目结构与架构图](docs/PUBLIC-ARCHITECTURE.md) · [源码开发](docs/DEVELOPMENT.md) · [使用说明](docs/PUBLIC-USAGE.md) · [发布流程](docs/PUBLIC-RELEASE.md)
 
-## 文档导航
-
-- [界面与操作](docs/UI-GUIDE.md)：区域分工、行编辑、自由编辑与主题。
-- [使用说明](docs/PUBLIC-USAGE.md)：首次使用、批量、导出、同步、备份与更新。
-- [成本与库存](docs/COST-SYNC.md)：ERP 库存和核算成本来源。
-- [本机接入](docs/PUBLIC-INTEGRATIONS.md)：团队服务和可选 ERP。
-- [AI 与 CLI](docs/AGENT-TOOLS.md)：本机查询、修改预览和导出协议。
-- [系统架构](docs/PUBLIC-ARCHITECTURE.md) · [源码开发](docs/DEVELOPMENT.md) · [发布维护](docs/PUBLIC-RELEASE.md)。
-
-发行包仅包含主程序、便携标记和使用说明。团队账号、连接配置、业务库和私有 ERP 组件不随公开包分发。
-
-[Gitea 主仓库](https://gitea.cq360.top/CoreStudio/diy-tools-refactor) · [GitHub 镜像](https://github.com/yamakaze1234/diytools-refactor) · [版本历史](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases)
+[Gitea 主仓库](https://gitea.cq360.top/CoreStudio/diy-tools-refactor) · [GitHub 备用发行源](https://github.com/yamakaze1234/diytools-refactor)
 
 本项目尚未指定开源许可证；第三方依赖和素材遵循各自许可。
-
-### 链接库存与加购描述任务
-
-链接库存检查使用本机最近一次 ERP 库存，覆盖当前链接全部配置。加购描述可为不同配件设置独立任务，统一预览和应用。
-
-![当前链接库存检查（演示数据）](docs/screenshots/product-stock-check.png)
-
-![加购描述多任务（演示数据）](docs/screenshots/upgrade-description-tasks.png)

@@ -10,8 +10,8 @@ function initialChoices(row){
  return sourceAddonOptions(row).filter(a=>addonItems(a).length<=1&&a.text?.trim()).map((a,i)=>{const item=addonItems(a)[0]||{goodsId:'',qty:1};return {id:a.variantId||'legacy-'+row.sourceId+'-'+i,goodsId:item.goodsId,qty:item.qty,priceCents:a.priceCents??null,label:!item.goodsId?a.text:(a.text||'').replace(/^[【\[]?[+＋]\s*\d+(?:\.\d{1,2})?\s*元/,'').replace(/[】\]]$/,''),enabled:a.showTogether!==false,...(a.originalQty!==undefined?{originalQty:a.originalQty}:{})};});
 }
 /** 绑定店铺加购和商品成本选择，通过 onChange 通知来源编辑器。 */
-export function mountShopAddons(root,{original,getRows,getCosts,getOriginal,onChange=()=>{}}){
- const entries=shopAddonRows(getRows(),original,shops),base=sourceAddon(original),$=s=>root.querySelector(s);
+export function mountShopAddons(root,{original,getRows,getCosts,getOriginal,onChange=()=>{},availableShops=shops}){
+ const entries=shopAddonRows(getRows(),original,availableShops),base=sourceAddon(original),$=s=>root.querySelector(s);
  let ready=false,commonEditor;const editors=new Map(),localTouched=new Set(),formBaselines=new Map(),legacyTexts=new Map(entries.filter(e=>e.row).map(e=>[e.shop.id,e.row.addonText||'']));
  root.innerHTML=`<div class="shop-addon-actions"><button type="button" data-shop-addon-only>只修改当前店铺</button><button type="button" data-shop-addon-all>选择三店</button><span class="hint" data-shop-addon-scope></span></div><div class="shop-addon-common"><h5>共同信息 · 多个加购商品</h5><div data-common-choices></div><label class="field">加购说明<input data-common-note value="${esc(base.note)}"></label><label><input type="checkbox" data-apply-choices> 将以上商品、各自加购价和展示文案应用到勾选店铺</label><p class="hint">默认勾选有对应配件的三家店。修改上方商品后自动应用到勾选店铺；可取消勾选或点击“只修改当前店铺”。纯文字说明无需绑定商品；需要核算差价时再选择真实商品。</p></div><div class="shop-addon-grid">${entries.map(({shop,row,reason})=>`<section class="shop-addon-card" data-addon-shop="${shop.id}"><label class="shop-addon-heading"><input type="checkbox" data-shop-enabled ${row?'':'disabled'} ${row?'checked':''}><strong>${esc(shop.shortName)}</strong></label>${row?`<fieldset><label class="field">加购描述（同一条展示）<textarea data-shop-text rows="3">${esc(row.addonText)}</textarea></label><div data-legacy-price><label class="field">原单商品加购价<input data-shop-price type="number" min="0" step=".01" value="${row.addonPriceCents==null?'':(row.addonPriceCents/100).toFixed(2)}"></label></div><details data-shop-edit><summary>单独调整本店加购商品与价格</summary><div data-local-choices></div></details></fieldset><div data-shop-check></div>`:`<p class="hint">${esc(reason)}</p>`}</section>`).join('')}</div><p class="hint">每个加购商品分别检查：原配件成本 × 替换数量 ＋ 此商品加购价 − 此商品成本 × 数量。不会把多个升级商品的成本或加购价相加。</p>`;
  const card=id=>$(`[data-addon-shop="${id}"]`),enabled=id=>card(id).querySelector('[data-shop-enabled]').checked;
@@ -34,5 +34,9 @@ export function mountShopAddons(root,{original,getRows,getCosts,getOriginal,onCh
  // 原有选项缺少 customText/originalQty 时，控件补默认值不代表用户修改。
  // 仅比较界面基线，真正提交时仍携带原记录 before，保留并发冲突保护。
  for(const e of entries.filter(e=>e.row)){try{formBaselines.set(e.shop.id,JSON.stringify(sourceAddonFields(readEntry(e,false))));}catch{/* 无效旧资料继续提示修正，不把校验失败视为干净。 */}}
+ if(availableShops.length===1){
+  $('[data-shop-addon-all]').hidden=true;
+  root.querySelector('.shop-addon-common .hint').textContent='这些选项保存在当前输出源。配置原有加购保留快照；明确跟随此来源的配置才读取最新定义。纯文字说明无需绑定商品。';
+ }
  ready=true;refresh();return {read:(required=true)=>readEntry(entries.find(e=>e.shop.id===original.shopId),required),changes,refresh,isDirty:()=>{try{return changes(false).length>0;}catch{return true;}}};
 }

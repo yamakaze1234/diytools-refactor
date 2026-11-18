@@ -337,7 +337,13 @@ class Session:
                 return read_costs(request.get("settings", {}))
             except (ValueError, OSError, KeyError) as error:
                 raise WorkerError("COST_FILE_ERROR", "成本表读取失败：" + str(error)) from None
-        if action in {"sql_read", "sql_credentials_load", "sql_credentials_clear"}:
+        if action == "nas_quotation_file":
+            from quotation_file import read_quotations
+            try:
+                return read_quotations(request["settings"]["path"])
+            except (ValueError, OSError, KeyError, TypeError) as error:
+                raise WorkerError("QUOTATION_FILE_ERROR", "维护表读取失败：" + str(error)) from None
+        if action in {"sql_read", "sql_read_nas", "sql_read_nas_form", "sql_credentials_status", "sql_credentials_load", "sql_credentials_clear"}:
             return self.handle_sql(request)
         if action == "status":
             return self.status()
@@ -357,13 +363,23 @@ class Session:
             action = request["action"]
             if action == "sql_credentials_load":
                 return sql_credentials.load()
+            if action == "sql_credentials_status":
+                saved = sql_credentials.load()
+                return {key: saved[key] for key in ("saved", "settings") if key in saved}
             if action == "sql_credentials_clear":
                 return sql_credentials.clear()
-            config = settings(request.get("settings"))
-            password = request.get("password")
-            remember = request.get("remember")
-            if not isinstance(password, str) or not 0 < len(password) <= 1024 or type(remember) is not bool:
-                raise SqlError("数据库密码或保存选项无效", "INVALID_REQUEST")
+            if action == "sql_read_nas":
+                # 复用已有凭据时永远不保存、清除或回传密码。
+                saved = sql_credentials.load()
+                if not saved["saved"]:
+                    raise SqlError("尚未保存公司数据库只读连接", "SQL_CREDENTIALS_NOT_SAVED")
+                config, password = saved["settings"], saved["password"]
+            else:
+                config = settings(request.get("settings"))
+                password = request.get("password")
+                remember = request.get("remember")
+                if not isinstance(password, str) or not 0 < len(password) <= 1024 or type(remember) is not bool:
+                    raise SqlError("数据库密码或保存选项无效", "INVALID_REQUEST")
             # Both queries and normalization must succeed before any vault mutation.
             with silence_sdk():
                 rows = normalize(read_bundle(config, password))
@@ -371,6 +387,13 @@ class Session:
             # Reserve room for the JSONL id/envelope; never save on output rejection.
             if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 32 * 1024 * 1024 - 2048:
                 raise SqlError("数据库目录超过允许大小，已保留原保存", "OUTPUT_TOO_LARGE")
+            if action == "sql_read_nas":
+                return {"rows": rows}
+            if action == "sql_read_nas_form":
+                # NAS 表单只保存用户明确勾选且刚验证成功的连接；临时查询不清除原保存。
+                if remember:
+                    sql_credentials.save(config, password)
+                return {"rows": rows, "settings": config}
             if remember:
                 sql_credentials.save(config, password)
             else:

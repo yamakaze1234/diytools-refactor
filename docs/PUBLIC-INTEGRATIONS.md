@@ -1,10 +1,20 @@
-# 本机可选接入
+# 本机接入与新版认证
 
-公开源码与默认发布包保留本地工作台、通用云成员登录/同步协议及 ERP 只读接口，不含实际服务地址、环境 ID、账号、密钥、业务库、私有 ERP 包或私有运行时。没有云配置时，程序直接打开本地工作台，保留本机历史与缓存管理，不登录、不发起后台同步。
+## NAS 正式版
+
+新版 `formal-nas-client` 从服务端读取和提交业务数据，不进入旧本机工作区。首次设置页只配置 NAS 数据服务和 TLS 信任；原账号认证可在构建时内置 cloud.envId、cloud.endpoint；缺少外部文件时使用默认值。外部 integrations.json 优先覆盖，缺少默认值和外部配置时不能登录，不会自动退回离线编辑。
+
+默认账号认证由管理员从构建机私有文件注入，不把实际值提交源码。经授权的组织 EXE 包含可提取的认证地址和环境标识，不作为秘密；不包含账号密码、会话、私钥或业务数据。CA 与 NAS 地址按内部交付说明发放。账号密码由登录页输入，不写入此 JSON。结构示例见 [integrations.example.json](integrations.example.json)。
+
+NAS 连接通过“更多 → 连接设置”修改，保存于程序旁 `workbench-connection.json`；原认证接入可通过外部文件覆盖，正常退出后由管理员维护并重启。接入文件只含连接信息，不应复制整个 data 或个人会话。新版使用边界见 [NAS 客户端](NAS-CLIENT.md)。
+
+## 旧版兼容与可选 ERP 参考
+
+以下说明仅供旧版兼容路径和可选 ERP 维护，不表示新版支持离线业务库或继续旧云同步。
 
 ## 配置位置
 
-配置只从应用实际数据目录的 `data/integrations.json` 读取；开发时同样使用宿主选定的数据目录。此文件禁止提交或包含在 Release 附件中，也不允许通过构建变量写进 EXE。结构示例见 [integrations.example.json](./integrations.example.json)，示例保留域名不能用于实际连接。
+配置只从应用实际数据目录的 `data/integrations.json` 读取；开发时同样使用宿主选定的数据目录。原文件禁止提交或包含在公开 Release 附件中；新版仅允许按上述授权构建流程提取非密码的默认认证字段，不得把整个文件写进 EXE。结构示例见 [integrations.example.json](./integrations.example.json)，示例保留域名不能用于实际连接。
 
 文件根对象使用 `version: 1`。`cloud` 与 `erp` 都可省略或置为 `null`。只需要本地功能时不创建文件，或只写 `{"version":1}`。
 

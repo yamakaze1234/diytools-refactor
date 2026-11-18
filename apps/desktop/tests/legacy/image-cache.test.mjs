@@ -46,3 +46,18 @@ test('failed origin-clean check rejects export and evicts pending cache for retr
  await assert.rejects(c.getImage('/uploads/blocked.png'),/无法安全导出/);
  assert.equal(c.loads.length,2);
 });
+
+// 超大图和累计像素预算必须真正淘汰，不能仅靠图片张数限制。
+test('解码缓存按字节淘汰且清空不破坏调用方原图',async()=>{
+ const c=cache(),large={...decoded(false),naturalWidth:3000,naturalHeight:3000};
+ c.rememberImage('/one',large);c.rememberImage('/two',{...large});
+ await c.getImage('/one');assert.equal(c.loads.length,1);
+ c.clearImageCache();assert.equal(large.naturalWidth,3000);
+ await c.getImage('/two');assert.equal(c.loads.length,2);
+ const huge={...large,naturalWidth:10000};c.rememberImage('/huge',huge);
+ await c.getImage('/huge');assert.equal(c.loads.length,3);
+});
+test('切换配置期间完成的旧加载不会重新污染缓存',async()=>{
+ const c=cache(),pending=c.getImage('/old');c.clearImageCache();
+ assert.ok(await pending);await c.getImage('/old');assert.equal(c.loads.length,2);
+});

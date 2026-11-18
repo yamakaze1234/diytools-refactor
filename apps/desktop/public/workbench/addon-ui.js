@@ -35,8 +35,28 @@ export function mountAddonVariants(root,{initial=[],sourceId,getCosts,getOrigina
 export function openAddonEditor(api){
  const choices=(api.getSourceRows?.()||[]).flatMap(row=>sourceAddonOptions(row).filter(a=>a.text?.trim()).map(a=>({addon:a,label:row.name+' · '+a.text})));
  api.openDialog('编辑加购','');if(!api.react?.dialog(document.querySelector('#dialog-body'),'addon-shell',{choices}))api.openDialog('编辑加购',`${choices.length?'<label class="field">选用已维护的加购描述<select id="addon-description-choice"><option value="">自定义 / 保留当前描述</option>'+choices.map((v,i)=>`<option value="${i}">${esc(v.label)}</option>`).join('')+'</select></label>':''}<div id="addon-fields"></div><p id="addon-edit-message" class="error" role="status"></p><button id="addon-edit-save" class="primary">保存加购</button>`);
- let fields=mountAddonFields(document.querySelector('#addon-fields'),api);const picker=document.querySelector('#addon-description-choice');if(picker)picker.onchange=()=>{if(picker.value==='')return;fields=mountAddonFields(document.querySelector('#addon-fields'),{...api,initial:choices[Number(picker.value)].addon});};
- document.querySelector('#addon-edit-save').onclick=()=>{try{api.commit(fields.read());}catch(e){document.querySelector('#addon-edit-message').textContent=e.message;}};
+ const host=document.querySelector('#addon-fields'),picker=document.querySelector('#addon-description-choice');
+ let fields=mountAddonFields(host,api),follow=null,selected=api.initial;
+ if(api.allowFollow){
+  const label=document.createElement('label');label.className='field';
+  follow=document.createElement('input');follow.type='checkbox';follow.id='addon-follow-source';follow.checked=api.initial?.followPolicy==='follow';
+  label.append(follow,' 跟随共享加购定义（不勾选则保存当前快照）');
+  host.before(label);
+  const update=()=>{host.inert=follow.checked;};follow.onchange=update;update();
+ }
+ if(picker)picker.onchange=()=>{if(picker.value==='')return;selected=choices[Number(picker.value)].addon;fields=mountAddonFields(host,{...api,initial:selected});};
+ document.querySelector('#addon-edit-save').onclick=()=>{try{
+  let value;
+  if(follow?.checked){
+   if(!selected?.sourceId)throw Error('请先选择一个已经维护的加购定义。');
+   value=structuredClone(selected);value.followPolicy='follow';
+  }else{
+   value=fields.read();
+   if(follow&&value.followPolicy==='follow')value.followPolicy='snapshot';
+  }
+  if(api.allowFollow&&value.items===undefined)value.items=structuredClone(addonItems(value));
+  api.commit(value);
+ }catch(e){document.querySelector('#addon-edit-message').textContent=e.message;}};
 }
 /** 展示批量加购修改及预览，再交给业务 API 应用。 */
 export function openAddonBatch(api){

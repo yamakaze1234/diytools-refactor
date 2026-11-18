@@ -2,6 +2,25 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
+    // 仅正式构建可注入默认认证接入；只提取两个非密码字段，原文件不进入源码或交付包。
+    println!("cargo:rerun-if-env-changed=DIYTOOLS_AUTH_DEFAULTS_PATH");
+    let auth=if env::var_os("CARGO_FEATURE_FORMAL_NAS_CLIENT").is_some() {
+        if let Some(path)=env::var_os("DIYTOOLS_AUTH_DEFAULTS_PATH") {
+            println!("cargo:rerun-if-changed={}",PathBuf::from(&path).display());
+            let bytes=fs::read(path).expect("Cannot read default authentication settings");
+            assert!(bytes.len()<=64*1024,"Authentication settings too large");
+            let document:serde_json::Value=serde_json::from_slice(&bytes).expect("Invalid authentication settings JSON");
+            let cloud=document.get("cloud").and_then(|value|value.as_object()).expect("Missing authentication settings");
+            assert!(document["version"]==1 && cloud.len()==2,"Only authentication endpoint and environment may be embedded");
+            let environment=cloud.get("envId").and_then(|v|v.as_str()).expect("Missing authentication environment");
+            let endpoint=cloud.get("endpoint").and_then(|v|v.as_str()).expect("Missing authentication endpoint");
+            assert!(!environment.is_empty()&&environment.len()<=128&&environment.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_'),"Invalid authentication environment");
+            assert!(endpoint.starts_with("https://")&&endpoint.len()<=2048&&!endpoint.contains(['@','?','#','\n','\r']),"Invalid authentication endpoint");
+            serde_json::to_vec(&serde_json::json!({"envId":environment,"endpoint":endpoint})).expect("Cannot encode authentication defaults")
+        } else {Vec::new()}
+    } else {Vec::new()};
+    // 每次明确写入，包括无默认值的构建，避免增量编译残留旧组织信息。
+    fs::write(PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("auth-defaults.json"),auth).expect("Cannot stage authentication defaults");
     println!("cargo:rerun-if-env-changed=DIYTOOLS_AGENT_CLI_PATH");
     println!("cargo:rerun-if-env-changed=CARGO_TARGET_DIR");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")

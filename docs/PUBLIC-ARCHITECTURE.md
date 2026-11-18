@@ -1,58 +1,69 @@
-# 系统架构
+# 项目结构与系统架构
 
-重构版使用 Tauri 2 与 Rust 处理本机能力，React 负责宿主、登录、连续配置表、外围面板和桥接。配置领域逻辑、保存与绘图复用工作台控制器，在同源 iframe 内运行。Windows 使用 WebView2 显示界面，当前不是纯原生控件界面。
+当前正式构建启用 `formal-nas-client`。React 与原工作台页面共享业务操作，Rust 提供网络、凭据、文件和更新能力。配置业务数据集中在 NAS PostgreSQL，原图保存在 NAS 文件目录。桌面不直连数据库，也不初始化旧本机业务 SQLite。
 
-![系统架构](diagrams/architecture.png)
+## 运行结构图
 
-[交互架构图](diagrams/architecture.html) · [图源 JSON](diagrams/architecture.json)
+```mermaid
+flowchart TB
+  subgraph Desktop[Windows 工作台]
+    Setup[首次连接 / 更多连接设置] --> Native[Rust HTTPS 与会话]
+    Login[原账号登录] --> Native
+    Editor[React 宿主与配置编辑器] --> Bridge[Tauri IPC 桥接]
+    Bridge --> Native
+    Editor --> Draft[本机草稿与恢复队列]
+    Editor --> Preview[受限预览 / 高清导出]
+    Native --> Settings[连接文件 / 系统凭据管理器]
+  end
+  Native -->|账号认证| Auth[已有账号认证服务]
+  Native -->|HTTPS / 版本 / 操作回执| API[NAS 工作台 API]
+  API --> Roles[成员与店铺权限]
+  API --> PG[(PostgreSQL 配置 / 价格 / 历史)]
+  API --> Images[原图文件]
+  ERP[本机 ERP 查询组件] --> Native
+  Releases[Gitea / GitHub 签名发行] --> Update[Rust 更新器]
+  Update -->|仅替换 EXE| Desktop
+```
 
-## 组件职责
+## 源码结构图
 
-| 组件 | 责任 | 代码入口 |
-| --- | --- | --- |
-| React 宿主 | 启动登录、iframe 生命周期、原生关闭保护 | `apps/desktop/src/LegacyWorkbench.tsx` |
-| 连续配置表 | 展示/实际配件编辑、行复制、增删与可见配置挂载 | `apps/desktop/src/legacy/continuous-workbench.tsx` |
-| 领域回调 | 配件投影、原子复制删除、选择与保存分发 | `apps/desktop/public/workbench/continuous-workbench.js` |
-| 页面桥接 | 将受支持的页面请求转成 Tauri IPC；转换渲染素材地址 | `apps/desktop/src/legacy/local-bridge.ts` |
-| 工作台页面 | 配置、成本、批量维护、版式与图片绘制 | `apps/desktop/public/workbench/` |
-| Rust 本机服务 | SQLite 存储、历史、恢复、缓存与本机接口 | `apps/desktop/src-tauri/src/` |
-| 团队同步 | 通过本机配置访问可选外部服务，提交与读取变更 | Rust 同步模块与页面同步调度 |
-| ERP 运行时 | 可选 Python 适配器，提供只读查询 | `services/erp-worker/` |
-| 签名更新 | 读取 Release、验签和摘要校验、替换程序 | `apps/desktop/src-tauri/src/updater.rs` |
+```mermaid
+flowchart LR
+  Root[仓库] --> Desktop[apps/desktop]
+  Desktop --> React[src: App / ConnectionSettings / StartupLogin / legacy]
+  Desktop --> Business[public/workbench: NAS / 草稿 / 价格 / 绘图 / 主题]
+  Desktop --> Native[src-tauri: nas_launch / nas_connection / embedded_auth / cloud_native / updater]
+  Root --> Services[services]
+  Services --> NAS[nas-api: src / sql / deploy / test / tools]
+  Services --> Workers[erp-worker / cost-reader]
+  Root --> Packages[packages: 共享与兼容模块]
+  Root --> Tools[tools: 构建 / 公开审计 / 签名 / 发布]
+  Root --> Docs[docs: 使用 / 开发 / 架构 / 发布]
+```
 
-## 编辑与保存
+## 关键边界
 
-工作台先获取配置索引，选择配置时加载完整详情，当前编辑对象保持加载。页面通过桥接调用本机接口，Rust 将修改写入本机存储。保存、恢复草稿和历史是本机数据流程；云端回执是另一项状态，不能用本机保存成功推断同步成功。
-
-普通历史依赖当前状态与逆向差异链，清理只删除七天前的完整前缀；时间异常导致链中间过期时停止清理并报告原因。命名版本使用带摘要校验的独立快照，首次迁移与历史删除处于同一写事务。草稿文件通过持久回收队列处理，数据库提交后中断可在重启后续做；失败不更新最近成功时间。首次清理备份位于本机数据目录的 `history-retention-backups`，回退旧程序时须同时恢复清理前数据库，不能仅替换旧 EXE。
-
-同一链接超过6套配置时只挂载可见配置及相邻区域；当前输入所在配置保持挂载，选行状态跨卸载保留。共享候选与库存索引减少每次输入的重复计算，未变配置的投影缓存复用。自由编辑缩放将尺寸读取与样式写入分开，合并同帧布局刷新。
-
-浅深界面通过共享主题变量同步宿主与 iframe；换色期间暂停全页颜色过渡，避免大量控件同时动画。此主题不写入图片配色字段。
-
-图片按需要绘制和导出。导出文件按链接及图片类型分组；应用缓存由缓存维护逻辑管理，与用户导出的图片目录分开。
-
-## 同步与 ERP
-
-外部接入均为可选。本机 `data/integrations.json` 提供连接参数；未配置时不会自动连接某个团队。页面调度通过原生接口执行同步，网络与业务存储由 Rust 处理。登录后的自动同步间隔为 2 小时，用户也可手动发起；普通编辑可以在后台同步时继续。
-
-ERP 通过本机安装的运行时及适配器查询，查询结果预览后才应用至本机配置。发行包保留通用协议，不附带私有运行时、账号或生产连接。配置说明见[本机可选接入](PUBLIC-INTEGRATIONS.md)。
-
-## 更新与发行
-
-Gitea 为首选更新源，GitHub 为备用源。更新模块读取固定通道 `refactor-updates` 的签名清单，清单指向具体版本的程序附件。Ed25519 验签通过后，继续核对版本、长度和 SHA-256；保存成功后才替换程序。
-
-程序包含验证公钥。发布私钥只用于发布者本机签名，Gitea 发布凭据只用于上传，两者都不进入 EXE 或业务同步。Gitea 客户端下载使用匿名请求，与发布者的上传权限分离。
+| 模块 | 当前职责与入口 |
+| --- | --- |
+| 连接设置 | `nas_launch.rs` 在线程启动前读配置；`nas_connection.rs` 匿名 TLS 检查和原子落盘；重启切换 |
+| 身份与权限 | `cloud_transport.rs` 处理原账号会话；`nas-api/src/auth.mjs` 和店铺作用域在服务端鉴权 |
+| 编辑与恢复 | `nas-main-workspace.js`、`nas-draft-controller.js`、`nas-operation-plan.js` 按端点、部署、成员隔离草稿和回执 |
+| PostgreSQL | `services/nas-api/src` 通过受限角色操作各店数据；SQL 与部署模板不带生产密码 |
+| 图片 | 预览分辨率受限，旧画布释放，原图缓存有数量和体积上限；导出生成高清图 |
+| 更新 | `workbench-updates` / `workbench-vX.Y.Z`，Ed25519 验签后检查长度和 SHA-256，保留 data |
+| 旧版兼容 | 本机 SQLite、迁移及旧同步代码仍被兼容构建/测试引用；正式 NAS 启动不进入这些路径 |
 
 ## 数据位置
 
-| 内容 | 位置与边界 |
+| 内容 | 位置 |
 | --- | --- |
-| 便携程序数据 | EXE 相邻的 `data`，更新时保留 |
-| 配置与历史 | 本机 SQLite 及相关文件 |
-| 原图、恢复草稿、缓存 | 本机数据目录中的对应子目录 |
-| 连接参数 | 本机 `data/integrations.json` |
-| 可选 ERP 运行时 | 本机 `data/runtime/` |
-| 发布私钥与上传凭据 | 发布者本机，源码和发行包之外 |
+| 服务端配置、成本、价格与利润历史、回收站 | NAS PostgreSQL；自动清理尚未上线 |
+| 上传的原图 | NAS 文件存储及数据库元信息 |
+| 本机草稿、恢复队列、WebView 缓存 | 程序目录 `data/webview2`，作用域隔离 |
+| 服务端地址、部署标识、公开 CA | 程序旁 `workbench-connection.json`；兼容旧 `nas-launch.json` 与 `data/nas-ca.pem` |
+| 原账号认证接入 | 构建时内置非密码默认值；外部 `data/integrations.json` 优先覆盖 |
+| 登录续期信息 | Windows 凭据管理器；不保存明文密码 |
+| ERP 查询运行时 | 本机 data 内，凭据由本机加密存储 |
+| 导出图片 | 用户自行选择的目录 |
 
-仓库不包含开发过程记录、私人测试数据和生产环境配置。本图描述 Windows 重构版，不包含独立维护的旧版桌面程序或轻量网页部署。
+结构图以本文 Mermaid 为唯一维护源。旧本机优先架构的静态图和交互图已退出当前文档，避免把历史流程当成新版行为。通用域名、自部署认证发现仍需后续开发。

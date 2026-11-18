@@ -51,3 +51,13 @@ test('manifest refuses duplicate, empty and arbitrary update sources', () => {
     assert.throws(() => makeEnvelope({ binary: binary(), version: '0.2.2', privateKey, sources }), /更新来源/);
   }
 });
+
+// 新版与旧版可沿用公钥，但产品、版本标签和附件名不能混用。
+test('新版独立通道与旧版清单身份分离',()=>{
+ const {privateKey}=generateKeyPairSync('ed25519');
+ const result=makeEnvelope({binary:binary(),version:'0.2.41',privateKey,profile:'workbench',sources:['gitea','github']});
+ assert.equal(result.payload.channel,'workbench');assert.equal(result.payload.appId,'io.diytools.nas-intel-production');
+ assert.equal(result.payload.artifact.name,'diytools-workbench-0.2.41-windows-x86_64.exe');
+ assert.ok(result.payload.artifact.urls.every(url=>url.includes('/workbench-v0.2.41/')));
+ assert.throws(()=>makeEnvelope({binary:binary(),version:'0.2.41',privateKey,profile:'unknown'}),/未知更新产品/);
+});

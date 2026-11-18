@@ -20,6 +20,9 @@ use std::{
 
 pub struct CloudRuntime {
     transport: Arc<CloudTransport>,
+    nas: Option<reqwest::Url>,
+    nas_deployment: Option<String>,
+    nas_main: bool,
     plan: Mutex<Option<CachedPlan>>,
     legacy: Mutex<Option<(u64, workbench_store::PreparedLegacyMigration)>>,
     identity_gate: RwLock<()>,
@@ -39,7 +42,7 @@ impl CloudRuntime {
     // 创建共享传输会话及身份、原图、首次绑定的独立互斥门，避免任务相互覆盖。
     pub fn new(data_dir: &std::path::Path) -> Result<Self, String> {
         let path = data_dir.join("integrations.json");
-        // 只读取应用数据目录的本机配置；缺文件或缺 cloud 字段允许使用本地工作台。
+        // 外部文件优先；只有文件完全不存在才使用构建注入的默认认证，错误配置不静默回退。
         let transport = match fs::File::open(&path) {
             Ok(file) => {
                 let mut bytes = Vec::new();
@@ -63,12 +66,46 @@ impl CloudRuntime {
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                CloudTransport::unconfigured()?
+                crate::embedded_auth::transport()?
             }
             Err(_) => return Err("CLOUD_CONFIG_INVALID: 无法读取本机接入配置".into()),
         };
+        let nas=std::env::var("DIYTOOLS_NAS_API_URL").ok().and_then(|s| nas_base(&s));
+        let nas_main=std::env::var_os("DIYTOOLS_NAS_MAIN").is_some_and(|value| value == "1");
+        let nas_deployment=std::env::var_os("DIYTOOLS_NAS_DEPLOYMENT_ID").map(|value|{
+            value.into_string().ok().filter(|id|valid_nas_deployment(id)).ok_or("正式 NAS 部署标识无效")
+        }).transpose()?;
+        if cfg!(feature="formal-nas-client")&&nas.is_some()&&nas_deployment.is_none(){
+            return Err("正式 NAS 连接配置缺失，请检查程序旁的 nas-launch.json".into());
+        }
+        if nas_deployment.is_some()&&(!nas_main||!nas.as_ref().is_some_and(production_nas_endpoint)){
+            return Err("正式 NAS 需要独立的局域网 HTTPS 地址，不能使用试验端口".into());
+        }
+        // 虚拟路径仅作凭据管理器的命名范围，不创建目录，也不轮换原本机工作区的登录记录。
+        let nas_scope=nas.as_ref().map(|u|nas_endpoint_id(u,nas_deployment.as_deref()));
+        let scope=if nas_main {data_dir.join(".nas-sessions").join(nas_scope.as_deref().unwrap_or("unconfigured"))} else {data_dir.to_path_buf()};
+        let mut transport=transport;
+        if nas_main&&nas.is_some(){
+            if let Ok(pem)=std::env::var("DIYTOOLS_NAS_CA_PEM") {
+                transport=transport.with_nas_ca(pem.as_bytes())?;
+            } else if std::env::var("DIYTOOLS_NAS_SYSTEM_CA").ok().as_deref()==Some("1") {
+                transport=transport.with_nas_system_ca()?;
+            } else { match fs::File::open(data_dir.join("nas-ca.pem")){
+                Ok(file)=>{
+                    let mut pem=Vec::new();
+                    file.take(16*1024+1).read_to_end(&mut pem).map_err(|_|"无法读取 NAS 局域网根证书")?;
+                    transport=transport.with_nas_ca(&pem)?;
+                }
+                Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},
+                Err(_)=>return Err("无法打开 NAS 局域网根证书".into()),
+            }}
+        }
+        if let Some(id)=&nas_deployment {transport=transport.with_nas_deployment(id.clone())?;}
         Ok(Self {
-            transport: Arc::new(transport.with_persistence(data_dir)?),
+            transport: Arc::new(transport.with_persistence(&scope)?),
+            nas,
+            nas_deployment,
+            nas_main,
             plan: Mutex::new(None),
             legacy: Mutex::new(None),
             identity_gate: RwLock::new(()),
@@ -79,12 +116,420 @@ impl CloudRuntime {
             cancelled_assets: Mutex::new(BTreeSet::new()),
         })
     }
+
+    pub(crate) fn nas_main(&self) -> bool { self.nas_main }
+
+    fn check_nas_profile(&self) -> Result<(),String>{
+        if self.nas_deployment.is_none(){return Ok(());}
+        let base=self.nas.as_ref().ok_or("正式 NAS 地址未配置")?;
+        self.transport.check_nas_deployment(base).map_err(|(_,code)|match code{
+            "NAS_DEPLOYMENT_MISMATCH"=>"正式 NAS 部署标识不匹配，请核对独立测试程序的连接配置".into(),
+            _=>"暂时无法建立到正式 NAS 的可信 HTTPS 连接".into(),
+        })
+    }
+
+    // 原图只来自已配置的服务摘要入口，使用无账号、无重定向的独立二进制请求。
+    pub(crate) fn nas_image(&self, path: &str) -> Result<(&'static str, Vec<u8>), u16> {
+        let base = self.nas.as_ref().filter(|_| self.nas_main).ok_or(404u16)?;
+        let name = path.strip_prefix("/images/").ok_or(404u16)?;
+        let (hash, extension) = name.split_once('.').ok_or(404u16)?;
+        if hash.len() != 64 || !hash.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+            return Err(404);
+        }
+        let mime = match extension {"png"=>"image/png","jpg"|"jpeg"=>"image/jpeg",_=>return Err(404)};
+        let url = base.join(path).map_err(|_|404u16)?;
+        self.transport.check_nas_deployment(base).map_err(|(status,_)|status)?;
+        let bytes = self.transport.nas_image(url, mime)?;
+        let signature = if mime=="image/png" { &b"\x89PNG\r\n\x1a\n"[..] } else { &b"\xff\xd8\xff"[..] };
+        if !bytes.starts_with(signature) || format!("{:x}",Sha256::digest(&bytes)) != hash { return Err(502); }
+        Ok((mime,bytes))
+    }
+}
+
+pub(crate) fn valid_nas_deployment(id:&str)->bool{
+    id.strip_prefix("intel-production-").is_some_and(|value|{
+        !value.is_empty()&&value.len()<=31&&!value.starts_with('-')&&!value.ends_with('-')&&
+        value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-')
+    })
+}
+
+pub(crate) fn production_nas_endpoint(url:&reqwest::Url)->bool{
+    url.port().is_some_and(|port|port>=1024&&port!=18443)&&url.host_str().and_then(|ip|ip.parse::<std::net::Ipv4Addr>().ok()).is_some_and(|ip|ip.is_private())
+}
+
+// 试验仍沿用原 URL 作用域，否则旧草稿会丢失。正式同时按端点和服务代号隔离。
+fn nas_endpoint_id(url:&reqwest::Url,deployment:Option<&str>)->String{
+    let source=match deployment{Some(value)=>format!("{}\0{}",url.as_str(),value),None=>url.as_str().to_owned()};
+    format!("{:x}",Sha256::digest(source.as_bytes()))
+}
+
+pub(crate) fn nas_base(raw: &str) -> Option<reqwest::Url> {
+    let url = reqwest::Url::parse(raw).ok()?;
+    // 禁止渲染器传入服务器地址；只接受启动时设置的固定 HTTPS 服务入口。
+    (url.scheme() == "https" && url.host_str().is_some() && url.username().is_empty() &&
+        url.password().is_none() && url.path() == "/" && url.query().is_none() && url.fragment().is_none())
+        .then_some(url)
+}
+
+// 无窗口原生探针：使用正式相同的证书信任，只访问公开健康路由，不读取账号和工作区。
+pub fn run_nas_tls_probe()->Option<i32>{
+    let mut args=std::env::args_os().skip(1);
+    if args.next().as_deref()!=Some(std::ffi::OsStr::new("--verify-nas-lan-tls")){return None;}
+    let result=(||{
+        let output=args.next().ok_or("缺少探针输出位置")?;
+        if args.next().is_some(){return Err("探针参数无效");}
+        let exe=std::env::current_exe().map_err(|_|"无法定位独立程序")?;
+        let dir=exe.parent().ok_or("无法定位测试目录")?;
+        let pem=fs::read(dir.join("data/nas-ca.pem")).map_err(|_|"缺少独立 NAS 根证书")?;
+        let url=std::env::var("DIYTOOLS_NAS_API_URL").ok().and_then(|value|nas_base(&value)).ok_or("NAS HTTPS 地址无效")?;
+        let probe=crate::cloud_transport::nas_tls_client(&pem).map_err(|_|"CA 无效")?;
+        let response=probe.get(url.join("/healthz").map_err(|_|"健康地址无效")?).send();
+        let (status,passed)=match response{
+            Ok(value)=>{
+                let status=value.status().as_u16();
+                let body=value.take(4097).bytes().collect::<Result<Vec<_>,_>>().unwrap_or_default();
+                let health=serde_json::from_slice::<Value>(&body).unwrap_or_default();
+                (Some(status),status==200&&health["ok"]==true&&health["checks"]["process"]==true)
+            }
+            Err(_)=>(None,false),
+        };
+        let report=json!({"endpoint":url.as_str(),"caSha256":format!("{:x}",Sha256::digest(&pem)),"httpStatus":status,
+            "trustedHttps":passed,"windowCreated":false,"databaseOpened":false,"credentialsRead":false});
+        let mut file=fs::OpenOptions::new().create_new(true).write(true).open(output).map_err(|_|"不能新建探针结果")?;
+        file.write_all(report.to_string().as_bytes()).map_err(|_|"不能输出探针结果")?;
+        Ok(if passed{0}else{2})
+    })();
+    Some(result.unwrap_or(1))
+}
+
+fn nas_route(base: &reqwest::Url, method: &str, route: &str) -> Option<(reqwest::Method, reqwest::Url)> {
+    if route.len() > 4096 || route.contains(['\\', '#']) ||
+        !route.starts_with("/api/v1/") || route.bytes().any(|x| x.is_ascii_control()) {
+        return None;
+    }
+    let url = base.join(route).ok()?;
+    let path = url.path().strip_prefix("/api/v1/")?;
+    let parts = path.split('/').collect::<Vec<_>>();
+    // 页面只可使用试验业务入口，不能用这个原生命令发送任意同源请求。
+    let valid = matches!((method, parts.as_slice()),
+        ("GET", ["me"]) |
+        ("GET", ["operations", "workspace-index" | "workspace-catalog"]) |
+        ("POST", ["operations", "workspace", "configurations" | "import-preview" | "costs" | "settings" | "quotations" | "source-usage"]) |
+        ("GET", ["operations", "workspace", "activity"]) |
+        ("POST", ["operations", "workspace", "profit", "start" | "status" | "history" | "reset"]) |
+        ("POST", ["operations", "workspace", "price-history", "list" | "detail" | "day" | "handle"]) |
+        ("GET", ["operations", "workspace", "receipts" | "quotations", _]) |
+        ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates"]) |
+        ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "receipts", _]) |
+        ("POST", ["operations", "catalog", "sources" | "gallery" | "templates"]) |
+        ("POST", ["operations", "catalog", "sources" | "gallery" | "templates", _, "archive" | "restore" | "copy" | "apply"]) |
+        ("PUT", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates", _]) |
+        ("GET", ["operations", "save-receipts" | "sources" | "costs" | "templates" | "gallery", _]) |
+        ("GET", ["operations" | "sales", "configurations"]) |
+        ("GET", ["operations" | "sales", "configurations", _]) |
+        ("GET", ["operations" | "sales", "configurations", _, "addons"]) |
+        ("POST", ["operations", "configurations"]) |
+        ("POST", ["operations", "configurations", _, "archive" | "restore"]) |
+        ("PUT", ["operations", "configurations", _]) |
+        ("PUT", ["operations", "configurations", _, "design"]));
+    (valid && url.origin() == base.origin() && parts.iter().all(|p| !p.is_empty()))
+        .then(|| (reqwest::Method::from_bytes(method.as_bytes()).ok(), url))
+        .and_then(|(method,url)| Some((method?,url)))
+}
+
+#[cfg(test)]
+#[test]
+fn nas_native_routes_only_allow_configured_https_business_methods() {
+    assert!(nas_base("http://nas.example/").is_none());
+    assert!(nas_base("https://a:b@nas.example/").is_none());
+    assert!(nas_base("https://nas.example/path").is_none());
+    let base = nas_base("https://nas.example:18443/").unwrap();
+    let route = nas_route(&base, "PUT", "/api/v1/operations/configurations/id/design?shop_id=intel").unwrap();
+    assert_eq!(route.1.origin(), base.origin());
+    assert!(nas_route(&base, "PUT", "/api/v1/sales/configurations/id").is_none());
+    assert!(nas_route(&base, "PUT", "/api/v1/operations/configurations/%2e%2e/me").is_none());
+    assert!(nas_route(&base, "POST", "https://outside.example/api/v1/operations/configurations").is_none());
+    assert!(nas_route(&base, "GET", "/api/v1//outside.example").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn production_nas_endpoint_and_recovery_keys_do_not_overlap_trial() {
+    let trial=nas_base("https://192.168.50.10:18443/").unwrap();
+    let formal=nas_base("https://192.168.50.10:19443/").unwrap();
+    let wrong=nas_base("https://example.invalid:19443/").unwrap();
+    assert!(!production_nas_endpoint(&trial)&&!production_nas_endpoint(&wrong)&&production_nas_endpoint(&formal));
+    assert_eq!(nas_endpoint_id(&trial,None),format!("{:x}",Sha256::digest(trial.as_str().as_bytes())));
+    assert!(valid_nas_deployment("intel-production-v1")&&!valid_nas_deployment("intel-production-v1\n"));
+    assert_ne!(nas_endpoint_id(&formal,Some("intel-production-v1")),nas_endpoint_id(&formal,Some("intel-production-v2")));
+    assert_ne!(nas_endpoint_id(&formal,Some("intel-production-v1")),nas_endpoint_id(&trial,None));
+}
+
+#[tauri::command]
+// 由固定 NAS 入口承接试验配置操作，响应、凭据和异常经过原生边界。
+pub async fn nas_native_request(
+    method: String,
+    route: String,
+    body: Option<String>,
+    expected_actor: Option<(String, String)>,
+    runtime: tauri::State<'_, Arc<CloudRuntime>>,
+) -> Result<ApiResponse, String> {
+    let runtime = Arc::clone(runtime.inner());
+    if method == "GET" && route == "/settings" {
+        let endpoint_id = runtime.nas.as_ref().map(|url|nas_endpoint_id(url,runtime.nas_deployment.as_deref()));
+        return Ok(response(200, json!({"configured":runtime.nas.is_some(),"endpoint_id":endpoint_id,"main_editor":runtime.nas_main,"deployment_id":runtime.nas_deployment})));
+    }
+    let rejected = |status, code| Ok(response(status, json!({"ok":false,"error":code})));
+    let Some(base) = &runtime.nas else { return rejected(400, "NAS_NOT_CONFIGURED"); };
+    let Some((method, url)) = nas_route(base, &method, &route) else { return rejected(400, "INVALID_REQUEST"); };
+    if (method == reqwest::Method::GET) != body.is_none() ||
+        body.as_ref().is_some_and(|s| s.len() > 1024 * 1024) ||
+        (method != reqwest::Method::GET && expected_actor.is_none()) {
+        return rejected(400, "INVALID_REQUEST");
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(_identity) = runtime.identity_gate.read() else {
+            return response(503, json!({"ok":false,"error":"NETWORK_OR_RESPONSE_ERROR"}));
+        };
+        match runtime.transport.nas_request(url, method, body.map(|s|("application/json".into(),s.into_bytes())), expected_actor) {
+            Ok((status, value)) => response(status, value),
+            Err((status, code)) => response(status, json!({"ok":false,"error":code})),
+        }
+    }).await.map_err(|_| "NAS 原生请求异常".into())
+}
+
+#[tauri::command]
+// 原图通过固定 NAS 上传路由发送原始字节；登录令牌和目标地址不交给前端。
+pub async fn nas_upload_request(
+    mime: String,
+    shop_id: Option<String>,
+    operation_id: String,
+    base64: String,
+    expected_actor: (String,String),
+    runtime: tauri::State<'_, Arc<CloudRuntime>>,
+) -> Result<ApiResponse, String> {
+    use base64::Engine;
+    const LIMIT: usize=24*1024*1024;
+    let runtime=Arc::clone(runtime.inner());
+    let Some(base)=runtime.nas.as_ref().filter(|_|runtime.nas_main) else {
+        return Ok(response(403,json!({"ok":false,"error":"NAS_NOT_CONFIGURED"})));
+    };
+    // 本机只允许固定店铺；当前账号能否上传仍由 NAS 服务核验。
+    let shop = shop_id.as_deref().unwrap_or("intel");
+    if !matches!(shop,"intel"|"gigabyte"|"jonsbo") || !matches!(mime.as_str(),"image/png"|"image/jpeg") || operation_id.len()!=36||
+        uuid::Uuid::parse_str(&operation_id).is_err() || base64.len()>LIMIT.div_ceil(3)*4 {
+        return Ok(response(400,json!({"ok":false,"error":"INVALID_IMAGE"})));
+    }
+    let mut url=base.join("/api/v1/operations/catalog/assets").map_err(|_|"NAS 图片地址无效")?;
+    url.query_pairs_mut().append_pair("shop_id",shop).append_pair("operation_id",&operation_id);
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(_identity)=runtime.identity_gate.read() else {
+            return response(503,json!({"ok":false,"error":"NETWORK_OR_RESPONSE_ERROR"}));
+        };
+        let Ok(bytes)=base64::engine::general_purpose::STANDARD.decode(base64) else {
+            return response(400,json!({"ok":false,"error":"INVALID_IMAGE"}));
+        };
+        if bytes.is_empty()||bytes.len()>LIMIT {return response(400,json!({"ok":false,"error":"INVALID_IMAGE"}));}
+        match runtime.transport.nas_request(url,reqwest::Method::POST,Some((mime,bytes)),Some(expected_actor)){
+            Ok((status,value))=>response(status,value),
+            Err((status,code))=>response(status,json!({"ok":false,"error":code})),
+        }
+    }).await.map_err(|_|"NAS 图片请求异常".into())
+}
+
+#[tauri::command]
+// 独立 NAS 启动的账号入口只保留原认证动作，不装配或调用本机工作区和旧同步检查点。
+pub async fn nas_identity_request(
+    action: String,
+    payload_json: String,
+    runtime: tauri::State<'_, Arc<CloudRuntime>>,
+) -> Result<ApiResponse, String> {
+    let runtime = Arc::clone(runtime.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        let authenticate = || -> Result<Value,String> {
+            if !runtime.nas_main { return Err("当前不是 NAS 主工作区".into()); }
+            if payload_json.len()>16*1024 { return Err("登录请求过大".into()); }
+            let payload = parse_payload(&payload_json)?;
+            match action.as_str() {
+                "status"=>Ok(json!({"session":runtime.transport.status()?})),
+                "login"=>{
+                    let _gate = runtime.identity_gate.write().map_err(|_|"登录状态异常")?;
+                    runtime.check_nas_profile()?;
+                    runtime.transport.login_with_remember(payload["username"].as_str().ok_or("请输入账号")?,
+                        payload["password"].as_str().ok_or("请输入密码")?,payload["remember"].as_bool().unwrap_or(false))
+                }
+                "resume"=>{
+                    let _gate = runtime.identity_gate.write().map_err(|_|"登录状态异常")?;
+                    runtime.check_nas_profile()?;
+                    runtime.transport.resume()
+                }
+                "logout"=>runtime.transport.logout(),
+                _=>Err("NAS 模式不允许旧同步操作".into()),
+            }
+        };
+        match authenticate(){Ok(value)=>response(200,value),Err(message)=>response(400,json!({"error":message}))}
+    }).await.map_err(|_| "NAS 登录请求异常".into())
 }
 fn response(status: u16, value: Value) -> ApiResponse {
     ApiResponse {
         status,
         body: value.to_string(),
     }
+}
+// 核对固定 NAS 上的现有运营身份，ERP 查询前后都检查；只读过程不持有账号锁。
+async fn verify_nas_reader(runtime: Arc<CloudRuntime>, actor: (String,String), shop: String) -> Result<(),String>{
+    tauri::async_runtime::spawn_blocking(move ||{
+        let _gate=runtime.identity_gate.read().map_err(|_|"登录状态异常")?;
+        let target=runtime.nas.as_ref().filter(|_|runtime.nas_main).ok_or("当前不是 NAS 工作区")?.join("/api/v1/me")
+            .map_err(|_|"NAS 地址无效")?;
+        let (status,me)=runtime.transport.nas_request(target,reqwest::Method::GET,None,Some(actor.clone()))
+            .map_err(|_|"请核对当前 NAS 运营身份")?;
+        let capability=if let Some(map)=me.get("shop_capabilities") { &map[shop.as_str()] } else if shop=="intel" { &me } else { &Value::Null };
+        let role_ok=me["shops"].as_array().is_some_and(|rows|rows.iter().any(|row|row["shop_id"].as_str()==Some(shop.as_str())&&row["role"]=="operations"));
+        if status!=200||me["uid"].as_str()!=Some(actor.1.as_str())||me["workspace_id"].as_str()!=Some(actor.0.as_str())||
+            !role_ok||capability["workspace_writes"]!=true {
+            return Err("原账号已变化或没有本店运营权限".into());
+        }
+        Ok(())
+    }).await.map_err(|_|"NAS 身份核验异常")?
+}
+
+#[tauri::command]
+pub async fn nas_erp_read(
+    kind: String,
+    shop_id: Option<String>,
+    goods_ids: Vec<String>,
+    connection: Option<Value>,
+    expected_actor: (String,String),
+    runtime: tauri::State<'_, Arc<CloudRuntime>>,
+    worker: tauri::State<'_, crate::erp_session::ErpSessionState>,
+) -> Result<ApiResponse,String>{
+    // 只开放固定只读查询和原生文件选择；英特尔对外报价表不用于其他店铺。
+    let shop=shop_id.unwrap_or_else(||"intel".into());
+    if !matches!(shop.as_str(),"intel"|"gigabyte"|"jonsbo")||(kind=="quote-file"&&shop!="intel")||
+        !matches!(kind.as_str(),"erp"|"erp-saved"|"erp-status"|"erp-clear"|"erp-form"|"tax-file"|"tax-status"|"tax-choose"|"tax-read"|"quote-file")||
+        matches!(kind.as_str(),"erp-form"|"tax-read")!=connection.is_some()||goods_ids.len()>5000||
+        goods_ids.iter().any(|id|id.is_empty()||id.len()>20||!id.bytes().all(|c|c.is_ascii_digit())) {
+        return Err("ERP 查询范围无效".into());
+    }
+    let runtime=Arc::clone(runtime.inner());
+    verify_nas_reader(Arc::clone(&runtime),expected_actor.clone(),shop.clone()).await?;
+    let scope_data=(runtime.nas.as_ref().map(|url|url.as_str()),runtime.nas_deployment.as_deref(),&expected_actor);
+    // 英特尔保留既有连接范围；新店独立存储连接与所选工作簿。
+    let scope_bytes=if shop=="intel" { serde_json::to_vec(&scope_data) } else { serde_json::to_vec(&(scope_data,&shop)) };
+    let scope=format!("{:x}",Sha256::digest(scope_bytes.map_err(|_|"本机连接范围无效")?));
+    let worker=worker.inner();
+    if matches!(kind.as_str(),"erp-status"|"erp-clear") {
+        let action=if kind=="erp-status"{"sql_credentials_status"}else{"sql_credentials_clear"};
+        let value=worker.nas_form_request(&scope,json!({"action":action})).await?;
+        verify_nas_reader(runtime,expected_actor,shop.clone()).await?;
+        return Ok(response(200,json!({"ok":true,"saved":value["saved"]==true,"settings":value["settings"]})));
+    }
+    let tax_preference=||worker.nas_scope_dir(&scope).map(|directory|directory.join("cost-workbook.json"));
+    if kind=="tax-status" {
+        let settings=nas_cost_preference(&tax_preference()?)?;
+        verify_nas_reader(runtime,expected_actor,shop.clone()).await?;
+        return Ok(response(200,json!({"ok":true,"settings":settings})));
+    }
+    let result=if kind=="erp-saved"{
+        // 只能从原生文件对话框选择，页面不能提交凭据或磁盘路径。
+        let file=tauri::async_runtime::spawn_blocking(||rfd::FileDialog::new()
+            .set_title("选择原工作台保存的 ERP 只读连接（sql-credentials.dpapi.json）")
+            .add_filter("加密连接文件",&["json"]).pick_file()).await.map_err(|_|"打开文件选择器失败")?;
+        let Some(path)=file else{return Ok(response(200,json!({"ok":true,"cancelled":true})));};
+        verify_nas_reader(Arc::clone(&runtime),expected_actor.clone(),shop.clone()).await?;
+        worker.nas_read_selected_vault(&path).await?
+    } else if kind=="erp"{worker.nas_form_request(&scope,json!({"action":"sql_read_nas"})).await?}
+    else if kind=="erp-form"{
+        let input=nas_erp_form(connection.as_ref().ok_or("请填写公司数据库连接")?)?;
+        worker.nas_form_request(&scope,input).await?
+    }else{
+        let quote=kind=="quote-file";
+        let mut workbook=if kind=="tax-read"{nas_cost_preference(&tax_preference()?)?}else{NasCostWorkbook::default()};
+        let file=if kind=="tax-read"{workbook.path.clone()}else{tauri::async_runtime::spawn_blocking(move||if quote{
+            rfd::FileDialog::new().set_title("选择英特尔主机维护表").add_filter("维护表",&["xlsb"]).pick_file()
+        }else{rfd::FileDialog::new().set_title("选择当前店铺含税成本表").add_filter("Excel 表格",&["xlsb","xlsx"]).pick_file()})
+            .await.map_err(|_|"打开文件选择器失败")?};
+        if kind=="tax-read"&&file.is_none(){return Err("请先选择 Excel 文件".into());}
+        let Some(path)=file else{return Ok(response(200,json!({"ok":true,"cancelled":true})));};
+        verify_nas_reader(Arc::clone(&runtime),expected_actor.clone(),shop.clone()).await?;
+        if kind=="tax-choose" {
+            workbook.path=Some(path);
+            save_nas_cost_preference(&tax_preference()?,&workbook)?;
+            return Ok(response(200,json!({"ok":true,"settings":workbook})));
+        }
+        let input=if quote{json!({"action":"nas_quotation_file","settings":{"path":path.to_string_lossy()}})}
+        // 修复版以 M 列商品 ID 匹配 Z 列主机含税成本，不能读取 AA 列单品含税。
+        else{
+            if let Some(layout)=connection.as_ref(){workbook.apply_layout(layout)?;}
+            if path.file_name().is_some_and(|name|name=="主机成本表V2新_修复版.xlsb")&&(workbook.sheet!="库存数据"||workbook.goods_column!=13||workbook.tax_column!=26){return Err("修复版请使用库存数据工作表和 M / Z 列".into());}
+            json!({"action":"sql_cost_file","settings":{"mode":"nas","path":path.to_string_lossy(),"sheet":workbook.sheet,"goodsColumn":workbook.goods_column,"taxColumn":workbook.tax_column}})
+        };
+        let rows=worker.sql_request(input).await?;
+        if kind=="tax-read"{save_nas_cost_preference(&tax_preference()?,&workbook)?;}
+        rows
+    };
+    verify_nas_reader(runtime,expected_actor,shop.clone()).await?;
+    if kind=="quote-file"{
+        return Ok(response(200,json!({"ok":true,"rows":result["rows"],"workbook_sha256":result["workbook_sha256"],
+            "invalidCount":result["invalidCount"].as_u64().unwrap_or(0)})));
+    }
+    let wanted=goods_ids.into_iter().collect::<BTreeSet<_>>();
+    let rows=result["rows"].as_array().ok_or("ERP 查询返回无效")?.iter().filter(|row|
+        row[if matches!(kind.as_str(),"erp"|"erp-saved"|"erp-form"){"goodsId"}else{"goods_id"}].as_str().is_some_and(|id|wanted.contains(id))).collect::<Vec<_>>();
+    Ok(response(200,json!({"ok":true,"rows":rows,"settings":result["settings"],"invalidCount":result["invalidCount"].as_u64().unwrap_or(0)})))
+}
+
+// 设置白名单避免把未知字段、路径、SQL 或原始校验错误带进凭据存储。
+fn nas_erp_form(value:&Value)->Result<Value,String>{
+    let form=value.as_object().ok_or("请填写公司数据库连接")?;
+    let settings=value["settings"].as_object().ok_or("请填写公司数据库连接")?;
+    let keys=["server","port","database","user","encrypt","trustServerCertificate"];
+    if form.len()!=3||form.keys().any(|key|!matches!(key.as_str(),"settings"|"password"|"remember"))||
+       settings.len()!=keys.len()||settings.keys().any(|key|!keys.contains(&key.as_str()))||
+       ["server","database","user"].iter().any(|key|!settings[*key].as_str().is_some_and(|text|!text.trim().is_empty()&&text.len()<=800&&!text.contains('\0')))||
+       !value["password"].as_str().is_some_and(|text|!text.is_empty()&&text.len()<=4096&&!text.contains('\0'))||
+       !value["remember"].is_boolean(){return Err("公司数据库连接参数无效".into());}
+    Ok(json!({"action":"sql_read_nas_form","settings":value["settings"],"password":value["password"],"remember":value["remember"]}))
+}
+
+// 文件路径只来自原生选择；用户可为其他模板调整读取列，修复版继续采用 M/Z。
+#[derive(serde::Deserialize,serde::Serialize)]
+#[serde(rename_all="camelCase",deny_unknown_fields)]
+struct NasCostWorkbook { path:Option<std::path::PathBuf>,sheet:String,goods_column:u64,tax_column:u64 }
+impl Default for NasCostWorkbook {
+    fn default()->Self{Self{path:None,sheet:"库存数据".into(),goods_column:13,tax_column:26}}
+}
+impl NasCostWorkbook {
+    fn apply_layout(&mut self,value:&Value)->Result<(),String>{
+        let fields=value.as_object().ok_or("成本表列设置无效")?;
+        if fields.len()!=3||fields.keys().any(|name|!matches!(name.as_str(),"sheet"|"goodsColumn"|"taxColumn")){return Err("成本表列设置无效".into());}
+        let sheet=value["sheet"].as_str().filter(|v|!v.trim().is_empty()&&v.chars().count()<=31).ok_or("工作表名称无效")?;
+        let col=|name|value[name].as_u64().filter(|n|(1..=16384).contains(n)).ok_or("成本表列超出 Excel 范围");
+        let goods=col("goodsColumn")?;let tax=col("taxColumn")?;
+        if goods==tax{return Err("商品编号和含税成本不能在同一列".into());}
+        self.sheet=sheet.trim().into();self.goods_column=goods;self.tax_column=tax;Ok(())
+    }
+}
+fn nas_cost_preference(preference:&std::path::Path)->Result<NasCostWorkbook,String>{
+    let file=match fs::File::open(preference){Ok(file)=>file,Err(error) if error.kind()==std::io::ErrorKind::NotFound=>return Ok(NasCostWorkbook::default()),Err(_)=>return Err("读取本机成本表设置失败".into())};
+    let mut data=Vec::new();file.take(8193).read_to_end(&mut data).map_err(|_|"读取本机成本表设置失败")?;
+    if data.len()>8192{return Err("本机成本表设置无效".into());}
+    let settings:NasCostWorkbook=serde_json::from_slice(&data).map_err(|_|"本机成本表设置无效")?;
+    if settings.path.as_deref().is_some_and(|path|!valid_nas_cost_path(path)){return Err("原成本表路径不可用，请重新选择 Excel 文件".into());}
+    Ok(settings)
+}
+fn valid_nas_cost_path(path:&std::path::Path)->bool{
+    path.is_absolute()&&path.extension().and_then(|x|x.to_str()).is_some_and(|ext|["xlsb","xlsx"].iter().any(|a|ext.eq_ignore_ascii_case(a)))
+}
+fn save_nas_cost_preference(preference:&std::path::Path,settings:&NasCostWorkbook)->Result<(),String>{
+    if !settings.path.as_deref().is_some_and(|path|valid_nas_cost_path(path)&&path.is_file()){return Err("请选择可读 Excel 文件".into());}
+    let directory=preference.parent().ok_or("没有本机成本表目录")?;
+    fs::create_dir_all(directory).map_err(|_|"无法建立成本表设置目录")?;
+    let staged=directory.join(format!("cost-workbook.{}.tmp",uuid::Uuid::new_v4()));
+    let data=serde_json::to_vec(settings).map_err(|_|"成本表路径无效")?;
+    fs::write(&staged,data).map_err(|_|"保存成本表设置失败")?;
+    fs::rename(staged,preference).map_err(|_|"保存成本表设置失败".into())
 }
 // 仅使用原生传输层已验证的成员身份，不能以页面传入值替代。
 fn member(runtime: &CloudRuntime) -> Result<Value, String> {
@@ -681,6 +1126,8 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     // 未配置时 status 与 resume 都保持本地模式，接入动作在身份核验前被拒绝。
+    // 正式版缺文件时使用内置认证，另由 embedded_auth_fallback 测试覆盖。
+    #[cfg(not(feature = "formal-nas-client"))]
     #[test]
     fn absent_config_status_resume_and_connect_are_local_only() {
         let (store, _, _) = connect_fixture();
@@ -1201,4 +1648,19 @@ fn parse_payload(raw: &str) -> Result<Value, String> {
         return Err("云同步请求须为对象".into());
     }
     Ok(value)
+}
+
+// 新设备无接入文件使用内置默认值；显式覆盖、禁用及损坏文件均保持原语义。
+#[cfg(test)]
+#[test]
+fn embedded_auth_fallback_respects_external_config_precedence(){
+    let dir=std::env::temp_dir().join(format!("diy-auth-{}",uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).unwrap();
+    let runtime=CloudRuntime::new(&dir).unwrap();
+    assert_eq!(runtime.transport.environment(),crate::embedded_auth::transport().unwrap().environment());
+    std::fs::write(dir.join("integrations.json"),br#"{"version":1,"cloud":{"envId":"override-demo","endpoint":"https://example.invalid/"}}"#).unwrap();
+    let runtime=CloudRuntime::new(&dir).unwrap();assert!(runtime.transport.environment().starts_with("override-demo@"));
+    std::fs::write(dir.join("integrations.json"),br#"{"version":1,"cloud":null}"#).unwrap();
+    assert_eq!(CloudRuntime::new(&dir).unwrap().transport.status().unwrap()["configured"],false);
+    std::fs::write(dir.join("integrations.json"),b"invalid-json").unwrap();assert!(CloudRuntime::new(&dir).is_err());
 }

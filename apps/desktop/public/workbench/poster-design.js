@@ -26,11 +26,16 @@ export function paddedSquare(canvas,width){
 
 // Square typography is independent from detail typography; editor writes still
 // target the live configuration rather than a disposable rendering clone.
+const squareEditors=new WeakMap();
 /** 从配置派生编辑器需要的海报参数。 */
 export function posterEditorConfig(config){
  if(!config||config.layout!=='square')return config;
- return new Proxy(config,{
+ if(squareEditors.has(config))return squareEditors.get(config);
+ // 图库取图是异步操作：同一配置重绘后保留身份，切换或撤销成另一个对象时才拒绝迟到结果。
+ const editor=new Proxy(config,{
   get(target,key){return key==='textStyles'?target.skuTextStyles:Reflect.get(target,key);},
   set(target,key,value){return Reflect.set(target,key==='textStyles'?'skuTextStyles':key,value);}
  });
+ squareEditors.set(config,editor);
+ return editor;
 }

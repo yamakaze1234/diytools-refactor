@@ -14,6 +14,22 @@ test('native catalog is read through the local store without fetching bundled bu
 function frame(original = async () => new Response('static')) {
   return { location: new URL('http://localhost:1420/workbench/index.html'), fetch: original };
 }
+test('NAS 桥接不转发本地业务、云同步、ERP、写入或本机原图',async()=>{
+ const calls=[],target=frame();
+ target.location=new URL('http://localhost:1420/workbench/index.html?workspace=nas');
+ await installWorkbenchBridge(target,{invoke:async(command,args)=>{
+  calls.push({command,args});return {status:200,body:'{}'};
+ }});
+ for(const url of ['/api/workspace/index','/api/state','/api/configs/batch','/api/native-cloud/connect','/api/native-cloud/commit','/api/sql-sync/apply','/api/recovery-draft','/catalog.json','/uploads/test.png']){
+  assert.equal((await target.fetch(url,{method:'POST',body:'{}'})).status,403,url);
+ }
+ assert.equal(calls.length,0);
+ const id='a'.repeat(64);
+ assert.match(target.resolveWorkbenchAsset('/uploads/'+id+'.png'),new RegExp('/images/'+id+'\\.png$'));
+ assert.equal(target.resolveWorkbenchAsset('/saved/local.png'),'/workbench/nas-asset-unavailable');
+ await target.fetch('/api/native-nas/api/v1/operations/workspace-index');
+ assert.equal(calls[0].command,'nas_native_request');
+});
 
 test('分批导出桥接逐次传递会话阶段，不拼接整批图片',async()=>{
  const calls=[],target=frame();

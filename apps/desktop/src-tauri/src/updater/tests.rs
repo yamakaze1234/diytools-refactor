@@ -10,12 +10,12 @@ fn signed(
     let mut version = Version::parse(CURRENT).unwrap();
     version.patch += 1;
     let version = version.to_string();
-    let name = format!("diytools-refactor-{version}-windows-x86_64.exe");
+    let name = artifact_name(&version);
     let mut value = serde_json::json!({
-        "schema":1,"appId":"io.diytools.refactor","channel":"refactor","platform":"windows-x86_64",
+        "schema":1,"appId":APP_ID,"channel":CHANNEL,"platform":"windows-x86_64",
         "version":version,"publishedAt":"2026-10-12T01:00:00Z","notes":"更新说明",
         "artifact":{"name":name,"size":binary.len(),"sha256":format!("{:x}",Sha256::digest(binary)),
-        "urls":[format!("https://github.com/yamakaze1234/diytools-refactor/releases/download/refactor-v{version}/{name}")]}
+        "urls":[format!("https://github.com/yamakaze1234/diytools-refactor/releases/download/{TAG_PREFIX}{version}/{name}")]}
     });
     change(&mut value);
     let bytes = serde_json::to_vec(&value).unwrap();
@@ -93,9 +93,9 @@ fn rejects_wrong_contract_downgrade_and_untrusted_downloads() {
 #[test]
 fn api_contract_rejects_other_repository_paths_and_queries() {
     for path in [
-        "tags/refactor-updates",
-        "tags/refactor-v0.2.1",
-        "assets/123",
+        format!("tags/{CHANNEL_TAG}"),
+        format!("tags/{}",version_tag("0.2.1")),
+        "assets/123".to_string(),
     ] {
         assert!(api_url_allowed(
             &Url::parse(&format!(
@@ -433,7 +433,7 @@ fn primary_source_is_lazy_and_security_errors_stop_fallback() {
 fn signed_sources_accept_gitea_and_legacy_but_reject_duplicates() {
     let add_gitea = |v: &mut serde_json::Value| {
         let url = format!(
-            "https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/refactor-v{}/{}",
+            "https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/{TAG_PREFIX}{}/{}",
             v["version"].as_str().unwrap(),
             v["artifact"]["name"].as_str().unwrap()
         );
@@ -517,4 +517,28 @@ fn recovery_status_is_available_without_network_and_ignores_unfinished_updates()
     let result = latest_recovery_status(&root).unwrap().unwrap();
     assert_eq!(result["message"], "已恢复更新前数据库");
     assert_eq!(result["directory"], directory.to_string_lossy().as_ref());
+}
+
+// 即使沿用同一签名公钥，另一个产品通道的合法签名也必须被拒绝。
+#[test]
+fn rejects_signed_manifest_from_other_client_channel(){
+    let (envelope,key)=signed(|v|{v["appId"]=if cfg!(feature="formal-nas-client"){"io.diytools.refactor"}else{"io.diytools.nas-intel-production"}.into();v["channel"]=if cfg!(feature="formal-nas-client"){"refactor"}else{"workbench"}.into();},b"new");
+    assert!(verify_envelope(&envelope,&key,"0.1.0").is_err());
+    let other=if cfg!(feature="formal-nas-client"){"refactor-updates"}else{"workbench-updates"};
+    assert!(!api_url_allowed(&Url::parse(&format!("https://api.github.com/repos/{REPOSITORY}/releases/tags/{other}")).unwrap()));
+}
+
+#[cfg(feature="formal-nas-client")]
+#[test]
+fn formal_updates_never_open_or_snapshot_local_business_data(){
+    let root=fixture();let data=root.join("data");fs::create_dir(&data).unwrap();
+    fs::write(data.join("workbench.sqlite"),b"old database must stay untouched").unwrap();
+    fs::write(data.join("draft.json"),b"unsaved draft").unwrap();
+    fs::write(root.join("nas-launch.json"),b"existing connection").unwrap();
+    let update=root.join("update");fs::create_dir(&update).unwrap();
+    assert!(capture_data_for_update(&root,&update).unwrap().is_none());
+    assert!(!update.join("database-backup").exists());
+    assert_eq!(fs::read(data.join("workbench.sqlite")).unwrap(),b"old database must stay untouched");
+    assert_eq!(fs::read(data.join("draft.json")).unwrap(),b"unsaved draft");
+    assert_eq!(fs::read(root.join("nas-launch.json")).unwrap(),b"existing connection");
 }

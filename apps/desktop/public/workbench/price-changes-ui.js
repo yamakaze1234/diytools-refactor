@@ -11,9 +11,9 @@ export async function openPriceChanges(api,{revision,automatic=false}={}){
  let view=loading;
  try{
  let batches=(await call('list')).batches;if(!loading.isConnected||!document.querySelector('#dialog').open)return;
- if(!batches.length){loading.textContent='暂无价格变化记录。启用此功能后的成本更新或 ERP 同步会自动记录，升级时会从本机真实历史补录今日价格更新。';return;}
+ if(!batches.length){loading.textContent=api.nas?'暂无服务端价格变化记录。以后明确应用的成本更新会记录，旧工作台历史未迁入。':'暂无价格变化记录。启用此功能后的成本更新或 ERP 同步会自动记录，升级时会从本机真实历史补录今日价格更新。';return;}
  let batch,tab='parts',metric='erp',band='',slot='',search='',status='',selected=null,offset=0,more=batches.length===30,generation=0,page=0;
- const current=()=>api.configs();
+ const current=()=>api.nas?batch.current:api.configs();
  const draw=()=>{
   // 每次重绘只属于当前仍打开的视图；关闭后返回的处理回执不能重新 showModal。
   if(!view.isConnected||!document.querySelector('#dialog').open)return;
@@ -57,7 +57,7 @@ export async function openPriceChanges(api,{revision,automatic=false}={}){
   document.querySelector('#pc-all')?.addEventListener('click',()=>{automatic=false;tab='links';page=0;draw();});
  };
  const load=async id=>{const token=++generation,anchor=document.querySelector('#pc-content')||loading;try{const result=await call('detail',{revision:id});if(token!==generation||!anchor.isConnected||!document.querySelector('#dialog').open)return;batch=result;selected=null;page=0;if(batch.items.every(r=>r.before.erp===r.after.erp))metric='tax';draw();await call('seen',{revision:id});}catch(error){api.toast(error.message);}};
- const loadDay=async()=>{const token=++generation,anchor=document.querySelector('#pc-content')||loading;try{const result=await call('day');if(token!==generation||!anchor.isConnected||!document.querySelector('#dialog').open)return;batch=result;page=0;selected=null;band='';slot='';search='';status='';metric='tax';draw();if(!batch.baselineKnown)document.querySelector('#pc-content').innerHTML='<p class="price-empty">本机缺少可核验的昨日基线，请查看逐批次记录。不会把今天上一次更新当作昨天价格。</p>';}catch(error){api.toast(error.message);}};
+ const loadDay=async()=>{const token=++generation,anchor=document.querySelector('#pc-content')||loading;try{const result=await call('day');if(token!==generation||!anchor.isConnected||!document.querySelector('#dialog').open)return;batch=result;page=0;selected=null;band='';slot='';search='';status='';metric='tax';draw();if(!batch.baselineKnown)document.querySelector('#pc-content').innerHTML='<p class="price-empty">'+(api.nas?'服务端':'本机')+'缺少可核验的昨日基线，请查看逐批次记录。不会把今天上一次更新当作昨天价格。</p>';}catch(error){api.toast(error.message);}};
  await load(revision||batches[0].revision);
  }catch(error){if(loading.isConnected)loading.textContent=error.message;}
 }

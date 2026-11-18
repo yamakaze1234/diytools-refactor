@@ -17,6 +17,17 @@ test('remembered startup resumes before preparing, without asking for account or
  assert.deepEqual(env.calls.map(c=>c.action),['status','resume','firstUseStatus','connect']);
  assert.equal(env.calls.find(c=>c.action==='resume').payloadJson,'{}');
 });
+test('NAS 登录仅恢复原账号，不访问本机资料、首次绑定或旧同步',async()=>{
+ const calls=[];
+ const controller=createStartupLoginController({desktop:true,nasMain:true,onState:()=>{},invoke:async(_,args)=>{
+  calls.push(args.action);
+  if(args.action==='status')return answer({session:{authenticated:false,member:null,remembered:true}});
+  if(args.action==='resume')return answer({authenticated:true,member});
+  throw Error('不得请求旧工作区：'+args.action);
+ }});
+ await controller.initialize();
+ assert.equal(controller.status().phase,'ready');assert.deepEqual(calls,['status','resume']);
+});
 test('failed remembered-session validation keeps the editor locked and allows retry',async()=>{
  let offline=true;const env=fixture(action=>{
   if(action==='status')return answer({session:{authenticated:false,member:null,remembered:true}});

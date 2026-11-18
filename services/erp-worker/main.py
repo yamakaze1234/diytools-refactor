@@ -66,7 +66,7 @@ def serve(input_stream=None, output_stream=None, session=None):
                 request = json.loads(line.decode("utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError()))
                 if isinstance(request, dict) and isinstance(request.get("id"), str) and len(request["id"]) <= 256:
                     request_id = request["id"]
-                if isinstance(request, dict) and request.get("action") in {"sql_read", "sql_cost_file"}:
+                if isinstance(request, dict) and request.get("action") in {"sql_read", "sql_read_nas", "sql_read_nas_form", "sql_cost_file", "nas_quotation_file"}:
                     output_limit = MAX_SQL_OUTPUT
                 result = session.handle(request)
                 response = {"id": request_id, "ok": True, "result": result}

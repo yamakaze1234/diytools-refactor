@@ -1,0 +1,146 @@
+// 原编辑器与已迁移文档之间的投影，覆盖未知字段、资料覆盖、并发飞行输入和回执。
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createNasMainWorkspace,projectNasEdits,submitNasDraftSet} from '../../../apps/desktop/public/workbench/nas-main-workspace.js';
+import {NasApiError} from '../../../apps/desktop/public/workbench/nas-api-client.js';
+
+const raw={id:'c',shopId:'intel',name:'原配置',parts:[{lineId:'a',name:'人工配件',oldNull:null},{lineId:'b',name:'第二行',precision:0}],
+ actualParts:[],addons:[],privateLegacy:{missing:null,numericZero:0},caseImage:'/uploads/'+'a'.repeat(64)+'.png'};
+test('编辑投影不覆盖只用于界面的兼容字段，重排行按行号保留未知内容',()=>{
+ const ui=structuredClone(raw);
+ delete ui.parts[0].oldNull;ui.parts[0].name='界面默认';ui.generated={layout:'default'};
+ const edited=structuredClone(ui);
+ edited.name='已编辑配置';edited.parts.reverse();edited.parts[0].name='用户改第二行';
+ assert.deepEqual(projectNasEdits(raw,ui,edited),{
+  ...raw,name:'已编辑配置',parts:[{lineId:'b',name:'用户改第二行',precision:0},{lineId:'a',name:'人工配件',oldNull:null}]
+ });
+});
+function fixture(){
+ const copy=structuredClone,db=new Map(),commands=[];
+ let user='owner',remote=copy(raw),version='1',put,receipt;
+ let importedAt=null,activity=[],activityError=false;
+ const storage={get length(){return db.size;},key:i=>[...db.keys()][i],getItem:key=>db.get(key),setItem:(key,item)=>db.set(key,item),removeItem:key=>db.delete(key)};
+ function reply(code,value){return new Response(JSON.stringify(value),{status:code});}
+ const handle=async(path,opts)=>{
+  const route=new URL(path,'https://fixture.invalid').pathname;
+  commands.push({path:route,method:opts.method,owner:opts.headers?.['x-workbench-nas-owner']});
+  if(route==='/settings')return reply(200,{configured:true,main_editor:true,endpoint_id:'nas-a'});
+  if(route==='/api/v1/me')return reply(200,{ok:true,uid:user,workspace_id:'w',data_source:'intel_live',shops:[{shop_id:'intel',role:'operations'}],configuration_writes:true});
+  if(route.endsWith('/workspace-index'))return reply(200,{ok:true,data:{revision:version,updatedAt:importedAt,summaries:[{...remote,nasVersion:version,parts:[]}]}});
+  if(route.endsWith('/workspace-catalog'))return reply(200,{ok:true,data:{shopSettings:{intel:{}},sourceCatalog:[],costSource:[]}});
+  if(!opts.headers?.['x-workbench-nas-owner']||JSON.parse(decodeURIComponent(opts.headers['x-workbench-nas-owner']))[1]!==user)
+   return reply(403,{ok:false,error:'MEMBER_CHANGED'});
+  if(route.endsWith('/workspace/activity'))return activityError?reply(503,{ok:false,error:'SERVICE_UNAVAILABLE'}):reply(200,{ok:true,data:activity});
+  if(route.includes('/save-receipts/'))return reply(200,{ok:true,data:receipt});
+  if(route.endsWith('/configurations/c')&&opts.method==='GET')return reply(200,{ok:true,data:{document:remote,version,dependencies:{sources:{},costs:{}}}});
+  if(route.endsWith('/configurations/c')&&opts.method==='PUT'){
+   const body=JSON.parse(opts.body);
+   if(body.expected_version!==version)return reply(409,{ok:false,error:'VERSION_CONFLICT'});
+   remote=copy(body.document);version=String(Number(version)+1);
+   receipt={configuration_id:'c',shop_id:'intel',operation_id:body.operation_id,version,archived:false};
+   return put?put(reply,receipt):reply(200,{ok:true,data:receipt});
+  }
+  throw Error(route);
+ };
+ return {build:()=>createNasMainWorkspace({storage,nativeRequest:handle}),commands,db,setPut:value=>{put=value;},remote:()=>copy(remote),
+  setTime:(time,events,fail=false)=>{importedAt=time;activity=copy(events);activityError=fail;},
+  setUser:value=>{user=value;},update:value=>{remote=copy(value);version=String(Number(version)+1);}};
+}
+async function attach(main){
+ const index=await main.request('/api/workspace/index');
+ const load=await main.request('/api/configs/load',{method:'POST',body:JSON.stringify({ids:['c'],revision:index.revision})});
+ const doc=load.configs[0];main.attach(doc);return doc;
+}
+test('暂存和旧路由不会发写，显式保存以发送时快照确认飞行前的输入',async()=>{
+ const t=fixture(),main=t.build(),view=await attach(main);
+ view.name='首次提交';main.stage(view);
+ assert.equal(t.commands.filter(c=>c.method==='PUT').length,0);
+ await assert.rejects(main.request('/api/native-cloud/commit',{method:'POST'}),{code:'NAS_FEATURE_UNAVAILABLE'});
+ let release,waitingResolve;
+ const waiting=new Promise(r=>{waitingResolve=r;});
+ t.setPut((respond,data)=>new Promise(r=>{release=()=>r(respond(200,{ok:true,data}));waitingResolve();}));
+ const submitted=main.submit(view);await waiting;
+ view.name='提交飞行期间的新编辑';release();await submitted;
+ assert.equal(t.remote().name,'首次提交');
+ assert.equal((await attach(t.build())).name,'提交飞行期间的新编辑');
+ assert.equal(t.commands.filter(c=>c.method==='PUT').length,1);
+});
+test('未知提交在重载后只查询原回执，服务端换账号不能接续原草稿',async()=>{
+ const t=fixture(),main=t.build(),view=await attach(main);
+ view.name='已提交但回执丢失';main.stage(view);
+ t.setPut(respond=>respond(503,{ok:false,error:'SERVICE_UNAVAILABLE'}));
+ await assert.rejects(main.submit(view),{code:'SAVE_STATUS_UNKNOWN'});
+ const reopened=t.build(),restored=await attach(reopened);
+ assert.equal(restored.name,view.name);assert(reopened.pending('c'));
+ t.setUser('new-account');await assert.rejects(reopened.submit(restored),{code:'MEMBER_CHANGED'});
+ assert.equal(t.commands.filter(c=>c.method==='PUT').length,1);
+ t.setUser('owner');const last=t.build(),lastDoc=await attach(last);
+ assert.equal((await last.submit(lastDoc)).version,'2');
+ assert.equal(t.commands.filter(c=>c.method==='PUT').length,1);
+ assert.equal(t.commands.filter(c=>c.path.includes('/save-receipts/')).length,1);
+ assert.equal(t.db.size,0);
+});
+test('重开已变配置使用新原文基线，冲突保留草稿供手动比较',async()=>{
+ const t=fixture(),main=t.build(),old=await attach(main);
+ t.update({...raw,name:'远端新名',privateLegacy:{tag:'new'}});
+ const fresh=await attach(main);
+ assert.equal(fresh.name,'远端新名');
+ fresh.name='改我的字段';main.stage(fresh);
+ t.update({...raw,name:'第二人保存',privateLegacy:{tag:'latest'}});
+ await assert.rejects(main.submit(fresh),{code:'VERSION_CONFLICT'});
+ const compare=await main.compare('c');
+ assert.equal(compare.draft.name,'改我的字段');
+ assert.equal(compare.remote.document.privateLegacy.tag,'latest');
+ assert.equal(old.name,'原配置');
+});
+test('重开后未载入的持久草稿仍按原文和版本保存，不借用其他账号草稿',async()=>{
+ const t=fixture(),first=t.build(),view=await attach(first);
+ view.name='重开后未打开的草稿';first.stage(view);
+ t.setUser('另一成员');const other=t.build();await other.initialize();
+ assert.deepEqual(other.drafts(),[]);
+ await assert.rejects(other.submitDraft('c'),{code:'INVALID_DRAFT'});
+ assert.equal(t.commands.filter(x=>x.method==='PUT').length,0);
+ t.setUser('owner');
+ const newer=t.build();await newer.initialize();
+ const calls=t.commands.length;
+ assert.equal(newer.drafts()[0].id,'c');
+ assert.equal((await newer.submitDraft('c')).version,'2');
+ assert.equal(t.remote().name,view.name);
+ assert.deepEqual(newer.drafts(),[]);
+ assert.deepEqual(t.commands.slice(calls).filter(x=>x.path.endsWith('/configurations/c')).map(x=>x.method),['PUT']);
+});
+test('全保存报告逐条冲突、已确认、回执未知和未发送；原回执未查明时不提交新草稿',async()=>{
+ const rows=['冲突','成功','断开','未发'].map(id=>({id,pending:false}));
+ const attempted=[];let pendingId=null;
+ const run=rows=>submitNasDraftSet(rows,{
+  isPending:id=>id===pendingId?true:null,
+  submit:async row=>{
+   attempted.push([row.id,row.pending?'查询原回执':'新提交']);
+   if(row.id==='冲突')throw new NasApiError('VERSION_CONFLICT',409);
+   if(row.id==='断开'){pendingId=row.id;throw new NasApiError(row.pending?'RECEIPT_NOT_FOUND':'SAVE_STATUS_UNKNOWN');}
+   return {version:'2'};
+  }
+ });
+ const first=await run(rows);
+ assert.deepEqual(first.map(row=>[row.id,row.status]),[['冲突','failed'],['成功','saved'],['断开','pending'],['未发','unsent']]);
+ assert.deepEqual(attempted,[['冲突','新提交'],['成功','新提交'],['断开','新提交']]);
+ attempted.length=0;
+ const second=await run([rows[3],{id:'断开',pending:true}]);
+ assert.deepEqual(second.map(row=>[row.id,row.status]),[['断开','pending'],['未发','unsent']]);
+ assert.deepEqual(attempted,[['断开','查询原回执']]);
+});
+test('顶部服务端版本不读取配置商务版号，更新时间区分服务端操作、首次导入、缺失和读取失败',async()=>{
+ const t=fixture(),main=t.build();const imported='2026-11-17T01:02:03.000Z',changed='2026-11-17T01:04:05.000Z';
+ t.setTime(imported,[]);
+ const view=await attach(main);view.version='业务A版';view.name='暂存中';main.stage(view);
+ assert.equal(main.serverVersion('c'),'1');assert.equal(main.serverVersion('another'),null);
+ assert.deepEqual(await main.serverDataTime(),{updatedAt:imported,firstImport:true});
+ t.setTime(imported,[{kind:'settings',created_at:changed},{kind:'configurations',created_at:imported}]);
+ assert.deepEqual(await main.serverDataTime(),{updatedAt:changed,firstImport:false});
+ await main.submit(view);
+ assert.equal(main.serverVersion('c'),'2');
+ t.setTime(imported,[],true);
+ await assert.rejects(main.serverDataTime(),{code:'SERVICE_UNAVAILABLE'});
+ t.setTime(null,[]);await main.request('/api/workspace/index');
+ assert.deepEqual(await main.serverDataTime(),{updatedAt:null,firstImport:false});
+});
