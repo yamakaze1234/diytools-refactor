@@ -65,6 +65,24 @@ test('暂存和旧路由不会发写，显式保存以发送时快照确认飞�
  assert.equal((await attach(t.build())).name,'提交飞行期间的新编辑');
  assert.equal(t.commands.filter(c=>c.method==='PUT').length,1);
 });
+test('重开后直接保存旧草稿时补齐清空行编号，并保留被复制行的原编号',async()=>{
+ const t=fixture();
+ const cpu={lineId:'original-cpu',slot:'CPU',goodsId:'',name:'CPU 型号',qty:1};
+ t.update({...raw,parts:[cpu],actualParts:[cpu]});
+ const first=t.build(),view=await attach(first);
+ view.parts.unshift({...cpu,slot:'散热'});
+ view.actualParts=[{slot:'CPU',goodsId:'',name:'',qty:1}];
+ first.stage(view);
+ const reopened=t.build();
+ await reopened.initialize();
+ assert.equal((await reopened.submitDraft('c')).version,'3');
+ const saved=t.remote();
+ assert.equal(saved.parts[1].lineId,cpu.lineId);
+ assert.ok(saved.parts[0].lineId&&saved.parts[0].lineId!==cpu.lineId);
+ assert.ok(saved.actualParts[0].lineId);
+ assert.equal(saved.actualParts[0].name,'');
+ assert.equal(t.db.size,0);
+});
 test('未知提交在重载后只查询原回执，服务端换账号不能接续原草稿',async()=>{
  const t=fixture(),main=t.build(),view=await attach(main);
  view.name='已提交但回执丢失';main.stage(view);

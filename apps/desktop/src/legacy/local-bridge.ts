@@ -241,7 +241,7 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
   // Native batch export preserves the old file contract; a failed native command rejects visibly.
   // Browser preview has no pywebview bridge, so the existing browser ZIP download remains active.
   if (invoke) {
-    if (!nasMain && typeof targetWindow.setInterval === 'function') installAgentBridge(targetWindow, invoke);
+    if (typeof targetWindow.setInterval === 'function') installAgentBridge(targetWindow, invoke);
     // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
     targetWindow.workbenchExportDiagnostics = () => exportDiagnostics(invoke);
     targetWindow.workbenchDiagnosticText = () => diagnosticText();

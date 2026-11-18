@@ -5,6 +5,22 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const knownRejection=new Set(['VALIDATION_FAILED','VERSION_CONFLICT','DEPENDENCY_CONFLICT','INVALID_DEPENDENCY',
  'OPERATION_REUSED','NOT_FOUND','CONFIGURATION_EXISTS','INVALID_CONFIGURATION_STATE','QUOTATION_REVIEW_REQUIRED','SKU_ALREADY_USED',
  'FORBIDDEN','UNAUTHENTICATED','WRITES_DISABLED','INVALID_REQUEST','INVALID_CONTENT_TYPE','PAYLOAD_TOO_LARGE']);
+/** 补齐此前编辑产生的空行编号。对重复编号优先保留原来所属槽位的行。 */
+export function ensureNasPartLineIds(document,base){
+ for(const key of ['parts','actualParts']){
+  if(!Array.isArray(document[key]))continue;
+  const originalSlots=new Map((base?.[key]||[]).map(part=>[part.lineId,part.slot]));
+  const owners=new Map();
+  for(const part of document[key]){
+   if(part.lineId&&(!owners.has(part.lineId)||owners.get(part.lineId).slot!==originalSlots.get(part.lineId)&&part.slot===originalSlots.get(part.lineId)))
+    owners.set(part.lineId,part);
+  }
+  for(const part of document[key]){
+   if(!part.lineId||owners.get(part.lineId)!==part)part.lineId=crypto.randomUUID();
+  }
+ }
+ return document;
+}
 const dependencyParts=document=>{
  const parts=[...document.parts,...document.actualParts];
  const add=addon=>{
@@ -166,7 +182,8 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
    if(action==='replace'&&same(record.base,record.document))throw new NasApiError('NO_CHANGES');
    const body={operation_id:uuid(),...(record.version?{expected_version:record.version}:{})};
    if(['create','replace'].includes(action)){
-    body.document=clone(record.document);
+    // 只补新请求的正文。已经提交或待查回执的原请求保持原字节。
+    body.document=ensureNasPartLineIds(clone(record.document),record.base);
     body.dependencies=await nasDependencies(client,body.document,record.dependencies);
    }
    persist({...record,pending:{action,body}});

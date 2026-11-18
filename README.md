@@ -15,13 +15,13 @@
 | [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.43) | 更新内容与附件 |
 
 1. 完整解压到独立可写目录，运行 `DIY配置工作台.exe`，无需 CMD。
-2. 组织测试包可内置默认账号认证接入，无需另放 integrations.json；首次连接所需的服务地址与 CA 由管理员提供。员工账号、密码和会话不随包分发。
+2. 首次连接所需的 NAS 服务地址与 CA 由管理员提供。账号由 NAS 认证，员工账号、密码和会话不随包分发。
 3. 在首次连接页填写名称、服务端地址，按需选择自定义 CA，测试成功后保存并重启。
 4. 使用工作台成员账号登录。密码支持显示/隐藏，可选择保留登录信息。
 
 以后从“更多 → 连接设置”修改连接，从“更多 → 检查更新”升级。更新只替换 EXE，保留连接文件和 `data`。首次切换不要覆盖旧工作台的数据目录；旧目录在确认所需数据完整后再清理。
 
-需要 Windows x64 和 Microsoft Edge WebView2 Runtime。当前构建支持既有正式局域网服务与原账号认证；通用自部署的独立认证发现尚未实现，不能仅安装 PostgreSQL 后直接连接。部署契约见 [NAS 服务](services/nas-api/README.md) 和 [客户端接入](docs/NAS-CLIENT.md)。
+需要 Windows x64 和 Microsoft Edge WebView2 Runtime。正式客户端连接启用 NAS 认证的三店服务。部署需同时配置数据库、局域网 HTTPS 和 NAS API。部署契约见 [NAS 服务](services/nas-api/README.md) 和 [客户端接入](docs/NAS-CLIENT.md)。
 
 ## 主要功能
 

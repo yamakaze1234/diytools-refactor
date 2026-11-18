@@ -93,7 +93,7 @@ fn catalog(options: &Options) -> Vec<Value> {
             "workbench_configs_get",
             "configs.get",
             "按精确配置 ID 回读已保存配置。",
-            schema(json!({"configId":string}), &["configId"]),
+            schema(json!({"configId":string,"shopId":string}), &["configId"]),
             true,
         ),
         (
@@ -111,7 +111,7 @@ fn catalog(options: &Options) -> Vec<Value> {
         ]);
     }
     if options.allow_export {
-        entries.push(("workbench_export_start", "export.start", "导出固定快照（configIds + revision 或 sourceOperationId）；outputDir 须为已有绝对目录，最终回执返回文件及 SHA256。", schema(json!({"configIds":{"type":"array","minItems":1,"items":string},"revision":integer,"sourceOperationId":uuid,"images":{"type":"string","enum":["both","long","square"]},"report":{"type":"boolean"},"outputDir":string,"operationId":uuid}), &["outputDir","operationId","images","report"]), false));
+        entries.push(("workbench_export_start", "export.start", "导出固定快照（configIds + revision 或 sourceOperationId）；outputDir 须为已有绝对目录，最终回执返回文件及 SHA256。", schema(json!({"configIds":{"type":"array","minItems":1,"items":string},"shopId":string,"revision":integer,"sourceOperationId":uuid,"images":{"type":"string","enum":["both","long","square"]},"report":{"type":"boolean"},"outputDir":string,"operationId":uuid}), &["outputDir","operationId","images","report"]), false));
     }
     if options.allow_sync {
         entries.push((

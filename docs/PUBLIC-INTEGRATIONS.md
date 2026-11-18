@@ -2,9 +2,9 @@
 
 ## NAS 正式版
 
-新版 `formal-nas-client` 从服务端读取和提交业务数据，不进入旧本机工作区。首次设置页只配置 NAS 数据服务和 TLS 信任；原账号认证可在构建时内置 cloud.envId、cloud.endpoint；缺少外部文件时使用默认值。外部 integrations.json 优先覆盖，缺少默认值和外部配置时不能登录，不会自动退回离线编辑。
+正式客户端通过 NAS HTTPS 登录、读取和提交业务数据。首次设置页配置 NAS 地址和 TLS 信任。
 
-默认账号认证由管理员从构建机私有文件注入，不把实际值提交源码。经授权的组织 EXE 包含可提取的认证地址和环境标识，不作为秘密；不包含账号密码、会话、私钥或业务数据。CA 与 NAS 地址按内部交付说明发放。账号密码由登录页输入，不写入此 JSON。结构示例见 [integrations.example.json](integrations.example.json)。
+CA 与 NAS 地址按内部交付说明发放。账号密码由登录页输入，续期令牌可选择保存在系统凭据管理器。旧客户端兼容接入的结构仍见 [integrations.example.json](integrations.example.json)。
 
 NAS 连接通过“更多 → 连接设置”修改，保存于程序旁 `workbench-connection.json`；原认证接入可通过外部文件覆盖，正常退出后由管理员维护并重启。接入文件只含连接信息，不应复制整个 data 或个人会话。新版使用边界见 [NAS 客户端](NAS-CLIENT.md)。
 

@@ -7,13 +7,13 @@ export function mountWorkspaceResize(workspace){
  let saved=null,drag=null,frame=null,pendingX=null;
  try{const value=JSON.parse(localStorage.getItem(storageKey));if(value&&Number.isFinite(value.left)&&Number.isFinite(value.right))saved=value;}catch{}
  const handles=['left','right'].map(side=>{const el=document.createElement('div');el.className='workspace-resizer';el.dataset.resizeColumn=side;el.tabIndex=0;el.setAttribute('role','separator');el.setAttribute('aria-orientation','vertical');el.setAttribute('aria-label',side==='left'?'调整商品列表与编辑区宽度':'调整编辑区与图片预览宽度');el.title='左右拖动调整宽度；双击恢复默认';workspace.append(el);return el;});
- const previewToggle=document.querySelector('#preview-toggle'),narrow=matchMedia('(max-width:1279px)');
+ const previewToggle=document.querySelector('#preview-toggle'),narrow=matchMedia('(max-width:1360px)');
  let previewPreference=null;
  const syncPreview=(scheduleLayout=true)=>{const collapsed=previewPreference??narrow.matches;document.body.classList.toggle('preview-collapsed',collapsed);if(previewToggle){previewToggle.textContent=collapsed?'展开预览':'收起预览';previewToggle.setAttribute('aria-expanded',String(!collapsed));}if(scheduleLayout)schedule();};
  if(previewToggle)previewToggle.onclick=()=>{previewPreference=!document.body.classList.contains('preview-collapsed');syncPreview();};
  const previewClose=document.querySelector('#preview-close');if(previewClose)previewClose.onclick=()=>{previewPreference=true;syncPreview();};
  narrow.addEventListener('change',()=>{previewPreference=null;syncPreview();});
- const enabled=()=>innerWidth>=1280&&!document.body.classList.contains('preview-collapsed')&&!preview.classList.contains('hidden')&&!preview.classList.contains('preview-expanded');
+ const enabled=()=>!narrow.matches&&!document.body.classList.contains('preview-collapsed')&&!preview.classList.contains('hidden')&&!preview.classList.contains('preview-expanded');
  function fit(value){
   const width=workspace.clientWidth;
   const left=Math.max(minimum.left,Math.min(value.left,width-minimum.main-minimum.right));

@@ -7,7 +7,6 @@ pub use nas_launch::prepare_formal_launch;
 pub mod nas_acceptance;
 mod asset_protocol;
 mod cloud_transport;
-mod embedded_auth;
 mod cloud_native;
 mod nas_connection;
 mod erp_environment;
@@ -30,6 +29,8 @@ mod agent_entry;
 mod agent_bootstrap;
 #[cfg(feature = "agent-tools")]
 mod agent_queries;
+#[cfg(feature = "agent-tools")]
+mod nas_agent;
 #[cfg(all(feature = "agent-tools", feature = "review-host"))]
 mod agent_review_host;
 #[cfg(all(feature = "agent-tools", feature = "review-host"))]
@@ -91,11 +92,30 @@ pub fn run() {
             };
             let cloud=std::sync::Arc::new(cloud_native::CloudRuntime::new(&folder).map_err(std::io::Error::other)?);
             let nas_main=cloud.nas_main();
-            app.manage(cloud);
+            app.manage(cloud.clone());
             // 只向查询 worker 给出系统加密凭据位置；NAS 不打开任何本机业务库。
             app.state::<erp_session::ErpSessionState>().configure_vault(folder.join("sql-credentials.dpapi.json"))
                 .map_err(std::io::Error::other)?;
             if nas_main {
+                #[cfg(all(windows, feature = "agent-tools"))]
+                if agent_bootstrap::enabled(std::env::var_os("DIYTOOLS_AGENT_ENABLED").as_deref()) {
+                    let result = (|| -> std::io::Result<_> {
+                        let agent = std::sync::Arc::new(nas_agent::NasAgent::new(cloud, &folder)?);
+                        let cli = agent_bootstrap::prepare(&executable_dir)?;
+                        let service = agent.clone();
+                        let entry = agent_entry::AgentEntry::serve(move |instance, request| service.dispatch(instance, request))
+                            .map_err(|error| std::io::Error::other(error.message))?;
+                        if let Err(error) = agent_bootstrap::publish(&executable_dir, &cli, &std::env::current_exe()?, std::process::id()) {
+                            entry.stop();
+                            return Err(error);
+                        }
+                        Ok((agent, entry))
+                    })();
+                    match result {
+                        Ok((agent, entry)) => { app.manage(agent); app.manage(entry); }
+                        Err(error) => agent_bootstrap::report_failure(&executable_dir, &error),
+                    }
+                }
                 // 服务端模式没有本机业务库，完成身份/运行时装配后仍须确认更新启动成功。
                 if !cfg!(feature="nas-acceptance") { updater::acknowledge_startup().map_err(std::io::Error::other)?; }
                 return Ok(());

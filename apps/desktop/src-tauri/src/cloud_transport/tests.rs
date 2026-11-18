@@ -903,3 +903,73 @@ fn configured_cloud_requires_https_origin() {
     .unwrap();
     assert_eq!(transport.status().unwrap()["configured"], true);
 }
+
+#[test]
+fn local_nas_routes_password_refresh_save_and_logout_to_the_trusted_nas_only() {
+    let local_enabled=Arc::new(AtomicBool::new(false));
+    let enabled=Arc::clone(&local_enabled);
+    let logged_out=Arc::new(AtomicBool::new(false));
+    let revoked=Arc::clone(&logged_out);
+    let server=Server::new(move |wire|{
+        let headers=wire.headers.to_ascii_lowercase();
+        let reply=match wire.path.as_str(){
+            "/healthz"=>{
+                // 匿名部署核验保持在发送任何密码或令牌之前。
+                assert!(!headers.contains("authorization:"));
+                let mode=if enabled.load(Ordering::SeqCst){"local"}else{"cloud"};
+                json!({"ok":true,"deployment_id":"intel-production-v1","auth_mode":mode})
+            },
+            "/api/v1/auth/login"=>{
+                assert_eq!(wire.body,json!({"username":"synthetic","password":"fixture-only"}));
+                let mut tokens=token("nas-synthetic-access");
+                tokens["expires_in"]=1.into();
+                tokens
+            },
+            "/api/v1/auth/refresh"=>{
+                assert_eq!(wire.body["refresh_token"],"test-refresh-secret");
+                token("nas-synthetic-renewed")
+            },
+            "/api/v1/auth/session"=>{
+                assert!(headers.contains("authorization: bearer nas-synthetic"));
+                member()
+            },
+            "/api/v1/operations/configurations/test"=>{
+                assert!(headers.contains("authorization: bearer nas-synthetic-renewed"));
+                json!({"ok":true,"data":{"version":"2"}})
+            },
+            "/api/v1/auth/logout"=>{
+                assert_eq!(wire.body["refresh_token"],"test-refresh-secret");
+                revoked.store(true,Ordering::SeqCst);
+                json!({"ok":true})
+            },
+            _=>panic!("非 NAS 认证路径"),
+        };
+        if wire.path!="/healthz"{
+            assert!(headers.contains("x-workbench-deployment: intel-production-v1"));
+        }
+        let mut reply=Reply::json(reply);
+        reply.extra_headers="x-workbench-deployment: intel-production-v1\r\n".into();
+        reply
+    });
+    let base=reqwest::Url::parse(&server.url).unwrap();
+    let mut transport=CloudTransport::unconfigured().unwrap();
+    // 回环 HTTP 仅用于合成传输夹具，正式装配强制使用固定 NAS HTTPS。
+    transport.nas_client=Some(Client::builder().no_proxy().build().unwrap());
+    let transport=transport.with_nas_deployment("intel-production-v1".into()).unwrap()
+        .with_local_nas_auth(&base).unwrap();
+    assert!(transport.login("synthetic","fixture-only").unwrap_err().contains("未启用本地认证"));
+    local_enabled.store(true,Ordering::SeqCst);
+    let login=transport.login("synthetic","fixture-only").unwrap();
+    assert_eq!(login["member"]["uid"],"member-1");
+    assert!(!login.to_string().contains("nas-synthetic-access"));
+    let endpoint=base.join("/api/v1/operations/configurations/test").unwrap();
+    let saved=transport.nas_request(endpoint.clone(),reqwest::Method::PUT,Some(("application/json".into(),b"{}".to_vec())),None).unwrap();
+    assert_eq!(saved.1["data"]["version"],"2");
+    assert_eq!(transport.logout().unwrap()["nas_session_revoked"],true);
+    assert!(logged_out.load(Ordering::SeqCst));
+    transport.login("synthetic","fixture-only").unwrap();
+    local_enabled.store(false,Ordering::SeqCst);
+    let offline=transport.logout().unwrap();
+    assert_eq!(offline["authenticated"],false);
+    assert_eq!(offline["nas_session_revoked"],false);
+}

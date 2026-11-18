@@ -2,7 +2,7 @@
 
 本机 MCP 客户端可使用 `mcp --connection <绝对连接文件路径>`，默认只读，独立启用保存、导出和同步。详见 [MCP 本机接入](../../docs/MCP.md)。普通 CLI 命令和退出码保持兼容。
 
-独立的本机命令行入口，通过 `agent-core` 连接指定的桌面实例。支持保存快照查询，以及经工作台业务接口执行的预览、保存、导出和同步任务。无需加入全局 PATH，也不依赖调用时的工作目录。
+通过 `agent-core` 连接指定的本机桌面实例。三店 NAS 工作台可查询 NAS 已保存配置、预览修改、正式保存、导出和刷新。启动后读取程序旁 `agent-connection.json` 的 `cli` 与 `instance`。
 
 ## 构建与调用
 
@@ -13,10 +13,10 @@ cargo build --release --manifest-path packages/agent-cli/Cargo.toml
 cargo test --manifest-path packages/agent-cli/Cargo.toml
 ```
 
-一并构建 CLI 与带 `agent-tools` 的桌面程序：
+一并构建 CLI 与三店 NAS 桌面程序。请先按[开发说明](../../docs/DEVELOPMENT.md)准备 Excel 读取组件。
 
 ```powershell
-pwsh.exe -File 'D:\diytools\packages\agent-cli\build-local.ps1'
+pwsh.exe -File 'D:\diytools\source\packages\agent-cli\build-local.ps1'
 ```
 
 脚本只构建本地 EXE，不生成安装包、不安装、不启动或替换现用程序。构建需要现有前端依赖及 Windows Rust/Tauri 开发环境；脚本不会自动安装依赖。Windows agent-tools 构建默认开启入口并内置先行构建的 CLI；启动后读取程序目录的 agent-connection.json。设置 `DIYTOOLS_AGENT_ENABLED=0` 可关闭。未连接或忙碌的界面会明确拒绝任务，CLI 不会绕开业务校验直接修改数据库。
@@ -30,7 +30,7 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 & $agent --json --instance desktop-12345 doctor
 & $agent --json --instance desktop-12345 shops list
 & $agent --json --instance desktop-12345 configs find --shop-id 'shop-id' --goods-id 'goods-id' --sku 'sku-id' --spu 'spu-id' --limit 20 --offset 0 --revision 42
-& $agent --json --instance desktop-12345 configs get --config-id 'config-id'
+& $agent --json --instance desktop-12345 configs get --shop-id intel --config-id 'config-id'
 & $agent --json --instance desktop-12345 request --method status
 & $agent --json --instance desktop-12345 request --method configs.find --input 'D:\queries\find.json'
 ```
@@ -53,7 +53,7 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 
 `changes` 只允许 `price` 和 `skuId`，可单独提供其中一个。`price` 是最终到手价，不再扣店铺券，非负且最多两位小数。SKU 必须是 1–64 位数字字符串，保留前导零和长整数，不接受数值或清空。`expected` 必须包含 SPU、完整简称和每个待改字段的原值；原字段缺失用 `null`，空 SKU 用 `""`，不混用。调用者先完成来源匹配，接口按配置 ID 定点修改，不进行模糊匹配。
 
-预览拒绝原值变化、跨店铺、删除/未加载配置、重复目标及同店铺同 SPU 下重复 SKU；保存复核完整计划与工作区版本。只改指定字段，保留配件、简称、样式和导入时间。保存任务必须查询最终回执，并回读配置；失败或结果未知时先按原 operationId 查询，不盲目重试。本机保存与云同步分开确认。旧版客户端不支持此 action，需要更新主程序；无需新增 CLI 子命令。
+预览拒绝原值变化、跨店铺、删除/未加载配置、重复目标及同店铺同 SPU 下重复 SKU；保存复核完整计划与工作区版本。只改指定字段，保留配件、简称、样式和导入时间。保存任务必须查询最终回执，并回读配置；失败或结果未知时先按原 operationId 查询，不盲目重试。NAS 保存回执包含目标店铺及各配置的正式版本。旧版客户端不支持此 action，需要更新主程序；无需新增 CLI 子命令。
 
 普通成功输出为便于阅读的缩进数据；`doctor` 同时说明授权和数据范围。脚本使用 `--json`，stdout 只包含一个协议 envelope：`protocolVersion`、`requestId`、`ok`、`data`、`error`。`requestId` 为每次调用生成的 UUID。错误始终输出 JSON envelope，不向 stdout 混入日志。`--help` 和 `--version` 正常输出文字并成功退出。
 
@@ -67,7 +67,7 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 
 ## 当前能力
 
-所有请求仅在当前 Windows 用户授权范围内访问指定本机桌面实例。读取方法仅查询已保存的 snapshot；未保存编辑不包含在结果中。`doctor` 使用真实 `status` 请求检查连接，并从实例返回的 `capabilities` 判断保存和同步能力，失败返回非零退出码。
+当前 Windows 用户可以连接自己运行的实例。NAS 模式按成员的运营权限列出店铺，读取 NAS 已保存配置。`configs get` 遇到多店重名 ID 时要求 `--shop-id`，`nasVersion` 是单套正式配置版本，`revision` 是查询或导出快照标识。`doctor` 通过 `status` 回读相应实例的能力。
 
 `request --method` 仅开放 `status`、`shops.list`、`configs.find`、`configs.get`、`jobs.status` 只读方法；写入只能使用下方专用命令。实例是否支持某项操作以 `status.capabilities` 为准。
 
@@ -97,7 +97,7 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 `export.json` 可使用明确的保存快照：
 
 ```json
-{"configIds":["真实配置ID"],"revision":42,"images":"both","report":true,"outputDir":"D:\\exports\\agent-job"}
+{"shopId":"intel","configIds":["真实配置ID"],"revision":42,"images":"both","report":true,"outputDir":"D:\\exports\\agent-job"}
 ```
 
 也可引用成功保存操作的快照：
@@ -106,4 +106,4 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 {"sourceOperationId":"b1234567-1234-4234-8234-123456789abc","images":"both","report":true,"outputDir":"D:\\exports\\agent-job"}
 ```
 
-`images` 接受 `both`、`long`、`square`；`report` 为布尔值，`outputDir` 必须是绝对路径。输入文件不应包含 operationId，由命令行提供。导出独立于保存，不会重写配置；保存成功而导出失败时，仅重试导出。同步也独立发起，应用或导出不会自动同步。最终导出任务回执给出实际 ZIP、报告、清单路径；失败不能视为导出成功。
+`images` 接受 `both`、`long`、`square`；`report` 为布尔值，`outputDir` 必须是绝对路径。输入文件不应包含 operationId，由命令行提供。导出独立于保存，不会重写配置；保存成功而导出失败时，仅重试导出。NAS 模式的应用直接保存至指定店铺，返回 `nasSave` 和正式回执。`sync run` 刷新工作台当前店铺并保留草稿。最终导出任务回执给出实际 ZIP、报告、清单路径；失败不能视为导出成功。

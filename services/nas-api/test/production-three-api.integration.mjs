@@ -10,6 +10,7 @@ import {request} from 'node:https';
 import {PGlite} from '@electric-sql/pglite';
 import {PNG} from 'pngjs';
 import {Fault} from '../src/config.mjs';
+import {createLocalAuth} from '../src/local-auth.mjs';
 import {createHandler,serve} from '../src/http.mjs';
 import {LiveStore} from '../src/live-store.mjs';
 import {scopedDatabase} from '../src/shop-scope.mjs';
@@ -21,7 +22,7 @@ if(!fixture)throw Error('请指定合成 SQL 验收目录');
 
 test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价、成本、历史和权限撤销',async()=>{
  const bootstrap=new PGlite();
- let db,server,galleryServer,outsideServer;
+ let db,server,galleryServer,outsideServer,authServer;
  try{
   await bootstrap.exec('CREATE DATABASE diy_workbench');
   db=new PGlite({loadDataDir:await bootstrap.dumpDataDir(),database:'diy_workbench'});
@@ -149,9 +150,9 @@ test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价
   assert.equal((await galleryList({})).total,2);
   assert.equal((await fetch(origin+'/images/'+galleryAsset.sha256+'.png')).status,200);
   await db.exec("UPDATE gigabyte_live.gallery SET attrs=attrs-'deletedAt' WHERE gallery_id='fixture-gallery'");
-  const call=async(path,{shop,uid=user,method='GET',body=null,status=200,query={}}={})=>{
+  const call=async(path,{shop,uid=user,method='GET',body=null,status=200,query={},base=url}={})=>{
    const params=new URLSearchParams({...query,...(shop?{shop_id:shop}:{})});
-   const res=await fetch(url+path+(params.size?'?'+params:''),{method,headers:{authorization:'Bearer '+uid,'x-workbench-deployment':'intel-production-fixture',
+   const res=await fetch(base+path+(params.size?'?'+params:''),{method,headers:{authorization:'Bearer '+uid,'x-workbench-deployment':'intel-production-fixture',
     'content-type':'application/json'},body:body===null?undefined:JSON.stringify(body)});
    const value=await res.json();
    assert.equal(res.status,status,JSON.stringify({path,shop,value}));
@@ -307,11 +308,47 @@ test('正式三店 HTTP：固定身份、同名配置与回执、目录、报价
    await call(catalog+'/'+id+'/restore',{shop:owner,method:'POST',body:{operation_id:randomUUID(),expected_version:archived.version}});
    assert((await call(catalog,{shop:secondShop})).some(row=>row.document.url===replacement.asset.url));
   }
+
+  // 在同一份正式角色和配置样本上切到 NAS 会话，逐店验证真实写入及回执。
+  await pending;
+  await db.exec(await readFile(new URL('../sql/019-nas-local-auth.sql',import.meta.url),'utf8'));
+  const authDb={query(sql,args){
+   return underRole('intel',async role=>{
+    await db.exec('BEGIN; SET LOCAL ROLE '+role);
+    try{const result=await db.query(sql,args);await db.exec('COMMIT');return result;}
+    catch(error){await db.exec('ROLLBACK');throw error;}
+   });
+  }};
+  const config={workspace:'workbench-main',authMode:'migration'};
+  const credential={username:'fixture-operator',password:'only-synthetic-fixture-password'};
+  const migration=createLocalAuth(authDb,config,{legacy:async()=>({uid:user,memberId:user,name:'合成运营'})});
+  assert.equal((await migration.login(credential,'127.0.0.1')).sub,user);
+  const localAuth=createLocalAuth(authDb,{...config,authMode:'local'},
+   {legacy:()=>assert.fail('本地认证不得调用原身份服务')});
+  authServer=serve({...deps,authMode:'local',localAuth,authenticate:localAuth.authenticate});
+  await new Promise(resolve=>authServer.listen(0,'127.0.0.1',resolve));
+  const base='http://127.0.0.1:'+authServer.address().port+'/api/v1';
+  const session=await call('/auth/login',{base,method:'POST',body:credential});
+  assert.equal(session.sub,user);
+  const actor={base,uid:session.access_token};
+  assert.deepEqual((await call('/me',actor)).shops,me.shops);
+  await call('/me',{base,status:401});
+  for(const shop of shops){
+   const detail=await call(route,{...actor,shop});
+   const name='NAS 登录隔离保存 '+shop,operation_id=randomUUID();
+   const result=await call(route,{...actor,shop,method:'PUT',body:{
+    operation_id,expected_version:detail.version,dependencies:detail.dependencies,document:{...detail.document,name}}});
+   assert.equal(result.shop_id,shop);
+   assert.deepEqual(await call('/operations/save-receipts/'+operation_id,{...actor,shop}),result);
+   assert.equal((await call(route,{...actor,shop})).document.name,name);
+  }
   await pending;
   await db.query("UPDATE nas_business.members SET enabled=false WHERE workspace_id='workbench-main' AND uid=$1",[user]);
   await call('/me',{status:403});
   await call(route,{shop:'jonsbo',status:403});
+  await call('/me',{...actor,status:401});
  }finally{
+  if(authServer)await new Promise(resolve=>authServer.close(resolve));
   if(outsideServer)await new Promise(resolve=>outsideServer.close(resolve));
   if(galleryServer)await new Promise(resolve=>galleryServer.close(resolve));
   if(server)await new Promise(resolve=>server.close(resolve));

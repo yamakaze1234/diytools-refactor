@@ -1,106 +1,293 @@
-/** ReUI 连续编辑表；所有写入通过现有工作台领域回调，不维护第二份业务状态。 */
-import {createContext,useContext,memo,useMemo,useState,useRef,useLayoutEffect,useCallback,type ClipboardEvent} from 'react';
+import {memo,useCallback,useLayoutEffect,useMemo,useRef,useState,type ClipboardEvent,type KeyboardEvent,type ReactNode} from 'react';
 import {useVirtualizer,defaultRangeExtractor} from '@tanstack/react-virtual';
-import {useTable,type ColumnDef} from '@tanstack/react-table';
-import {DataGrid,DataGridContainer,dataGridFeatures,type DataGridFeatures} from '@/components/reui/data-grid/data-grid';
-import {DataGridTable} from '@/components/reui/data-grid/data-grid-table';
-import {Frame,FramePanel} from '@/components/reui/frame';
-import {Badge} from '@/components/reui/badge';
-import {Button} from '@/components/ui/button';
-import {Input} from '@/components/ui/input';
-import {Checkbox} from '@/components/ui/checkbox';
-import {Skeleton} from '@/components/ui/skeleton';
 import {Autocomplete,AutocompleteContent,AutocompleteEmpty,AutocompleteInput,AutocompleteItem,AutocompleteList} from '@/components/reui/autocomplete';
 import type {Row} from './editor-controls';
-import {profitTone} from '../../public/workbench/profit-tone.js';
-const amount=(n:unknown)=>n==null?'待补充':Number(n).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
-function Edit({value,label,type='text',integerDisplay=false,change}: {value:unknown;label:string;type?:string;integerDisplay?:boolean;change:(value:string)=>unknown}){
- const ref=useRef<HTMLInputElement>(null);
- useLayoutEffect(()=>{if(ref.current&&ref.current.ownerDocument.activeElement!==ref.current)ref.current.value=String(value??'');},[value]);
- return <Input ref={ref} aria-label={label} type={type} min={type==='number'?0:undefined} step={type==='number'?'any':undefined} defaultValue={String(value??'')} onChange={e=>{if(type==='number'&&(!e.currentTarget.value||!e.currentTarget.validity.valid))return;change(e.currentTarget.value);}} onBlur={e=>{if(type==='number'&&(!e.currentTarget.value||!e.currentTarget.validity.valid))e.currentTarget.value=String(value??'');else if(integerDisplay)e.currentTarget.value=String(Math.round(Number(e.currentTarget.value)));}}/>;
+import {overviewTableTotals} from '../../public/workbench/overview-table-model.js';
+
+const integers=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:0});
+const precise=new Intl.NumberFormat('zh-CN',{maximumFractionDigits:2});
+const amount=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?integers.format(value):'—';
+const normalize=(value:string)=>value.normalize('NFKC').replace(/[,，\s]/g,'');
+type Draft={field:'price'|'rate'|'tax';index?:number;value:number}|null;
+type Position={row:number;col:0|1};
+
+/** 编辑以回车或失焦提交，取消或无效输入恢复最后一次已确认的值。 */
+function CommitInput({value,label,className='',fallback='',numeric=false,onCommit,onDraft}:
+ {value:unknown;label:string;className?:string;fallback?:string;numeric?:boolean;onCommit:(value:string)=>unknown;onDraft?:(value:number|null)=>void}){
+ const node=useRef<HTMLInputElement>(null),before=useRef(''),cancelled=useRef(false),mouseSelect=useRef(false);
+ const text=String(value??'');
+ const displayed=numeric?(value==null?'':amount(Number(value))):text;
+ useLayoutEffect(()=>{if(node.current&&node.current!==document.activeElement)node.current.value=displayed;},[displayed]);
+ return <input ref={node} className={className} aria-label={label} placeholder={fallback} inputMode={numeric?'decimal':undefined} defaultValue={displayed}
+  onPointerDown={e=>{mouseSelect.current=e.currentTarget!==document.activeElement;}}
+  onMouseUp={e=>{if(mouseSelect.current){e.preventDefault();e.currentTarget.select();mouseSelect.current=false;}}}
+  onFocus={e=>{cancelled.current=false;before.current=text;e.currentTarget.value=text;e.currentTarget.select();}}
+  onChange={e=>{const changed=normalize(e.currentTarget.value);onDraft?.(/^\d+(?:\.\d*)?$|^\.\d+$/.test(changed)&&Number.isFinite(Number(changed))?Number(changed):null);}}
+  onKeyDown={e=>{if(e.nativeEvent.isComposing||!['Enter','Escape'].includes(e.key))return;e.preventDefault();cancelled.current=e.key==='Escape';e.currentTarget.blur();}}
+  onBlur={e=>{const next=e.currentTarget.value.trim();onDraft?.(null);
+   if(!cancelled.current&&next!==before.current)onCommit(numeric?normalize(next):next);
+   e.currentTarget.value=displayed;
+  }} />;
 }
-function WrappedEdit({value,label,change}:{value:unknown;label:string;change:(value:string)=>unknown}){
- const ref=useRef<HTMLTextAreaElement>(null);
- const fit=()=>{const node=ref.current;if(node){node.style.height='auto';node.style.height=`${node.scrollHeight}px`;}};
- useLayoutEffect(()=>{const node=ref.current;if(!node)return;if(node.ownerDocument.activeElement!==node)node.value=String(value??'');fit();},[value]);
- useLayoutEffect(()=>{const node=ref.current;if(!node)return;let width=-1;const observer=new ResizeObserver(entries=>{const next=entries[0].contentRect.width;if(next!==width){width=next;fit();}});observer.observe(node);return()=>observer.disconnect();},[]);
- return <textarea ref={ref} className="continuous-wrapped-edit" rows={1} aria-label={label} defaultValue={String(value??'')} onChange={e=>{fit();change(e.currentTarget.value);}}/>;
-}
-const PartPicker=memo(function PartPicker({part,slot,actual,c,model}:{part:Row|null;slot:string;actual:boolean;c:Row;model:Row}){
+
+const PartPicker=memo(function PartPicker({part,slot,c,model,initial,close}:{part:Row|null;slot:string;c:Row;model:Row;initial:string;close:()=>void}){
  const [query,setQuery]=useState<string>(part?.name||'');
  const [open,setOpen]=useState(false);
+ const hasPart=Boolean(part&&(part.name||part.goodsId||part.sourceId));
  useLayoutEffect(()=>{if(!open)setQuery(part?.name||'');},[part?.name,open]);
  const matches=useMemo(()=>{if(!open)return [];const tokens=query.trim().toLowerCase().split(/\s+/).filter(Boolean),found:Row[]=[];for(const p of model.catalog){if(!p.deletedAt&&tokens.every(t=>p.searchText.includes(t)))found.push(p);if(found.length===50)break;}return found;},[model.catalog,query,open]);
- return <Autocomplete items={matches} filteredItems={matches} value={query} open={open} onOpenChange={setOpen} onValueChange={setQuery} itemToStringValue={(p:Row)=>p.name}>
- <AutocompleteInput render={<textarea rows={1} role="combobox"/>} className="continuous-part-input" size="sm" showTrigger aria-label={`${c.name} ${slot} ${actual?'实际':'展示'}配件`} placeholder="搜索型号 / ERP ID" onFocus={()=>{model.activate(c.id);setOpen(true);}} />
+ useLayoutEffect(()=>{setQuery(initial);setOpen(true);},[initial]);
+ return <Autocomplete items={matches} filteredItems={matches} value={query} open={open} onOpenChange={(next,details)=>{
+  // 清空后继续保留搜索框，方便直接输入新型号。
+  if(!next&&hasPart&&details.reason==='input-clear'){details.cancel();return;}
+  setOpen(next);if(!next)close();
+ }} onValueChange={(value,details)=>{
+  setQuery(value);
+  if(value===''&&hasPart&&details.reason==='input-change')model.clearActual(c.id,slot);
+ }} itemToStringValue={(p:Row)=>p.name}>
+ <AutocompleteInput render={<textarea rows={1} role="combobox"/>} className="ov-part-picker" size="sm" autoFocus
+  aria-label={c.name+' '+slot+' 实际配件'} placeholder="搜索型号 / ERP ID" onFocus={e=>{model.activate(c.id);if(initial===part?.name)e.currentTarget.select();}} />
  <AutocompleteContent portalContainer={model.portalContainer} className="continuous-part-popup w-[min(650px,calc(100vw-2rem))]">
- <AutocompleteEmpty>没有匹配配件，请调整关键词</AutocompleteEmpty><AutocompleteList>{(p:Row)=><AutocompleteItem key={p.sourceId} value={p} onClick={()=>model.pick(c.id,slot,actual,p.sourceId)}><div className="continuous-candidate"><strong>{p.name}</strong><small>ERP ID {p.goodsId||'未绑定'} · ERP ¥{amount(p.erp)} · 含税 ¥{p.tax==null?'未知':Math.round(Number(p.tax))}{p.erpName?' · ERP 原名：'+p.erpName:''}</small><span className="candidate-stock" data-stock-status={p.stock.status}>ERP 可销库存：{p.stock.label}</span></div></AutocompleteItem>}</AutocompleteList>
- </AutocompleteContent></Autocomplete>;
-},(a,b)=>a.part?.name===b.part?.name&&a.part?.sourceId===b.part?.sourceId&&a.slot===b.slot&&a.actual===b.actual&&a.c.id===b.c.id&&a.c.name===b.c.name&&a.model.catalog===b.model.catalog&&a.model.portalContainer===b.model.portalContainer);
-const ConfigCellContext=createContext<Row|null>(null);
-// 列渲染函数保持身份稳定，输入时更新上下文，不卸载正在编辑的输入框。
-function ConfigCell({row,column}:{row:Row;column:Row}) {
- const {c,model,selection,choose,remove}=useContext(ConfigCellContext)!;
- switch(column.id){
- case 'slot': return <div className="continuous-row-actions"><Button size="sm" variant={selection.includes(row.original.index)?'secondary':'ghost'} data-row-slot={row.original.index} aria-pressed={selection.includes(row.original.index)} onClick={e=>choose(row.original.index,e.shiftKey,e.ctrlKey||e.metaKey)}>{row.original.slot}</Button><Button size="sm" variant="ghost" className="continuous-remove-row" aria-label={`${c.name} ${Number(row.original.slot.slice(2))>5?'删除':'清空'}${row.original.slot}`} title="移除本行展示和实际配件，可撤销" disabled={!row.original.part&&!row.original.actual} onClick={()=>remove(row.original.slot)}>{Number(row.original.slot.slice(2))>5?'删除':'清空'}</Button></div>;
- case 'display': return <PartPicker part={row.original.part} slot={row.original.slot} actual={false} c={c} model={model}/>;
- case 'actual': return <div className="flex items-center gap-2"><div className="min-w-0 flex-1"><PartPicker part={row.original.actual} slot={row.original.slot} actual c={c} model={model}/></div><div className="w-12"><Edit value={row.original.actual?.qty??1} label={`${c.name} ${row.original.slot} 实际数量`} type="number" change={v=>model.partField(c.id,row.original.slot,true,'qty',v)}/></div></div>;
- case 'quantity': return <Edit value={row.original.part?.qty??1} label={`${c.name} ${row.original.slot} 展示数量`} type="number" change={v=>model.partField(c.id,row.original.slot,false,'qty',v)}/>;
- case 'stock': {const part=row.original.actual;if(!part?.name&&!part?.goodsId&&!part?.specialComponent)return <span className="continuous-stock" data-stock-status="empty">—</span>;const stock=model.stock(part);return <span className="continuous-stock" data-stock-status={stock.status} title={['实际配件：'+part.name,stock.label,stock.detail].filter(Boolean).join('\n')}><span>{stock.status==='special'?'不核算':stock.value==null?'未知':stock.value.toLocaleString('zh-CN',{maximumFractionDigits:6})}</span>{['out','low'].includes(stock.status)&&<small>{stock.status==='out'?'缺货':'偏低'}</small>}</span>;}
- case 'cost': return <div className="continuous-unit-cost"><div><small>ERP</small><span>{row.original.actual?.erp==null?'未知':Number(row.original.actual.erp).toLocaleString('zh-CN',{maximumFractionDigits:2})}</span></div><div><small>含税</small><div className="unit-tax"><Edit integerDisplay value={row.original.actual?.tax==null?undefined:Math.round(Number(row.original.actual.tax))} label={`${c.name} ${row.original.slot} 核算单价`} type="number" change={v=>model.tax(c.id,row.original.slot,v)}/>{row.original.actual?.tax==null&&<span className="unit-unknown">未知</span>}</div></div></div>;
- case 'subtotal': return <span className="text-xs tabular-nums">{row.original.actual?.erp==null?'待补充':amount(row.original.actual.erp*row.original.actual.qty)}</span>;
- case 'displayName': return <WrappedEdit value={row.original.part?.displayName} label={`${c.name} ${row.original.slot} 展示名称`} change={v=>model.partField(c.id,row.original.slot,false,'displayName',v)}/>;
- case 'upgrade': return <WrappedEdit value={row.original.part?.upgrade} label={`${c.name} ${row.original.slot} 加购描述`} change={v=>model.partField(c.id,row.original.slot,false,'upgrade',v)}/>;
- default:return null;
- }
+ <AutocompleteEmpty>没有匹配配件，请调整关键词</AutocompleteEmpty><AutocompleteList>
+ {(p:Row)=><AutocompleteItem key={p.sourceId} value={p} onClick={()=>{model.pick(c.id,slot,true,p.sourceId);close();}}>
+ <div className="continuous-candidate"><strong>{p.name}</strong><small>GoodID {p.goodsId||'未绑定'} · ERP ¥{amount(p.erp)} · 含税 ¥{amount(p.tax)}</small>
+ <span className="candidate-stock" data-stock-status={p.stock.status}>ERP 可销库存：{p.stock.label}</span></div></AutocompleteItem>}
+ </AutocompleteList></AutocompleteContent></Autocomplete>;
+});
+
+/** 展示明细和加购自然换行，初次单击全选，再次单击可以移动光标。 */
+function EditableText({value,label,placeholder,onCommit}:{value:string;label:string;placeholder?:string;onCommit:(value:string)=>void}){
+ const node=useRef<HTMLDivElement>(null),original=useRef(''),cancel=useRef(false),firstClick=useRef(false);
+ const select=(element:HTMLElement)=>{const range=document.createRange();range.selectNodeContents(element);const selection=getSelection();selection?.removeAllRanges();selection?.addRange(range);};
+ useLayoutEffect(()=>{if(node.current&&node.current!==document.activeElement)node.current.textContent=value;},[value]);
+ return <div ref={node} role="textbox" tabIndex={0} aria-label={label} data-placeholder={placeholder} className="ov-editable" contentEditable="plaintext-only"
+  onPointerDown={event=>{firstClick.current=event.currentTarget!==document.activeElement;}}
+  onMouseUp={event=>{if(firstClick.current){event.preventDefault();select(event.currentTarget);firstClick.current=false;}}}
+  onFocus={event=>{original.current=value;cancel.current=false;select(event.currentTarget);}}
+  onKeyDown={event=>{if(!event.nativeEvent.isComposing&&['Enter','Escape'].includes(event.key)){event.preventDefault();cancel.current=event.key==='Escape';event.currentTarget.blur();}}}
+  onBlur={event=>{const text=(event.currentTarget.innerText||'').replace(/\s+/g,' ').trim();
+   event.currentTarget.textContent=value;
+   if(!cancel.current&&text!==original.current)onCommit(text);
+  }} />;
 }
-const ConfigTable=memo(function ConfigTable({c,model,actual,copy,selections,onAddRow}:{c:Row;model:Row;actual:boolean;copy:boolean;selections:Map<string,{rows:number[];anchor:number}>;onAddRow:(id:string)=>void}){
- const [selection,setSelection]=useState<number[]>(()=>selections.get(c.id)?.rows||[]),anchor=useRef<number>(selections.get(c.id)?.anchor||0);
- useLayoutEffect(()=>{selections.set(c.id,{rows:selection,anchor:anchor.current});},[c.id,selection,selections]);
- const data=c.rows;
- const choose=(i:number,shift:boolean,ctrl:boolean)=>{setSelection(old=>shift?c.rows.filter((r:Row)=>r.index>=Math.min(anchor.current,i)&&r.index<=Math.max(anchor.current,i)).map((r:Row)=>r.index):ctrl?old.includes(i)?old.filter(n=>n!==i):[...old,i]:[i]);if(!shift)anchor.current=i;model.activate(c.id);};
- const remove=(slot:string)=>{if(model.removeRow(c.id,slot)){setSelection([]);anchor.current=0;selections.delete(c.id);}};
- const columns=useMemo<ColumnDef<DataGridFeatures,Row>[]>(()=>[{id:'slot',header:'配件',size:64,cell:ConfigCell},{id:'display',header:'展示配件 / 商品型号',size:230,cell:ConfigCell},...(actual?[{id:'actual',header:'实际配件 / 数量',size:260,cell:ConfigCell}]:[]),{id:'quantity',header:'数量',size:64,cell:ConfigCell},{id:'stock',header:'库存',size:72,cell:ConfigCell},{id:'cost',header:'ERP / 含税单价',size:112,cell:ConfigCell},{id:'subtotal',header:'ERP 小计',size:92,cell:ConfigCell},...(copy?[{id:'displayName',header:'对客展示名称',size:180,cell:ConfigCell},{id:'upgrade',header:'加购描述',size:180,cell:ConfigCell}]:[])],[actual,copy]);
- const table=useTable({features:dataGridFeatures,data,columns,getRowId:(r:Row)=>r.slot,manualPagination:true,initialState:{columnPinning:{start:['slot'],end:[]}}});
- const copyRows=(e:ClipboardEvent)=>{if(!(e.target as HTMLElement).closest('[data-row-slot]'))return;e.preventDefault();const payload=model.copy(c.id,selection.length?selection:[Number((e.target as HTMLElement).closest<HTMLElement>('[data-row-slot]')?.dataset.rowSlot)]);if(!payload)return;e.clipboardData.setData('application/x-diy-workbench-rows',JSON.stringify(payload));e.clipboardData.setData('text/plain',payload.rows.map((r:Row)=>[r.part?.name||'',r.part?.qty||1,r.actual?.name||'',r.actual?.erp??'',r.actual?.tax??''].join('\t')).join('\n'));model.notice(`已复制 ${payload.rows.length} 行`);};
- const pasteRows=(e:ClipboardEvent)=>{if(!(e.target as HTMLElement).closest('[data-row-slot]'))return;e.preventDefault();try{const raw=e.clipboardData.getData('application/x-diy-workbench-rows');if(!raw)return model.notice('请先复制本工作台的配件行');if(model.paste(c.id,Number((e.target as HTMLElement).closest<HTMLElement>('[data-row-slot]')?.dataset.rowSlot),JSON.parse(raw)))model.notice('已按目标位置粘贴，可撤销');}catch{model.notice('剪贴板配件数据无效');}};
- return <ConfigCellContext.Provider value={{c,model,selection,choose,remove}}><section data-continuous-config={c.id} data-active={model.active===c.id||undefined} className="min-w-0" onFocusCapture={event=>{if((event.target as HTMLElement).matches('input,textarea,select'))model.activate(c.id);}} onCopy={copyRows} onPaste={pasteRows}>
- <Frame spacing="xs" dense stacked className={model.active===c.id?'border-l-2 border-l-primary':undefined}><FramePanel className="overflow-visible bg-muted/50"><div className="continuous-config-heading"><div className="config-identity"><Checkbox aria-label={`选择${c.name}`} checked={c.selected} onCheckedChange={v=>model.select(c.id,v)}/><div className="config-title"><Edit value={c.name} label={`${c.name} 配置名称`} change={v=>model.field(c.id,'name',v)}/></div><div className="config-version"><Edit value={c.version} label={`${c.name} 版本`} change={v=>model.field(c.id,'version',v)}/></div><Button variant="ghost" size="sm" onClick={()=>model.detail(c.id,'display')}>完整编辑</Button></div>
- <div className="config-finance"><label className="config-arrival"><span className="finance-label">到手价</span><div className="arrival-money"><span aria-hidden="true">¥</span><Edit value={c.price} label={`${c.name} 到手价`} type="number" change={v=>model.field(c.id,'price',v)}/></div></label>{[['erp','ERP 成本'],['tax','核算成本'],['erpProfit','ERP 利润'],['taxProfit','核算利润']].map(([key,label])=><div className="finance-metric" data-metric={key} key={key}><span className="finance-label">{label}</span><div className="finance-amounts"><span className="finance-value tabular-nums" data-profit-tone={key.endsWith('Profit')?profitTone(c.totals[key+'Before']):undefined}>{amount(key.endsWith('Profit')?c.totals[key+'Before']:c.totals[key])}</span>{key.endsWith('Profit')&&c.pricing.term>0&&c.totals[key]!=null&&<span className="finance-installment" data-profit-tone={profitTone(c.totals[key])}>（分期后实际 ¥{amount(c.totals[key])}）</span>}</div></div>)}</div>
- <div className="config-installment"><span>{c.pricing.term==null?'分期设置不一致':c.pricing.term?c.pricing.term+' 期分期':'不分期'}</span>{c.pricing.term>0&&<><span>手续费 {c.pricing.percent}% · ¥{amount(c.pricing.fee)}</span><span>括号内为扣除分期费后的实际利润</span></>}</div>
- {!!(c.extras.parts.length+c.extras.actualParts.length)&&<Badge variant="warning-light">含额外或重复槽位，请使用展示明细和实际配件页签；所有原内容保留</Badge>}</div></FramePanel>
- {c.hardwareIssues?.map((issue:Row,i:number)=><FramePanel key={i}><p role="status" className="memory-upgrade-warning">{issue.label}：{issue.message}</p></FramePanel>)}<FramePanel className="overflow-visible p-0"><DataGrid table={table} recordCount={data.length} emptyMessage="暂无配件" tableLayout={{dense:true,cellBorder:true,width:'fixed',columnsPinnable:true,headerSticky:false,headerBackground:true}}><DataGridContainer className="overflow-visible"><DataGridTable/></DataGridContainer></DataGrid></FramePanel><FramePanel className="continuous-add-row"><Button variant="ghost" size="sm" aria-label={`${c.name} 新增配件`} onClick={()=>onAddRow(c.id)}><span aria-hidden="true">＋</span> 新增配件</Button></FramePanel></Frame></section></ConfigCellContext.Provider>;
-},(a,b)=>a.c===b.c&&a.actual===b.actual&&a.copy===b.copy&&(a.model.active===a.c.id)===(b.model.active===b.c.id)&&a.model.catalog===b.model.catalog&&a.model.portalContainer===b.model.portalContainer);
+
+function DisplayPart({row,c,model,addons}:{row:Row;c:Row;model:Row;addons:boolean}){
+ const part=row.part,slot=row.slot,name=part?.displayName||part?.name||'',hidden=part?.posterVisible===false;
+ const [showEmpty,setShowEmpty]=useState(false),editor=useRef<HTMLDivElement>(null);
+ useLayoutEffect(()=>{if(showEmpty)editor.current?.querySelector<HTMLElement>('[contenteditable]')?.focus();},[showEmpty]);
+ if(hidden)return <div className="ov-display-line"><span className="ov-missing">展示明细已隐藏</span><button onClick={()=>model.partField(c.id,slot,false,'posterVisible',true)}>恢复展示</button></div>;
+ // 空描述有独立的添加入口，原有描述仍可隐藏或显示。
+ const hasAddon=Boolean(String(part?.upgrade??'').trim());
+ const addonVisible=addons&&(hasAddon?!part.overviewAddonHidden:showEmpty);
+ return <><div className="ov-display-line">
+  <div className="ov-display-name"><EditableText value={name} placeholder="填写展示明细" label={slot+'展示明细'} onCommit={value=>model.partField(c.id,slot,false,'displayName',value)}/>
+  {part?.qty>1&&<small>×{part.qty}</small>}</div>
+  {(name||part?.upgrade)&&<button onClick={()=>model.partField(c.id,slot,false,'posterVisible',false)}>隐藏展示配件</button>}
+ </div>
+ {addons&&<div className="ov-addon-line">
+  {addonVisible&&<div className="ov-addon" ref={editor}><EditableText value={hasAddon?part.upgrade:''} label={slot+'加购'} placeholder="填写加购描述"
+    onCommit={value=>{setShowEmpty(false);model.partField(c.id,slot,false,'upgrade',value);}}/></div>}
+  <button onClick={()=>{if(!hasAddon)setShowEmpty(v=>!v);else model.partField(c.id,slot,false,'overviewAddonHidden',addonVisible);}}>
+    {hasAddon?(addonVisible?'隐藏加购':'显示加购'):(showEmpty?'收起输入框':'添加加购')}</button>
+ </div>}</>;
+}
+
+function HeadLine({c,model,draft,onDraft,actual,mobile=false}:{c:Row;model:Row;draft:Draft;onDraft:(draft:Draft)=>void;actual:boolean;mobile?:boolean}){
+ const raw=draft?.field==='tax'&&c.raw.tax!=null?{...c.raw,tax:c.raw.tax+(draft.value-(c.rows[draft.index!].actual?.tax??0))*(c.rows[draft.index!].actual?.qty??1)}:c.raw;
+ const current=overviewTableTotals(c,raw,c.pricing,{price:draft?.field==='price'?draft.value:undefined,rate:draft?.field==='rate'&&draft.value<=30?draft.value:undefined});
+ const rate=draft?.field==='rate'&&draft.value<=30?draft.value:c.totals.rate;
+ const terms=c.pricing.term>0, allSame=model.configs.every((config:Row)=>config.loading||config.id===c.id||config.totals.rate===c.totals.rate);
+ const summaries=[['ERP总价',current.erp,'cost'],['含税总价',current.tax,'cost'],[rate+'%+100',current.fee,'fee'],['核算利润',current.taxProfit,'profit'],['ERP利润',current.erpProfit,'profit']];
+ const styles=(_:unknown,value:unknown,type:unknown)=>'ov-sum ov-'+type+(type==='profit'&&Number(value)<0?' ov-loss':'');
+ const controls=<div className="ov-controls"><div><label>运营费率 <CommitInput value={c.totals.rate} label={c.name+'运营费率'} className="ov-rate" onCommit={value=>model.fee(c.id,value)} onDraft={value=>onDraft(value==null?null:{field:'rate',value})}/>%</label>
+  <button disabled={allSame||model.loading} onClick={()=>model.fee(c.id,c.totals.rate,true)}>应用全部</button></div>
+  {terms&&<small>分期手续费 −{amount(current.interest)}</small>}</div>;
+ const versions=Array.from(new Set([String(c.version||''),'标准版','进阶版','豪华版'].filter(Boolean)));
+ const titleBar=<div className="ov-title-bar">{!actual&&!mobile&&controls}
+    <div className="ov-config-badge"><label><input type="checkbox" aria-label={'选择'+c.name} checked={c.selected} onChange={e=>model.select(c.id,e.currentTarget.checked)}/>{c.name}</label>
+    <select aria-label={c.name+'版本'} value={c.version||''} onChange={e=>model.field(c.id,'version',e.currentTarget.value)}>
+     {!c.version&&<option value="">未设置</option>}{versions.map(version=><option key={version}>{version}</option>)}
+    </select></div><h2>{c.shortName||c.name}</h2>
+   </div>;
+ const priceLabel='到手价'+(terms?' · 分期':'');
+ const price=<CommitInput numeric value={c.price} label={c.name+'到手价'} onCommit={value=>model.field(c.id,'price',value)}
+  onDraft={value=>onDraft(value==null?null:{field:'price',value})}/>;
+ if(mobile)return <div className="ov-mobile-head">{titleBar}{controls}<dl className="ov-mobile-sums">
+  {summaries.map(([label,value,type])=><div key={String(label)} className={styles(label,value,type)}><dt>{label}</dt><dd>{amount(value)}</dd></div>)}
+  <div className="ov-sum ov-price"><dt>{priceLabel}</dt><dd>{price}</dd></div>
+ </dl></div>;
+ return <thead>
+  <tr className="ov-sum-labels">{summaries.map(([label,value,type])=><th key={String(label)} className={styles(label,value,type)}>{label}</th>)}
+  <th className="ov-sum ov-price">{priceLabel}</th>
+  {actual&&<th rowSpan={2} className="ov-dark">{controls}</th>}
+  <th rowSpan={2} className="ov-dark ov-title">{titleBar}</th></tr>
+  <tr className="ov-sum-values">{summaries.map(([label,value,type])=><td key={String(label)} className={styles(label,value,type)}>{amount(value)}</td>)}
+   <td className="ov-sum ov-price">{price}</td></tr>
+  <tr className="ov-columns"><th>ERP 单价</th><th>含税单价</th><th>GoodID</th><th>库存</th><th>数量</th><th>配件</th>
+   {actual&&<th className="ov-name-column">实际配件</th>}<th className="ov-name-column ov-display-head">展示明细</th></tr>
+ </thead>;
+}
+
+const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model:Row;actual:boolean;addons:boolean}){
+ const [selected,setSelected]=useState<number[]>([]),rowAnchor=useRef(0);
+ const [draft,setDraft]=useState<Draft>(null);
+ const [range,setRange]=useState<{anchor:Position;end:Position}|null>(null);
+ const [picker,setPicker]=useState<{row:number;input:string}|null>(null);
+ const dragging=useRef(false),table=useRef<HTMLTableElement>(null);
+ const position=(target:HTMLElement)=>{const td=target.closest<HTMLElement>('[data-ov-cell]');return td?{row:Number(td.dataset.ovRow),col:Number(td.dataset.ovCell) as 0|1}:null;};
+ const bounds=range&&{top:Math.min(range.anchor.row,range.end.row),bottom:Math.max(range.anchor.row,range.end.row),left:Math.min(range.anchor.col,range.end.col),right:Math.max(range.anchor.col,range.end.col)};
+ const chosen=(row:number,col:number)=>bounds&&row>=bounds.top&&row<=bounds.bottom&&col>=bounds.left&&col<=bounds.right;
+ function focusCell(pos:Position){
+  table.current?.querySelector<HTMLElement>('[data-ov-row="'+pos.row+'"][data-ov-cell="'+pos.col+'"]')?.focus({preventScroll:true});
+ }
+ function startEditing(pos:Position,value?:string){
+  if(pos.col===0)setPicker({row:pos.row,input:value??c.rows[pos.row].actual?.name??''});
+  else{
+   const input=table.current?.querySelector<HTMLInputElement>('[data-ov-row="'+pos.row+'"][data-ov-cell="1"] input');
+   if(input){input.focus();if(value!==undefined)input.value=value;}
+  }
+ }
+ function onGridKey(e:KeyboardEvent<HTMLTableElement>){
+  const target=e.target as HTMLElement;
+  if(!target.matches('[data-ov-cell]')||e.ctrlKey||e.metaKey||e.altKey||e.nativeEvent.isComposing)return;
+  const pos=position(target)!;
+  const delta:Record<string,[number,number]>={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,1],ArrowRight:[0,-1]};
+  const move=delta[e.key];
+  if(move){e.preventDefault();const next={row:Math.max(0,Math.min(c.rows.length-1,pos.row+move[0])),col:Math.max(actual?0:1,Math.min(1,pos.col+move[1])) as 0|1};
+   setRange(old=>({anchor:e.shiftKey&&old?old.anchor:next,end:next}));focusCell(next);
+  }else if(e.key==='Enter'||e.key==='F2'||e.key.length===1&&(pos.col===0||/^\d$/.test(e.key))){
+   e.preventDefault();startEditing(pos,e.key.length===1?e.key:undefined);
+  }
+ }
+ function copy(e:ClipboardEvent){
+  const target=e.target as HTMLElement;
+  if(target.matches('input,textarea,select'))return;
+  const row=target.closest<HTMLElement>('[data-row-slot]');
+  if(row){
+   const payload=model.copy(c.id,selected.length?selected:[Number(row.dataset.rowSlot)]);
+   if(!payload)return;
+   e.preventDefault();e.clipboardData.setData('application/x-diy-workbench-rows',JSON.stringify(payload));
+   e.clipboardData.setData('text/plain',payload.rows.map((item:Row)=>[item.actual?.name||'',item.actual?.qty??1].join('\t')).join('\r\n'));
+  }else if(position(target)&&bounds){
+   e.preventDefault();
+   const data=c.rows.slice(bounds.top,bounds.bottom+1).map((item:Row)=>[item.actual?.name||'',item.actual?.qty??1].slice(bounds.left,bounds.right+1).join('\t'));
+   e.clipboardData.setData('text/plain',data.join('\r\n'));
+  }
+ }
+ function paste(e:ClipboardEvent){
+  const target=e.target as HTMLElement;
+  if(target.matches('input,textarea,select'))return;
+  const pos=position(target),row=target.closest<HTMLElement>('[data-row-slot]');
+  if(pos){e.preventDefault();model.pasteActual(c.id,pos.row,pos.col,e.clipboardData.getData('text/plain'));}
+  else if(row){
+   const raw=e.clipboardData.getData('application/x-diy-workbench-rows');
+   if(raw){e.preventDefault();try{model.paste(c.id,Number(row.dataset.rowSlot),JSON.parse(raw));}catch{model.notice('剪贴板配件数据无效');}}
+  }
+ }
+ const gridProps=(row:number,col:0|1)=>({'data-ov-cell':col,'data-ov-row':row,tabIndex:0,'data-ov-selected':chosen(row,col)||undefined});
+ return <section className="ov-config" data-continuous-config={c.id} data-active={model.active===c.id||undefined}
+  onFocusCapture={()=>model.activate(c.id)} onCopy={copy} onPaste={paste}>
+  <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual} mobile/>
+  <table ref={table} className="ov-table" aria-label={c.name+'配置总表'}
+   onPointerDown={e=>{
+    const target=e.target as HTMLElement,pos=position(target);
+    model.activate(c.id);
+    if(!pos||target.closest('input,textarea,button'))return;
+    e.preventDefault();dragging.current=true;
+    setRange(old=>({anchor:e.shiftKey&&old?old.anchor:pos,end:pos}));focusCell(pos);
+   }}
+   onPointerMove={e=>{
+    if(!dragging.current||!(e.buttons&1))return;
+    const pos=position(e.target as HTMLElement);if(pos){setRange(old=>old?{anchor:old.anchor,end:pos}:{anchor:pos,end:pos});focusCell(pos);}
+   }} onPointerUp={()=>{dragging.current=false;}} onPointerCancel={()=>{dragging.current=false;}}
+   onDoubleClick={e=>{const pos=position(e.target as HTMLElement);if(pos)startEditing(pos);}}
+   onKeyDown={onGridKey}>
+   <colgroup><col className="ov-unit" span={2}/><col className="ov-good"/><col className="ov-stock"/><col className="ov-qty"/><col className="ov-slot"/>
+    {actual&&<col className="ov-actual-col"/>}<col/></colgroup>
+   <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual}/>
+   <tbody>{c.rows.map((row:Row,index:number)=>{
+    const part=row.actual,stock=part?.name||part?.goodsId||part?.specialComponent?model.stock(part):null;
+    const changed=part&&model.different(part),base=changed?model.baseTax(part):null,baseline=base??part?.tax;
+    const taxDraft=draft?.field==='tax'&&draft.index===index?draft.value:undefined;
+    const taxDifferent=taxDraft===undefined?changed:taxDraft!==(base??part?.tax);
+    const label=c.name+' '+row.slot;
+    return <tr key={row.slot} className={row.slot==='风扇'?'ov-divider':''}>
+     <td className="ov-number" data-metric="ERP 单价">{amount(part?.erp)}</td>
+     <td className={'ov-number ov-tax'+(taxDifferent?' ov-tax-changed':'')} data-metric="含税单价" title={taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
+      {part?.goodsId&&stock?.status!=='special'?<CommitInput className="ov-tax-input" value={part.tax} label={label+'含税单价'} numeric
+       onCommit={value=>model.tax(c.id,row.slot,value)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.tax)}
+     </td>
+     <td className="ov-number" data-metric="GoodID">{part?.goodsId||'—'}</td>
+     <td className={'ov-number'+(stock?.status==='out'?' ov-stock-out':'')} data-metric="库存" title={stock?.detail}>{stock?.status==='special'?'—':stock?.value==null?(stock?'未知':'—'):amount(stock.value)}</td>
+     <td className="ov-number ov-quantity" data-metric="数量" {...gridProps(index,1)}>
+      <CommitInput value={part?.qty??1} label={label+'实际数量'} numeric onCommit={value=>model.partField(c.id,row.slot,true,'qty',value)}/>
+     </td>
+     <th scope="row"><button type="button" data-row-slot={row.index} aria-pressed={selected.includes(row.index)} onClick={e=>{
+      setSelected(old=>e.shiftKey?c.rows.filter((item:Row)=>item.index>=Math.min(rowAnchor.current,row.index)&&item.index<=Math.max(rowAnchor.current,row.index)).map((item:Row)=>item.index):e.ctrlKey||e.metaKey?old.includes(row.index)?old.filter(i=>i!==row.index):[...old,row.index]:[row.index]);
+      if(!e.shiftKey)rowAnchor.current=row.index;
+     }}>{row.slot}</button></th>
+     {actual&&<td className="ov-actual" aria-label={label+' 实际配件'} {...gridProps(index,0)}>
+      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>setPicker(null)}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}>{part?.name||'—'}</span>}
+     </td>}
+     <td className="ov-display"><DisplayPart row={row} c={c} model={model} addons={addons}/></td>
+    </tr>;
+   })}</tbody>
+  </table>
+  <button className="ov-add-row" aria-label={c.name+' 新增配件'} onClick={()=>model.addRow(c.id)}>＋ 新增配件</button>
+  {!!(c.extras.parts.length+c.extras.actualParts.length)&&<p className="ov-notice">含额外或重复槽位，原配置数据保留。</p>}
+  {c.hardwareIssues?.map((issue:Row,index:number)=><p key={index} className="ov-notice">{issue.label}：{issue.message}</p>)}
+ </section>;
+});
+
 export function ContinuousWorkbench({model}:{model:Row}){
  const sheet=useRef<HTMLDivElement>(null);
- const selections=useRef(new Map<string,{rows:number[];anchor:number}>());
  const [focusedId,setFocusedId]=useState<string|null>(null);
- const [actual,setActual]=useState(true),[copy,setCopy]=useState(true),[query,setQuery]=useState(''),[locateId,setLocateId]=useState<string|null>(null);
- const list=useMemo(()=>{const text=query.trim().toLowerCase();return text?model.configs.filter((c:Row)=>(c.name+' '+c.version+' '+JSON.stringify(c.rows||[])).toLowerCase().includes(text)):model.configs;},[model.configs,query]);
+ const [actual,setActual]=useState(true),[addons,setAddons]=useState(true),[query,setQuery]=useState(''),[locateId,setLocateId]=useState<string|null>(null);
+ const list=useMemo(()=>{const text=query.trim().toLowerCase();return text?model.configs.filter((c:Row)=>(c.name+' '+(c.shortName||'')+' '+(c.version||'')+' '+JSON.stringify(c.rows||[])).toLowerCase().includes(text)):model.configs;},[model.configs,query]);
  const virtual=list.length>6,focusedIndex=list.findIndex((c:Row)=>c.id===focusedId);
- // 每套配置整体测高，滚动时只挂载可见配置及相邻一套；焦点所在配置不卸载。
+ // 大链接按整套配置测高，保留焦点所在表格。
  const rangeExtractor=useCallback((range:Parameters<typeof defaultRangeExtractor>[0])=>{const indexes=defaultRangeExtractor(range);if(focusedIndex>=0&&!indexes.includes(focusedIndex))indexes.push(focusedIndex);return indexes.sort((a,b)=>a-b);},[focusedIndex]);
  const getItemKey=useCallback((index:number)=>list[index].id,[list]);
- const virtualizer=useVirtualizer({count:list.length,getScrollElement:()=>sheet.current,estimateSize:()=>1050,getItemKey,overscan:1,rangeExtractor,enabled:virtual});
- useLayoutEffect(()=>{const ids=new Set(model.configs.map((c:Row)=>c.id));for(const id of selections.current.keys())if(!ids.has(id))selections.current.delete(id);},[model.configs]);
+ const virtualizer=useVirtualizer({count:list.length,getScrollElement:()=>sheet.current,estimateSize:()=>780,getItemKey,overscan:1,rangeExtractor,enabled:virtual});
  useLayoutEffect(()=>{
-  const node=sheet.current,host=node?.closest('#continuous-workbench');if(!node||!host)return;
-  const measure=()=>node.style.setProperty('--sheet-visible-width',`${Math.max(0,node.clientWidth-18)}px`);
+  const host=sheet.current?.closest('#continuous-workbench');if(!host)return;
   const locate=(event:Event)=>{setQuery('');setLocateId((event as CustomEvent<string>).detail);};
-  measure();const observer=new ResizeObserver(measure);observer.observe(node);host.addEventListener('workbench-locate-config',locate);
-  return()=>{observer.disconnect();host.removeEventListener('workbench-locate-config',locate);};
+  host.addEventListener('workbench-locate-config',locate);return()=>host.removeEventListener('workbench-locate-config',locate);
  },[]);
  useLayoutEffect(()=>{
   const node=sheet.current;if(!node||!locateId)return;
   if(virtual){const index=list.findIndex((c:Row)=>c.id===locateId);if(index>=0)virtualizer.scrollToIndex(index,{align:'start',behavior:'auto'});setLocateId(null);return;}
   const target=[...node.querySelectorAll<HTMLElement>('[data-continuous-config]')].find(item=>item.dataset.continuousConfig===locateId);
-  if(target){node.scrollTo({top:node.scrollTop+target.getBoundingClientRect().top-node.getBoundingClientRect().top-1,left:0,behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});setLocateId(null);}
+  if(target){node.scrollTo({top:node.scrollTop+target.getBoundingClientRect().top-node.getBoundingClientRect().top-2,left:0});setLocateId(null);}
  },[locateId,list,virtual,virtualizer]);
- const addRow=(id:string)=>{model.addRow(id);};
- const renderConfig=(c:Row)=>c.loading?<Frame><FramePanel><Skeleton className="h-32 w-full"/><span role="status">正在加载 {c.name}</span></FramePanel></Frame>:<ConfigTable c={c} model={model} actual={actual} copy={copy} selections={selections.current} onAddRow={addRow}/>;
- return <div className="reui-continuous flex min-w-0 flex-col text-sm"><div className="continuous-view-toolbar"><div className="continuous-view-options" role="group" aria-label="配置表显示选项"><span className="continuous-view-caption">显示列</span><button type="button" className="continuous-view-toggle" aria-pressed={actual} onClick={()=>setActual(v=>!v)}><span aria-hidden="true" className="continuous-view-mark">{actual?'✓':'+'}</span>实际配件</button><button type="button" className="continuous-view-toggle" aria-pressed={copy} onClick={()=>setCopy(v=>!v)}><span aria-hidden="true" className="continuous-view-mark">{copy?'✓':'+'}</span>展示与加购</button></div><div className="min-w-40 flex-1"><Input aria-label="筛选当前链接配置" placeholder="搜索当前链接配置 / 配件型号" value={query} onChange={e=>setQuery(e.target.value)}/></div></div><p className="shrink-0 pb-2 text-xs text-muted-foreground">点击配件类型选行 · Shift 连选 / Ctrl 多选 · Ctrl+C 复制 · Ctrl+V 从目标位置粘贴 · 底部 ＋ 可继续新增配件</p>
- {model.error&&<Frame><FramePanel><p role="alert">{model.error}</p><Button size="sm" variant="outline" onClick={model.retry}>重试加载</Button></FramePanel></Frame>}
- {!list.length&&<Frame><FramePanel><p>没有匹配的配置</p><Button size="sm" variant="outline" onClick={()=>setQuery('')}>清空搜索</Button></FramePanel></Frame>}
- <div ref={sheet} className="continuous-sheet" aria-label="连续配置表" tabIndex={0} onFocusCapture={event=>setFocusedId((event.target as HTMLElement).closest<HTMLElement>('[data-continuous-config]')?.dataset.continuousConfig||null)} onBlurCapture={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setFocusedId(null);}}><div className="continuous-sheet-content" style={{minWidth:634+(actual?260:0)+(copy?360:0),...(virtual?{height:virtualizer.getTotalSize(),position:'relative' as const}:{} )}}>{virtual?virtualizer.getVirtualItems().map(item=><div key={item.key} data-index={item.index} ref={virtualizer.measureElement} style={{position:'absolute',top:0,left:0,width:'100%',transform:`translateY(${item.start}px)`}}>{renderConfig(list[item.index])}</div>):list.map((c:Row)=><div key={c.id}>{renderConfig(c)}</div>)}</div></div>
+ const renderConfig=(c:Row):ReactNode=>c.loading?<p role="status">正在加载 {c.name}</p>:<ConfigTable c={c} model={model} actual={actual} addons={addons}/>;
+ return <div className="reui-continuous" onKeyDown={event=>{
+  // 表内快捷键复用配置撤销，输入框和可编辑文字保留浏览器自己的撤销。
+  const target=event.target;
+  if(event.defaultPrevented||event.nativeEvent.isComposing||!event.ctrlKey||event.altKey||event.shiftKey||event.metaKey||event.key.toLowerCase()!=='z')return;
+  if(!(target instanceof HTMLElement)||target.isContentEditable||target.closest('input, textarea, select'))return;
+  event.preventDefault();
+  if(!event.repeat&&model.canUndo)model.undo();
+ }}>
+  <div className="ov-toolbar">
+   <div className="ov-search"><input type="search" aria-label="筛选当前链接配置" placeholder="搜索当前链接配置 / 配件名称" value={query} onChange={e=>setQuery(e.currentTarget.value)}/></div>
+   <div className="ov-history" role="group" aria-label="配置总表编辑记录">
+    <button type="button" title="撤销（Ctrl+Z）" aria-keyshortcuts="Control+Z" disabled={!model.canUndo} onClick={model.undo}>撤销</button>
+    <button type="button" disabled={!model.canRedo} onClick={model.redo}>重做</button>
+   </div>
+   <label><input type="checkbox" checked={actual} onChange={e=>setActual(e.currentTarget.checked)}/>实际配件</label>
+   <label><input type="checkbox" checked={addons} onChange={e=>setAddons(e.currentTarget.checked)}/>显示加购</label>
+   <label title={model.term===null?'当前链接分期设置不一致':'整链开启按 24 期、到手价 10% 计算'}><input type="checkbox" disabled={model.loading} checked={model.term>0} onChange={e=>model.installment(e.currentTarget.checked)}/>整链分期（10%）</label>
+  </div>
+  <p className="ov-hint">实际配件和数量可双击或键入编辑，删空型号即清除。用 <kbd>Shift</kbd> 选区，两列粘贴从实际配件格开始，顺序为型号、数量。</p>
+  {model.error&&<p role="alert">{model.error} <button onClick={()=>model.retry()}>重试加载</button></p>}
+  {!list.length&&<p>没有匹配的配置 <button onClick={()=>setQuery('')}>清空搜索</button></p>}
+  <div ref={sheet} className="ov-sheet-scroll" aria-label="连续配置表" tabIndex={0}
+   onFocusCapture={event=>setFocusedId((event.target as HTMLElement).closest<HTMLElement>('[data-continuous-config]')?.dataset.continuousConfig||null)}
+   onBlurCapture={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setFocusedId(null);}}>
+   <div className="ov-content" style={virtual?{height:virtualizer.getTotalSize(),position:'relative'}:undefined}>
+    {virtual?virtualizer.getVirtualItems().map(item=><div key={item.key} data-index={item.index} ref={virtualizer.measureElement} style={{position:'absolute',top:0,left:0,width:'100%',transform:'translateY('+item.start+'px)'}}>{renderConfig(list[item.index])}</div>):list.map((c:Row)=><div key={c.id}>{renderConfig(c)}</div>)}
+   </div>
+  </div>
  </div>;
 }

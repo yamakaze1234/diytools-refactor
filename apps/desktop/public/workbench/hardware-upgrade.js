@@ -36,4 +36,4 @@ export function attachAddonHardware(config,catalog){
  for(const a of config.addons||[])for(const item of a.choices||a.items||[a]){const matches=byId.get(item.goodsId)||[];if(matches.length===1){copyHardware(matches[0],item);item.hardwareName=matches[0].name;}}
 }
 
-export function partUpgradeText(part,config){let value=part.upgrade||'';if(hardwareUpgradeSelected(part,config))return value;for(const a of config?.addons||[]){if(!part.sourceId||a.sourceId!==part.sourceId)continue;const visible=displayedAddon(a,config);if(a.text&&value.includes(a.text))value=value.replace(a.text,visible.text);}return compatibleUpgradeText(value,config,part.slot);}
+export function partUpgradeText(part,config){if(part.overviewAddonHidden===true)return '';let value=part.upgrade||'';if(hardwareUpgradeSelected(part,config))return value;for(const a of config?.addons||[]){if(!part.sourceId||a.sourceId!==part.sourceId)continue;const visible=displayedAddon(a,config);if(a.text&&value.includes(a.text))value=value.replace(a.text,visible.text);}return compatibleUpgradeText(value,config,part.slot);}

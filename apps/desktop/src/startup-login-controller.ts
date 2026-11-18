@@ -77,7 +77,7 @@ export function createStartupLoginController({ desktop, invoke, onState, nasMain
     const result = await requestStartupCloud(invoke, 'status');
     // 没有本机云服务配置时直接进入本地工作台；连接失败仍保留登录重试流程。
     if (result.configured === false || (result.session as { configured?: boolean } | undefined)?.configured === false) {
-      if(nasMain) throw Error('NAS 工作区需要配置原工作台账号登录。');
+      if(nasMain) throw Error('请先设置 NAS 连接。');
       emit({ session: emptySession(), localOnly: true, firstUse: false, phase: 'ready', message: '' });
       return;
     }
@@ -127,12 +127,16 @@ export function createStartupLoginController({ desktop, invoke, onState, nasMain
     await prepare();
     if (!disposed && state.firstUse) throw Error('数据接入尚未保存完成，请重试。');
   }); }
+  const signedOut=(nasLogoutUnconfirmed=false) => emit({
+    phase: 'signed-out', session: emptySession(), firstUse: false, migrationMissingImages: 0, busy: false, message: '',
+    error: nasLogoutUnconfirmed ? '本机已退出，NAS 会话撤销未获确认。' : '',
+  });
   function logout() { return perform(async () => {
-    await requestStartupCloud(invoke, 'logout');
-    emit({ phase: 'signed-out', session: emptySession(), firstUse: false, migrationMissingImages: 0, message: '', error: '' });
+    const result=await requestStartupCloud(invoke, 'logout');
+    signedOut(result.nas_session_revoked===false);
   }); }
   return { initialize, login, retry, logout, chooseData,
-    signedOut: () => emit({ phase: 'signed-out', session: emptySession(), firstUse: false, migrationMissingImages: 0, busy: false, message: '', error: '' }),
+    signedOut,
     dispose: () => { disposed = true; }, status: () => state };
 }
 

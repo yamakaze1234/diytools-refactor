@@ -1,6 +1,6 @@
 /** 将原主编辑器数据接到 NAS。保留原业务文档，显示兼容值不自动变成保存内容。 */
 import {createNasApiClient,NasApiError,nasShopIds,nasOperationsCapability} from './nas-api-client.js';
-import {createNasDraftController,nasDependencies} from './nas-draft-controller.js';
+import {createNasDraftController,ensureNasPartLineIds,nasDependencies} from './nas-draft-controller.js';
 import {createNasCatalogController} from './nas-catalog-controller.js';
 import {createNasOperationQueue,nasPlanStorage} from './nas-operation-plan.js';
 const dup=value=>structuredClone(value);
@@ -13,6 +13,7 @@ const equal=(a,b)=>{
  return false;
 };
 export const sameNasDocument=equal;
+export const visibleNasAddons=(list,fallback)=>Array.isArray(list)&&list.length===fallback.length?list.map(row=>dup(row.addon)):fallback;
 const itemId=value=>obj(value)?(value.lineId??value.id):undefined;
 const keyed=array=>array.length>0&&array.every(x=>typeof itemId(x)==='string'&&itemId(x))&&new Set(array.map(itemId)).size===array.length;
 
@@ -263,8 +264,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   return projectNasEdits(row.raw,row.visible,config);
  }
  function editorAddons(id,fallback){
-  const list=editors.get(id)?.effective;
-  return Array.isArray(list)&&list.length===fallback.length?list.map(row=>dup(row.addon)):fallback;
+  return visibleNasAddons(editors.get(id)?.effective,fallback);
  }
  async function configurationChanges(rows){
   const memo=new Map();
@@ -282,6 +282,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    }
    const document=action==='create'?dup(row.document):documentFor(row.document);
    guard('INVALID_DRAFT',document?.shopId===shopId);
+   ensureNasPartLineIds(document,record?.base);
    const prior=record?.dependencies||{sources:{},costs:{}};
    // 仅接受本次已确认维护回执中关联来源/成本的新版本；其余依赖保持录入时版本。
    const known=row.dependencyOverrides?Object.fromEntries(['sources','costs'].map(kind=>
@@ -299,9 +300,9 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    result.push(...page);if(page.length<100)return result;
   }
  }
- function priceDraft(next){
+ function priceDraft(next,scope=endpoint){
   ready();
-  const key='diy-nas-price-draft:'+JSON.stringify([endpoint,identity]);
+  const key='diy-nas-price-draft:'+JSON.stringify([scope,identity]);
   try{
    if(next!==undefined){if(next.length)storage.setItem(key,JSON.stringify(next));else storage.removeItem(key);}
    const rows=JSON.parse(storage.getItem(key)||'[]');
@@ -323,7 +324,35 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    !archived.has(id)||!versionNumber(expected_version)||BigInt(expected_version)>=BigInt(archived.get(id)));
   if(remaining.length!==oldPrices.length)priceDraft(remaining);
  }
+ // Agent 使用当前页面的部署和身份；跨店仍重新核对 NAS 授权，并使用各店原有草稿键。
+ async function agentAccess(shop){
+  const verified=await owned.me(),permissions=nasOperationsCapability(verified,shop);
+  if(!permissions)throw new NasApiError('FORBIDDEN',403);
+  const reader=shop===shopId?client:createClient({nativeRequest,shopId:shop});
+  if(reader!==client)reader.bindIdentity(member.workspace_id,member.uid);
+  const scope=catalogScope+':main'+(shop==='intel'?'':':'+shop);
+  return {client:reader,assertWritable(){
+   if(permissions.workspace_writes!==true||permissions.configuration_writes!==true)throw new NasApiError('WRITES_DISABLED',405);
+  },async assertDrafts(ids){
+   const draft=shop===shopId?lookup:createNasDraftController({client:reader,storage,endpointId:scope,shopId:shop});
+   if(draft!==lookup)await draft.verify();
+   if([...draft.drafts(),...priceDraft(undefined,scope)].some(row=>ids.includes(row.id)))
+    throw new NasApiError('UNSAVED_DRAFT',409);
+   const plans=shop===shopId?queue:createNasOperationQueue({client:reader,storage:planStorage,key:JSON.stringify([scope,member.workspace_id,member.uid]),shopId:shop});
+   if(await plans.read())throw new NasApiError('WORKSPACE_PLAN_PENDING',409);
+  }};
+ }
+ async function agentIndexes(shop,head){
+  const verified=await owned.me();
+  return Promise.all(nasShopIds.filter(id=>nasOperationsCapability(verified,id)).map(async id=>{
+   if(id===shop)return [id,head];
+   const reader=createClient({nativeRequest,shopId:id});
+   reader.bindIdentity(member.workspace_id,member.uid);
+   return [id,await call(()=>reader.workspaceIndex())];
+  }));
+ }
  return {initialize,request,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,release,close,documentFor,
+  agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],
   shop:()=>shopId,shops:()=>[...availableShops],serverVersion,serverDataTime,serverDisplayScope:()=>JSON.stringify([endpoint,identity]),
   editorAddons,configurationVersion:id=>controllers.get(id)?.read()?.version,
   configurationChanges,archived,canMergePriceDraft,discardArchivedDrafts,checkImportImages:images=>call(()=>client.importPreview(images)),
@@ -353,7 +382,11 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   canWrite:()=>!closed&&Boolean(capability?.configuration_writes===true)};
 }
 
-export const nasErrorText=error=>({
+export const nasErrorText=error=>{
+ const field=error?.details?.field;
+ if(error?.code==='VALIDATION_FAILED'&&typeof field==='string'&&/^[A-Za-z][A-Za-z0-9._/]{0,119}$/.test(field))
+  return '配置内容未通过校验（'+field+'）。';
+ return ({
  MEMBER_CHANGED:'账号已切换。请重新登录；原账号草稿仍保留在本机。',UNAUTHENTICATED:'请重新登录工作台账号，草稿仍保留。',
  FORBIDDEN:'此账号没有该店铺的 NAS 运营权限。',NAS_NOT_CONFIGURED:'请检查 NAS 工作区的可信 HTTPS 地址。',
  NAS_FEATURE_UNAVAILABLE:'此功能暂未接入 NAS 工作区。',WRITES_DISABLED:'当前 NAS 接口只读。',
@@ -387,4 +420,5 @@ export const nasErrorText=error=>({
  SKU_ALREADY_USED:'同一 SPU 下该 SKU 已有在用配置，请核对准确对应关系。',
  QUOTATION_NOT_AVAILABLE:'未确认维护表到手价，或缺少准确的 SPU/SKU。未发布给销售。',
  QUOTATION_IDENTITY_MISMATCH:'维护表行的 SPU / SKU 和当前配置不一致。',
-})[error?.code]||error?.message||'操作未完成。';
+ })[error?.code]||error?.message||'操作未完成。';
+};

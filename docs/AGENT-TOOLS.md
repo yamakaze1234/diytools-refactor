@@ -1,8 +1,8 @@
 # 本机 AI 与 CLI 操作入口
 
-支持 MCP 的本地 AI 客户端也可通过源码 CLI 的 `mcp` 子命令接入。构建、连接配置、工具权限和任务回执见 [MCP 本机接入](MCP.md)；已安装版本是否支持以该 CLI 的 `--help` 为准。
+支持 MCP 的本地 AI 客户端可通过 CLI 的 `mcp` 子命令接入。配置、权限与回执见[MCP 本机接入](MCP.md)。
 
-正式 Windows 版本随主 EXE 内置配套 CLI。首次启动及升级重启时，在程序目录准备 `diytools-agent.exe`，并更新 `agent-connection.json`。直接运行工作台即可，不需要源码、Python、Node.js、PowerShell 启动脚本或手动设置启用变量。
+带 Agent 的三店 NAS 构建在启动时准备 `diytools-agent.exe` 和 `agent-connection.json`。直接运行工作台并登录即可。CLI 与其 `mcp` 子命令复用当前成员的 NAS 店铺权限。
 
 入口只允许本机当前 Windows 用户和系统访问，按用户与实例隔离。AI 需要能够执行本机命令；网页聊天本身不能直接调用本机程序。CLI 经工作台现有业务接口操作，不直接打开数据库，不接受任意 SQL 或脚本执行。
 
@@ -29,17 +29,17 @@ CLI 准备或入口初始化失败时，工作台仍可使用；按应用提示�
 
 ## 查询与分页
 
-查询来自最后成功保存的本机快照，不包含尚未保存的输入。
+查询使用 NAS 正式保存的配置，未提交草稿仍留在各店本机。
 
-- 店铺 ID 使用 `shops list` 的稳定值。
+- 店铺 ID 使用 `shops list` 返回的值。配置详情用 `--shop-id` 指定店铺以区分重名 ID。
 - `--goods-id` 按实际 BOM 匹配；旧配置缺少实际 BOM 时按工作台规则回退展示配件，空 actualParts 数组表示空 BOM。
 - `--sku`、`--spu` 保留字符串及前导零；缺失 SKU 不自行生成。
 - 默认每页 20 条、最大 100 条；翻页传回 nextOffset 和同一 revision。期间发生保存时重新从第一页查询，避免版本混用。
-- status 中 unknown 表示未检查，不代表保存或云同步成功。
+- `nasVersion` 是单套服务端版本。`revision` 用于检查分页或导出是否仍对应同一目录快照。
 
 ## 修改、导出和同步
 
-支持配件展示名称、升级描述、数量及输出源替换。先查询精确目标，再预览变更；计划有效且工作台没有未保存输入、冲突或占用操作时，才能通过专用 apply 命令保存。保存沿用工作台配件、实际 BOM、成本和草稿保护规则。
+支持到手价、SKU、配件展示名称、升级描述、数量及输出源替换。先查询精确目标，再预览变更；计划有效且工作台没有未保存输入、冲突或占用操作时，才能通过专用 apply 命令保存。保存沿用工作台配件、实际 BOM、成本和草稿保护规则。
 
 ```json
 {"shopId":"intel","targets":[{"configId":"查询返回的配置ID","partIndex":0,"expectedGoodsId":"原ERP商品码"}],"action":{"type":"upgrade","value":"新的升级描述"}}
@@ -53,7 +53,7 @@ CLI 准备或入口初始化失败时，工作台仍可使用；按应用提示�
 导出可选择当前已保存版本，或引用某次成功保存的 operationId，固定对应快照。支持配置图、SKU 图、HTML、manifest 及 ZIP；使用真实 Canvas 和原生落盘，回执返回实际路径、字节数与 SHA256。ERP 价格为保存时的快照，不能代表实时查询结果。
 
 ```json
-{"configIds":["配置ID"],"revision":42,"images":"both","report":true,"outputDir":"D:\\导出"}
+{"shopId":"intel","configIds":["配置ID"],"revision":42,"images":"both","report":true,"outputDir":"D:\\导出"}
 ```
 
 ```json
@@ -68,7 +68,7 @@ CLI 准备或入口初始化失败时，工作台仍可使用；按应用提示�
 & $connection.cli --json --instance $connection.instance jobs status --operation-id '原操作的UUID'
 ```
 
-本机保存、文件导出、云同步分别确认。AI 应只在任务授权范围内发起 sync；工作台既有自动同步仍按用户设置运行。云同步使用当前成员会话，失败或存在冲突时保留本机资料，并在工作台处理后重试。
+NAS 保存以 `nasSave: "saved"` 和正式回执为准。`sync run` 刷新当前店铺并保留本机草稿。按原保存回执导出时，程序会校验目标的服务端版本。
 
 ## 任务结果与重试
 
@@ -82,4 +82,4 @@ queued / running 只是排队或执行中；继续查询 jobs status，直到 su
 
 ## 与连续编辑界面协作
 
-CLI 与界面共用本机保存和版本校验。界面正在编辑时先查询版本并预览改动，发生冲突按差异处理。配件行使用实际 slot 标识；删除新增行后其他编号保持不变，不应按当前数组位置推断配件名称。图片主题按链接管理，与界面浅深色切换无关。
+CLI 与界面使用相同的 NAS 保存权限和版本校验。界面正在编辑时先查询版本并预览改动，发生冲突按差异处理。配件行使用实际 slot 标识；删除新增行后其他编号保持不变，不应按当前数组位置推断配件名称。图片主题按链接管理，与界面浅深色切换无关。

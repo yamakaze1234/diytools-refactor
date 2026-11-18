@@ -9,12 +9,14 @@ pub async fn agent_ui(
     {
         use std::sync::Arc;
         use tauri::Manager;
-        let jobs = app
-            .try_state::<Arc<crate::agent_jobs::AgentJobs>>()
-            .ok_or("Agent 入口未启用")?
-            .inner()
-            .clone();
+        let local = app.try_state::<Arc<crate::agent_jobs::AgentJobs>>().map(|state| state.inner().clone());
+        let nas = app.try_state::<Arc<crate::nas_agent::NasAgent>>().map(|state| state.inner().clone());
         tauri::async_runtime::spawn_blocking(move || {
+            let jobs = if let Some(nas) = nas {
+                nas.ui_jobs(&payload["actor"]).map_err(|error| error.to_string())?
+            } else {
+                local.ok_or("Agent 入口未启用")?
+            };
             let session = payload["sessionId"].as_str().unwrap_or("");
             let token = payload["claimToken"].as_str().unwrap_or("");
             let id = payload["id"].as_str().unwrap_or("");
@@ -31,7 +33,7 @@ pub async fn agent_ui(
                     .and_then(|_| {
                         let mut value = payload.clone();
                         if let Some(object) = value.as_object_mut() {
-                            for key in ["id", "sessionId", "claimToken"] {
+                            for key in ["id", "sessionId", "claimToken", "actor"] {
                                 object.remove(key);
                             }
                         }

@@ -1,4 +1,5 @@
 import {slots} from './core.js';
+import {copyPlainText} from './clipboard.js';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const text=value=>String(value??'').replace(/[\t\r\n]+/g,' ');
@@ -40,19 +41,6 @@ export function wpsExport(configs,{layout='FH',startRow=1}={}){
  return{rows,blocks,tsv,previewHtml,startRow,endRow:startRow+rows.length-1,layout:'FH'};
 }
 
-export async function copyWpsExport(result){
- if(navigator.clipboard?.writeText){
-  try{await navigator.clipboard.writeText(result.tsv);return;}catch{}
- }
- if(globalThis.ClipboardItem&&navigator.clipboard?.write){
-  try{await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([result.tsv],{type:'text/plain'})})]);return;}catch{}
- }
- let copied=false;
- const handler=e=>{if(!e.clipboardData)return;e.preventDefault();e.clipboardData.setData('text/plain',result.tsv);copied=true;};
- document.addEventListener('copy',handler);
- try{if(!document.execCommand('copy')||!copied)throw Error('当前环境未允许复制，请允许剪贴板访问后重试');}finally{document.removeEventListener('copy',handler);}
-}
-
 export function openWpsExport(configs,{openDialog,selectedIds=null}){
  const initial=selectedIds===null?null:new Set(selectedIds);
  openDialog('导出回 WPS',`<p class="hint">当前链接 ${configs.length} 套配置，勾选后按工作台原顺序连续导出。“定价”使用工作台到手价。导出范围为 F:H，包含数量、分类和展示名称，保留 WPS 原模板格式。</p><div class="actions"><button id="wps-export-all">全选配置</button><button id="wps-export-none">清空选择</button><span id="wps-export-count"></span></div><div style="max-height:180px;overflow:auto;margin:12px 0">${configs.map((c,i)=>`<label style="display:flex;align-items:center;gap:8px;margin:6px 0"><input type="checkbox" data-wps-export-index="${i}" ${initial===null||initial.has(c.id)?'checked':''} style="width:auto"><span>${esc(c.name||'未命名配置')}${c.version?' · '+esc(c.version):''} · 到手价 ${c.price==null||c.price===''?'未填写':'¥'+esc(c.price)}</span></label>`).join('')}</div><div class="inline-grid"><label class="field">目标起始行<input id="wps-export-row" type="number" min="1" step="1" value="1"></label></div><p id="wps-export-hint" class="hint"></p><button id="wps-export-copy" class="primary">复制到 WPS</button><p id="wps-export-status" class="hint" role="status"></p><div id="wps-export-preview" style="overflow:auto;max-height:420px;margin-top:12px" tabindex="0" aria-label="WPS 导出预览"></div>`);
@@ -72,6 +60,6 @@ export function openWpsExport(configs,{openDialog,selectedIds=null}){
  $('#wps-export-all').onclick=()=>{boxes.forEach(box=>box.checked=true);refresh();};
  $('#wps-export-none').onclick=()=>{boxes.forEach(box=>box.checked=false);refresh();};
  $('#wps-export-row').oninput=refresh;
- $('#wps-export-copy').onclick=async()=>{if(!result)return;const current=result;try{await copyWpsExport(current);$('#wps-export-status').textContent=`已复制 ${current.blocks.length} 套配置，请粘贴到 WPS 的 F${current.startRow}。`;}catch(e){$('#wps-export-status').textContent=e.message;}};
+ $('#wps-export-copy').onclick=async()=>{if(!result)return;const current=result;try{await copyPlainText(current.tsv);$('#wps-export-status').textContent=`已复制 ${current.blocks.length} 套配置，请粘贴到 WPS 的 F${current.startRow}。`;}catch(e){$('#wps-export-status').textContent=e.message;}};
  refresh();
 }

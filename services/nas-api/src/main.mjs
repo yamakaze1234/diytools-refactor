@@ -4,6 +4,7 @@ import {realpath,stat} from 'node:fs/promises';
 import {relative,isAbsolute,sep} from 'node:path';
 import {settings} from './config.mjs';
 import {createAuth} from './auth.mjs';
+import {createLocalAuth} from './local-auth.mjs';
 import {Store} from './store.mjs';
 import {LiveStore} from './live-store.mjs';
 import {createImageHandler,createImageWriter,combineImageHandlers} from './images.mjs';
@@ -43,10 +44,16 @@ try {
  const profiles=[{...config,shopId:'intel'},...config.additionalShops];
  if(groupAccess)await checkImageRoots(profiles);
  const shopStores=new Map(),imageHandlers=[],galleryDatabases=new Map();
- let store;
+ let store,localAuth;
  for(const profile of profiles){
   const pool=connect(profile.pg);
   const db=live?scopedDatabase(pool,profile.shopId,{groupAccess}):pool;
+  if(profile.shopId==='intel'&&config.authMode!=='cloud'){
+   await pool.query('SELECT uid,password_hash FROM nas_auth.accounts LIMIT 0');
+   await pool.query('SELECT access_hash,refresh_hash,credential_salt FROM nas_auth.sessions LIMIT 0');
+   await pool.query('SELECT uid,enabled FROM nas_auth.members LIMIT 0');
+   localAuth=createLocalAuth(pool,config);
+  }
   const result=await db.query('SELECT current_database() AS name,current_user AS role');
   if(result.rows[0]?.name!==profile.pg.database||result.rows[0]?.role!==profile.pg.user)throw Error('wrong database or runtime role');
   await db.query('SELECT workspace_id FROM nas_business.members LIMIT 0');
@@ -76,7 +83,10 @@ try {
    if(config.lanCaseGallery)galleryDatabases.set(profile.shopId,db);
   }else store=new Store(db);
  }
- const handlers={authenticate:createAuth(config),store,shopStores:live?shopStores:null,clientOrigins:config.clientOrigins,deploymentId:config.deploymentId,
+ const cloudAuth=config.authMode==='local'?null:createAuth(config);
+ const authenticate=(header,options)=>!cloudAuth||localAuth&&typeof header==='string'&&header.startsWith('Bearer nasa_')
+  ?localAuth.authenticate(header):cloudAuth(header,options);
+ const handlers={authenticate,localAuth,authMode:config.authMode,store,shopStores:live?shopStores:null,clientOrigins:config.clientOrigins,deploymentId:config.deploymentId,
   serveImage:combineImageHandlers(imageHandlers),lanGallery:config.lanCaseGallery?createLanCaseGallery(galleryDatabases):null};
  servers.push(serve(handlers,null,{healthOnly:!!config.tls}));
  if(config.tls)servers.push(serve(handlers,config.tls));

@@ -81,7 +81,6 @@ pub fn start() -> Result<LocalAcceptance,String> {
         std::env::set_var("DIYTOOLS_NAS_DEPLOYMENT_ID",DEPLOYMENT);
         std::env::set_var("DIYTOOLS_NAS_CA_PEM",ca);
         std::env::set_var("DIYTOOLS_NAS_SYSTEM_CA","0");
-        std::env::set_var("DIYTOOLS_AGENT_ENABLED","0");
         std::env::remove_var("DIYTOOLS_CONNECTION_ERROR");
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER",data.join("webview2"));
     }

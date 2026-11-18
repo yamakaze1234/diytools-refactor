@@ -47,7 +47,10 @@ impl CloudRuntime {
         let path = data_dir.join("integrations.json");
         // 外部文件优先；只有文件完全不存在才使用构建注入的默认认证，错误配置不静默回退。
         #[cfg(not(feature="nas-acceptance"))]
-        let transport = match fs::File::open(&path) {
+        let transport = if cfg!(feature="formal-nas-client") {
+            // 正式版只连接配置的 NAS。旧云配置即使保留在本机也不参与登录。
+            CloudTransport::unconfigured()?
+        } else { match fs::File::open(&path) {
             Ok(file) => {
                 let mut bytes = Vec::new();
                 file.take(64 * 1024 + 1)
@@ -70,10 +73,10 @@ impl CloudRuntime {
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                crate::embedded_auth::transport()?
+                CloudTransport::unconfigured()?
             }
             Err(_) => return Err("CLOUD_CONFIG_INVALID: 无法读取本机接入配置".into()),
-        };
+        }};
         let nas=std::env::var("DIYTOOLS_NAS_API_URL").ok().and_then(|s| nas_base(&s));
         let nas_main=std::env::var_os("DIYTOOLS_NAS_MAIN").is_some_and(|value| value == "1");
         let nas_deployment=std::env::var_os("DIYTOOLS_NAS_DEPLOYMENT_ID").map(|value|{
@@ -108,6 +111,11 @@ impl CloudRuntime {
             }}
         }
         if let Some(id)=&nas_deployment {transport=transport.with_nas_deployment(id.clone())?;}
+        if cfg!(all(feature="formal-nas-client",not(feature="nas-acceptance"))) {
+            if let Some(base)=&nas {
+                transport=transport.with_local_nas_auth(base)?;
+            }
+        }
         let transport=if cfg!(feature="nas-acceptance") {transport} else {transport.with_persistence(&scope)?};
         Ok(Self {
             transport: Arc::new(transport),
@@ -126,6 +134,34 @@ impl CloudRuntime {
     }
 
     pub(crate) fn nas_main(&self) -> bool { self.nas_main }
+
+    #[cfg(feature = "agent-tools")]
+    pub(crate) fn nas_agent_scope(&self) -> Option<(String, (String, String))> {
+        let url = self.nas.as_ref().filter(|_| self.nas_main)?;
+        Some((nas_endpoint_id(url, self.nas_deployment.as_deref()), self.transport.nas_actor()?))
+    }
+
+    #[cfg(feature = "agent-tools")]
+    pub(crate) fn nas_agent_read(
+        &self,
+        route: &str,
+        actor: &(String, String),
+        source_usage: Option<&Value>,
+    ) -> Result<Value, diytools_agent_core::AgentError> {
+        use diytools_agent_core::AgentError;
+        let base = self.nas.as_ref().ok_or_else(|| AgentError::new("NAS_NOT_CONFIGURED", "NAS 地址未配置"))?;
+        let (method, url) = nas_route(base, if source_usage.is_some() { "POST" } else { "GET" }, route)
+            .ok_or_else(|| AgentError::new("INVALID_PARAMS", "NAS 查询路径无效"))?;
+        let (status, body) = self.transport.nas_request(url, method,
+            source_usage.map(|value| ("application/json".into(), value.to_string().into_bytes())), Some(actor.clone()))
+            .map_err(|(_, code)| AgentError::new(code, "NAS 查询失败"))?;
+        if status == 200 && body["ok"] == true {
+            return Ok(body);
+        }
+        let code = body["error"].as_str().filter(|s| !s.is_empty() && s.len() <= 64
+            && s.bytes().all(|b| b.is_ascii_uppercase() || b == b'_')).unwrap_or("INVALID_API_RESPONSE");
+        Err(AgentError::new(code, "NAS 查询失败，请检查账号、店铺权限或服务连接"))
+    }
 
     fn check_nas_profile(&self) -> Result<(),String>{
         if self.nas_deployment.is_none(){return Ok(());}
@@ -1152,7 +1188,7 @@ mod tests {
     use super::*;
     use std::sync::mpsc;
     // 未配置时 status 与 resume 都保持本地模式，接入动作在身份核验前被拒绝。
-    // 正式版缺文件时使用内置认证，另由 embedded_auth_fallback 测试覆盖。
+    // 旧版仅在外部文件存在时启用传统云接入。
     #[cfg(not(feature = "formal-nas-client"))]
     #[test]
     fn absent_config_status_resume_and_connect_are_local_only() {
@@ -1676,17 +1712,21 @@ fn parse_payload(raw: &str) -> Result<Value, String> {
     Ok(value)
 }
 
-// 新设备无接入文件使用内置默认值；显式覆盖、禁用及损坏文件均保持原语义。
-#[cfg(test)]
+// 正式版忽略旧云接入文件，兼容构建仍按文件显式配置旧认证。
+#[cfg(all(test,not(feature="nas-acceptance")))]
 #[test]
-fn embedded_auth_fallback_respects_external_config_precedence(){
+fn nas_local_auth_ignores_legacy_cloud_configuration(){
     let dir=std::env::temp_dir().join(format!("diy-auth-{}",uuid::Uuid::new_v4()));
     std::fs::create_dir(&dir).unwrap();
-    let runtime=CloudRuntime::new(&dir).unwrap();
-    assert_eq!(runtime.transport.environment(),crate::embedded_auth::transport().unwrap().environment());
-    std::fs::write(dir.join("integrations.json"),br#"{"version":1,"cloud":{"envId":"override-demo","endpoint":"https://example.invalid/"}}"#).unwrap();
-    let runtime=CloudRuntime::new(&dir).unwrap();assert!(runtime.transport.environment().starts_with("override-demo@"));
-    std::fs::write(dir.join("integrations.json"),br#"{"version":1,"cloud":null}"#).unwrap();
+    let file=dir.join("integrations.json");
     assert_eq!(CloudRuntime::new(&dir).unwrap().transport.status().unwrap()["configured"],false);
-    std::fs::write(dir.join("integrations.json"),b"invalid-json").unwrap();assert!(CloudRuntime::new(&dir).is_err());
+    std::fs::write(&file,br#"{"version":1,"cloud":{"envId":"override-demo","endpoint":"https://example.invalid/"}}"#).unwrap();
+    let runtime=CloudRuntime::new(&dir).unwrap();
+    if cfg!(feature="formal-nas-client"){
+        assert_eq!(runtime.transport.status().unwrap()["configured"],false);
+    }else{
+        assert!(runtime.transport.environment().starts_with("override-demo@"));
+    }
+    std::fs::write(&file,b"invalid-json").unwrap();
+    assert_eq!(CloudRuntime::new(&dir).is_ok(),cfg!(feature="formal-nas-client"));
 }

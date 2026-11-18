@@ -134,3 +134,163 @@ body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
   body.continuous-mode #product-panel .product-heading { padding-right: 0; }
   body .topbar #save-status { max-width: 110px; }
 }
+
+/* 双页签设计稿：外层继续使用工作台导航，页头和表格的尺寸独立于旧编辑器。 */
+body.overview-mode {
+ --desktop-toolbar-height: 53px; --ov-gutter: clamp(12px,1.12vw,22px);
+ --ov-ink: #181a19; --ov-muted: #5d645f; --ov-line: #dbdfdb;
+ --ov-page: #f1f3f0; --ov-sheet: #fff; --ov-columns: #f5f7f4; --ov-display: #faf9ed;
+ --ov-numbers: 'Cascadia Mono',Consolas,'Microsoft YaHei UI',monospace;
+}
+html.dark body.overview-mode {
+ --ov-ink: #eeeeea; --ov-muted: #b8c0b8; --ov-line: #40473e;
+ --ov-page: #202520; --ov-sheet: #252b25; --ov-columns: #303830; --ov-display: #34362b;
+}
+body.overview-mode .workspace { --sidebar-w: clamp(185px,15.3vw,258px); --preview-w: clamp(282px,20.8vw,402px); }
+body.has-reui-rail.overview-mode { padding-left: 50px; }
+body.overview-mode .reui-rail { width: 50px; padding-inline: 0; padding-block: 9px 5px; gap: 3px; }
+body.overview-mode .reui-rail strong { margin-bottom: 18px; }
+body.overview-mode .reui-rail :is(a,.rail-nav-button) { width: 49px; min-height: 47px; }
+body.overview-mode .sidebar :is(.links-eyebrow,.links-helper,.sidebar-note) { display: none; }
+body.overview-mode .sidebar .side-title { margin-block: 5px; }
+body.overview-mode .sidebar .selection-tools { margin-block: 3px; }
+body.overview-mode .sidebar #editing-context { display: none; }
+body.overview-mode .main .product-heading { padding-right: min(250px,38%); }
+body.overview-mode .main { container-type: inline-size; }
+body.overview-mode .product-heading::before { content: none; }
+body.overview-mode .main .product-heading strong { font: 760 clamp(23px,2vw,30px)/1.2 'Microsoft YaHei UI','Segoe UI',sans-serif; letter-spacing: -.035em; overflow-wrap: anywhere; }
+body.overview-mode .main .product-heading small { display: block; margin: 4px 0 8px; line-height: 1.45; }
+body.overview-mode .main .page-heading, body.overview-mode .main .page-heading:has(.action-menu[open]) { position: absolute; inset: 12px var(--ov-gutter) auto auto; width: auto; margin: 0; z-index: 4; }
+body.overview-mode .main .page-heading > div:first-child { display: none; }
+body.overview-mode .main #product-panel { margin: 0; padding: 13px var(--ov-gutter) 0; background: var(--ov-sheet); }
+body.overview-mode .main .product-actions { margin: 0 0 8px; gap: 5px; }
+body.overview-mode .main :is(.product-actions,.heading-actions) button { min-height: 25px; padding: 4px 8px; font-size: 11px; }
+body.overview-mode .main :is(.ov-link-more,.heading-actions .action-menu) > summary { padding: 4px 7px; font-size: 11px; border-radius: 0; }
+body.overview-mode .main .maintenance-tools { margin: 0; padding: 0 var(--ov-gutter); background: var(--ov-sheet); }
+body.overview-mode .main .maintenance-tools > summary { padding: 5px 0; font-size: 11px; }
+body.overview-mode .main > .tabs { padding-inline: var(--ov-gutter); gap: 14px; }
+body.overview-mode .main > .tabs button { min-height: 34px; padding: 7px 2px 6px; font-size: 13px; }
+body.overview-mode .main :is(.identity,#cost-summary,#sample-note) { display: none !important; }
+body.overview-mode:not(.continuous-mode) .main > .editor { margin: 12px var(--ov-gutter); }
+.ov-preview-modes,.ov-preview-footer { display: none; }
+body.overview-mode .preview-side:not(.preview-expanded) :is(.ov-preview-modes,.ov-preview-footer) { display: flex; flex: none; gap: 5px; }
+body.overview-mode .preview-side:not(.preview-expanded) #preview-close { display: inline-block; }
+body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-panel) { display: none; }
+body.overview-mode .preview-side:not(.preview-expanded) #poster-stage { pointer-events: none; }
+body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-modes { order: 1; }
+body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer { order: 6; padding-top: 10px; border-top: 1px solid var(--ov-line); }
+body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer button { flex: 1; }
+.ov-expanded-poster { display: block; width: auto; max-width: min(760px,85vw); height: auto; margin: 0 auto; }
+.reui-continuous { display: flex; flex-direction: column; color: var(--ov-ink); font: 14px/1.45 'PingFang SC','Microsoft YaHei UI','Segoe UI',sans-serif; }
+#continuous-workbench .ov-sheet-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px var(--ov-gutter) 20px; overscroll-behavior: contain; scrollbar-width: thin; background: var(--ov-page); }
+#continuous-workbench .ov-toolbar { display: flex; align-items: stretch; gap: 7px; padding: 8px var(--ov-gutter) 7px; background: var(--ov-sheet); }
+/* 编辑历史与搜索同一行，窄屏换行时两枚按钮保持一组。 */
+#continuous-workbench .ov-history { display: flex; flex: none; }
+#continuous-workbench .ov-history button { min-height: 30px; padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+#continuous-workbench .ov-search { flex: 1; min-width: 120px; position: relative; }
+#continuous-workbench .ov-search::before { content: ''; position: absolute; top: 11px; left: 13px; width: 10px; height: 10px; border: 1.5px solid var(--ov-muted); border-radius: 50%; pointer-events: none; }
+#continuous-workbench .ov-search::after { content: ''; position: absolute; top: 22px; left: 23px; width: 5px; border-top: 1.5px solid var(--ov-muted); transform: rotate(45deg); pointer-events: none; }
+#continuous-workbench .ov-search input { width: 100%; min-height: 36px; padding: 6px 10px 6px 34px; background: var(--ov-sheet); border: 1px solid var(--ov-line); border-radius: 0; font-size: 13px; color: inherit; }
+#continuous-workbench .ov-toolbar label { display: flex; align-items: center; gap: 7px; border: 1px solid var(--ov-line); padding: 0 10px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+#continuous-workbench .ov-toolbar input[type=checkbox] { width: 14px; height: 14px; margin: 0; accent-color: #262c26; }
+#continuous-workbench .ov-hint { margin: 0; padding: 0 var(--ov-gutter) 11px; background: var(--ov-sheet); border-bottom: 1px solid var(--ov-line); color: var(--ov-muted); font-size: 11px; }
+#continuous-workbench .ov-hint kbd { font: 500 11px/1.3 var(--ov-numbers); }
+#continuous-workbench .ov-hint, #continuous-workbench .ov-notice { margin: 0 0 6px; font-size: 11px; }
+#continuous-workbench .ov-config { min-width: 790px; margin-bottom: 15px; border: 1px solid var(--ov-line); background: var(--ov-sheet); }
+#continuous-workbench .ov-config[data-active] { box-shadow: 0 0 0 2px var(--ov-ink); }
+#continuous-workbench .ov-table { width: 100%; table-layout: fixed; border-collapse: collapse; font: inherit; }
+#continuous-workbench .ov-unit { width: clamp(64px,4vw,77px); }
+#continuous-workbench .ov-good { width: clamp(62px,3.7vw,71px); }
+#continuous-workbench .ov-stock { width: clamp(53px,3.2vw,62px); }
+#continuous-workbench .ov-qty { width: clamp(51px,3vw,58px); }
+#continuous-workbench .ov-slot { width: clamp(77px,5.2vw,86px); }
+#continuous-workbench .ov-actual-col { width: 26%; }
+#continuous-workbench .ov-table :is(td,th) { border-right: 1px solid var(--ov-line); border-bottom: 1px solid var(--ov-line); }
+#continuous-workbench .ov-sum { text-align: center; font-weight: 750; border-color: #fff7; white-space: nowrap; }
+#continuous-workbench .ov-sum-labels .ov-sum { height: 29px; padding: 4px 2px 0; font-size: 11px; }
+#continuous-workbench .ov-sum-values .ov-sum { height: 37px; padding: 1px 2px 5px; font: 700 16px/1.2 var(--ov-numbers); }
+#continuous-workbench .ov-sum.ov-cost { background: #d3e8c4; color: #ac261d; }
+#continuous-workbench .ov-sum.ov-fee { background: #d6a722; color: #2d2406; }
+#continuous-workbench .ov-sum.ov-profit { background: #181a19; color: #f3f134; }
+#continuous-workbench .ov-sum.ov-profit.ov-loss { color: #ff8a8a; }
+#continuous-workbench .ov-sum.ov-price { background: #f3f134; color: #bc191f; }
+#continuous-workbench .ov-sum-values .ov-price { font-size: 19px; }
+#continuous-workbench .ov-dark { background: #181a18; color: #fff; padding: 0; text-align: left; }
+#continuous-workbench .ov-title-bar { display: flex; min-height: 66px; align-items: stretch; }
+#continuous-workbench .ov-title-bar h2 { align-self: center; flex: 1; margin: 0; padding: 4px 8px; text-align: center; color: #fff; font: 700 14px/1.25 'Microsoft YaHei UI','Segoe UI',sans-serif; overflow-wrap: anywhere; }
+/* 配置名称与版本固定使用黄色，同一规则覆盖桌面和窄屏表头。 */
+#continuous-workbench .ov-config-badge { min-width: 79px; display: grid; place-content: center; gap: 2px; padding: 4px; color: #181a18; background: #f3f134; text-align: center; }
+#continuous-workbench .ov-config-badge label { display: flex; justify-content: center; align-items: center; gap: 3px; }
+#continuous-workbench .ov-config-badge select { min-width: 0; max-width: 100%; color: inherit; background: transparent; padding: 0 2px; min-height: 16px; font-size: 12px; }
+#continuous-workbench .ov-controls { padding: 4px 6px; color: #e6eae4; font-size: 11px; }
+#continuous-workbench .ov-controls > div { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+#continuous-workbench .ov-controls label { white-space: nowrap; }
+#continuous-workbench .ov-controls small { display: block; padding-top: 2px; color: #ffdf8a; }
+#continuous-workbench .ov-controls button { background: #282e28; color: #fff; border: 1px solid #888f87; font-size: 10px; padding: 2px 5px; white-space: nowrap; }
+#continuous-workbench .ov-controls button:disabled { opacity: .46; }
+#continuous-workbench .ov-rate { width: 42px; padding: 2px; text-align: center; color: #171a17; background: #fff; font: 750 12px/1.25 'Cascadia Mono',Consolas,monospace; }
+#continuous-workbench .ov-columns th { padding: 5px 7px; color: var(--ov-muted); background: var(--ov-columns); text-align: center; font-size: 11px; font-weight: 650; }
+#continuous-workbench .ov-columns .ov-name-column { text-align: left; }
+#continuous-workbench .ov-columns .ov-display-head { background: var(--ov-display); padding-inline: 11px; }
+#continuous-workbench .ov-table tbody :is(td,th) { padding: 6px 7px; vertical-align: middle; }
+#continuous-workbench .ov-table tbody th { text-align: center; white-space: nowrap; }
+#continuous-workbench .ov-table tbody th button { border: 0; background: transparent; font-size: 16px; font-weight: 750; padding: 0; }
+#continuous-workbench .ov-table tbody th button[aria-pressed=true] { background: #e7ecd6; color: #181a18; }
+#continuous-workbench .ov-table .ov-divider :is(td,th) { border-top: 2px solid #181a18; }
+#continuous-workbench .ov-number { text-align: center; font: 550 14.5px/1.35 var(--ov-numbers); white-space: nowrap; }
+#continuous-workbench .ov-number.ov-stock-out { color: #a32426; font-weight: 750; }
+#continuous-workbench .ov-tax.ov-tax-changed { background: #fff27a; color: #211d00; font-weight: 800; }
+#continuous-workbench .ov-number[data-metric=GoodID] { overflow-wrap: anywhere; white-space: normal; }
+#continuous-workbench :is(.ov-price,.ov-tax,.ov-quantity,.ov-display-name,.ov-addon) input,
+#continuous-workbench :is(.ov-display-name,.ov-addon) input { min-width: 0; width: 100%; border: 0; padding: 0 2px; background: transparent; color: inherit; font: inherit; }
+#continuous-workbench :is(.ov-price,.ov-tax,.ov-quantity) input { text-align: center; }
+#continuous-workbench .ov-table .ov-sum input { min-height: 20px; }
+#continuous-workbench .ov-table input:focus { outline: 1px solid #747b42; outline-offset: 1px; }
+#continuous-workbench .ov-table [data-ov-selected] { box-shadow: inset 0 0 0 2px #8a995e; background: #eff2de; color: #171a17; }
+#continuous-workbench .ov-part-picker { color: inherit; font-weight: 650; min-height: 26px; padding-block: 2px; }
+#continuous-workbench .ov-actual-name { color: var(--ov-ink); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+#continuous-workbench .ov-table .ov-display { padding-inline: 11px; vertical-align: top; }
+#continuous-workbench :is(.ov-display-line,.ov-addon-line) { display: flex; justify-content: space-between; gap: 7px; align-items: start; }
+#continuous-workbench .ov-display-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 680; }
+/* 名称和数量共用行内排版，长名称换行后数量接在末尾。 */
+#continuous-workbench .ov-display-name .ov-editable { display: inline; text-decoration: underline dotted; }
+#continuous-workbench .ov-display-name small { display: inline-block; margin-inline-start: 4px; padding: 0 4px; color: #593900; background: #fff0b0; font: 800 14px/1.3 var(--ov-numbers); }
+#continuous-workbench .ov-addon-line { justify-content: flex-end; gap: 5px; margin-top: 4px; }
+#continuous-workbench .ov-addon { flex: 1; min-width: 0; display: flex; background: #fcfbe7; color: #383a26; font-size: 12px; padding: 2px 4px; }
+#continuous-workbench :is(.ov-display-line,.ov-addon-line) > button { flex: none; min-height: 0; border: 0; background: transparent; white-space: nowrap; font-size: 11px; color: var(--ov-muted); padding: 2px 4px; }
+#continuous-workbench .ov-missing { font-size: 11px; opacity: .75; }
+#continuous-workbench .ov-add-row { margin: 4px 7px; font-size: 11px; }
+.overview-tax-count[data-has-difference] { display: inline-block; background: #fff27a; color: #372900; padding: 1px 4px; font-weight: 750; }
+#continuous-workbench .ov-editable { flex: 1; min-width: 0; cursor: text; overflow-wrap: anywhere; white-space: pre-wrap; }
+#continuous-workbench .ov-editable:empty::before { content: attr(data-placeholder); opacity: .6; }
+#continuous-workbench .ov-editable:focus { outline: 1px solid #8e8c43; outline-offset: 1px; text-decoration: none; }
+#continuous-workbench .ov-mobile-head { display: none; }
+
+@media (max-width:1360px) {
+ body.overview-mode .workspace { grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
+ body.overview-mode .workspace > .preview-side:not(.preview-expanded) { position: absolute; inset: 0 0 0 auto; width: min(350px,95%); z-index: 15; }
+}
+@container (max-width:821px) {
+ #continuous-workbench .ov-toolbar { flex-wrap: wrap; }
+ #continuous-workbench .ov-search { flex-basis: 100%; }
+ #continuous-workbench .ov-toolbar label { min-height: 32px; }
+ #continuous-workbench .ov-config { min-width: 0; }
+ #continuous-workbench .ov-mobile-head { display: block; }
+ #continuous-workbench .ov-mobile-head :is(.ov-title-bar,.ov-controls) { background: #181a19; }
+ #continuous-workbench .ov-mobile-head .ov-title-bar { min-height: 49px; }
+ #continuous-workbench .ov-mobile-sums { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0; }
+ #continuous-workbench .ov-mobile-sums > div { padding: 4px; border: 1px solid #fff8; text-align: center; }
+ #continuous-workbench .ov-mobile-sums dt { font-size: 10px; }
+ #continuous-workbench .ov-mobile-sums dd { margin: 1px 0 0; font: 700 15px/1.25 var(--ov-numbers); }
+ #continuous-workbench .ov-table :is(colgroup,thead) { display: none; }
+ #continuous-workbench .ov-table, #continuous-workbench .ov-table tbody { display: block; }
+ #continuous-workbench .ov-table tbody tr { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); padding: 8px 9px; border-bottom: 1px solid var(--ov-line); }
+ #continuous-workbench .ov-table tbody tr.ov-divider { border-top: 2px solid var(--ov-ink); }
+ #continuous-workbench .ov-table tbody :is(td,th) { padding: 0; border: 0; }
+ #continuous-workbench .ov-table tbody th[scope=row] { grid-area: 1 / 1 / 2 / -1; text-align: left; }
+ #continuous-workbench .ov-table tbody th button { font-size: 12px; }
+ #continuous-workbench .ov-table tbody .ov-display { grid-area: 2 / 1 / 3 / -1; padding: 2px 0 4px; }
+ #continuous-workbench .ov-table tbody .ov-actual { grid-area: 3 / 1 / 4 / -1; margin-bottom: 4px; padding: 2px 4px; }
+ #continuous-workbench .ov-number { font-size: 12px; white-space: normal; }
+ #continuous-workbench .ov-number::before { content: attr(data-metric); display: block; color: var(--ov-muted); font: 400 10px/1.4 'Microsoft YaHei UI',sans-serif; }
+}

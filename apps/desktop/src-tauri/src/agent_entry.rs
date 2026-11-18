@@ -12,11 +12,17 @@ impl AgentEntry {
         store: WorkbenchStore,
         jobs: Option<Arc<crate::agent_jobs::AgentJobs>>,
     ) -> Result<Self, AgentError> {
+        Self::serve(move |instance, request| handle(&store, instance, jobs.as_deref(), request))
+    }
+
+    pub fn serve(
+        handler: impl Fn(&str, Request) -> Response + Send + Sync + 'static,
+    ) -> Result<Self, AgentError> {
         let instance = diytools_agent_core::instance_for_pid(std::process::id());
         let handler_instance = instance.clone();
         let server = transport::serve(
             &instance,
-            Arc::new(move |request| handle(&store, &handler_instance, jobs.as_deref(), request)),
+            Arc::new(move |request| handler(&handler_instance, request)),
         )?;
         Ok(Self(Mutex::new(Some(server))))
     }

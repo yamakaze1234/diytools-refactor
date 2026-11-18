@@ -36,7 +36,7 @@ async function canvasBase64(canvas){
 }
 const receiptError=(receipt,fallback)=>Error(receipt?.error?.message||receipt?.error||fallback);
 
-export async function exportAgentSnapshot({configs,revision,params={},writeFile,finish,progress=()=>{},render=renderPoster}){
+export async function exportAgentSnapshot({configs,revision,snapshotKind='localSaved',params={},writeFile,finish,progress=()=>{},render=renderPoster}){
  if(!Array.isArray(configs)||!configs.length)throw Error('没有可导出的保存快照配置');
  if(!Number.isSafeInteger(revision)||revision<0)throw Error('保存快照版本无效');
  if(typeof writeFile!=='function'||typeof finish!=='function'||typeof render!=='function')throw Error('缺少原生导出会话或渲染器');
@@ -70,7 +70,7 @@ export async function exportAgentSnapshot({configs,revision,params={},writeFile,
   }
   await progress({phase:'writing',completed:index+1,total:entries.length,name:entry.name});
  }
- const manifest={protocolVersion:1,revision,snapshot:'localSaved',localSave:'unchanged',images,report:options.report===true,files,configs:selected.map(c=>({id:c.id,shopId:c.shopId,productId:c.productId,spu:c.spu??null,skuId:c.skuId??null,name:c.name}))};
+ const manifest={protocolVersion:1,revision,snapshot:snapshotKind,localSave:'unchanged',images,report:options.report===true,files,configs:selected.map(c=>({id:c.id,shopId:c.shopId,productId:c.productId,spu:c.spu??null,skuId:c.skuId??null,name:c.name}))};
  const receipt=await finish({reportHtml:options.report===true?reportHtml(selected,revision,files):null,manifest:copy(manifest)});
  if(receipt?.ok!==true)throw receiptError(receipt,'未收到 ZIP 与清单保存确认');
  if(typeof receipt.zipPath!=='string'||!receipt.zipPath||typeof receipt.manifestPath!=='string'||!receipt.manifestPath)throw Error('原生导出未返回实际 ZIP 与清单路径');

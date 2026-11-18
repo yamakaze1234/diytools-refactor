@@ -50,6 +50,7 @@ pub struct CloudTransport {
     client: Client,
     nas_client: Option<Client>,
     nas_deployment: Option<String>,
+    nas_local_auth: bool,
     base: String,
     environment: String,
     device_id: String,
@@ -77,6 +78,7 @@ fn auth_stage(path: &str, body: &Value) -> Option<&'static str> {
 
 fn auth_transport_message(stage: Option<&str>, operation: &'static str, reason: &'static str) -> String {
     match stage {
+        Some(stage) if stage.starts_with("NAS") => format!("{stage}：{operation}{reason}，请检查内网连接后重试"),
         Some(stage) => format!("{stage}：{operation}{reason}，请检查网络或系统代理后重试"),
         None if operation == "响应读取" => "云端响应读取超时或中断".into(),
         None => "云端连接超时或不可用，请检查网络后重试".into(),
@@ -173,6 +175,7 @@ impl CloudTransport {
             client,
             nas_client: None,
             nas_deployment: None,
+            nas_local_auth: false,
             environment: base.clone(),
             base,
             device_id: uuid::Uuid::new_v4().to_string(),
@@ -200,6 +203,15 @@ impl CloudTransport {
     }
 
     // 先匿名核对目标环境，再发带凭据的请求；试验服务器不能收到正式账号的请求正文。
+    pub(crate) fn with_local_nas_auth(mut self, url: &reqwest::Url) -> Result<Self,String> {
+        let deployment=self.nas_deployment.as_ref().ok_or("正式 NAS 认证需要部署标识")?;
+        self.base=url.as_str().trim_end_matches('/').to_owned();
+        // 不从旧认证凭据恢复，配置草稿仍沿用这个部署和成员 UID。
+        self.environment=format!("nas-local:{deployment}@{}",self.base);
+        self.nas_local_auth=true;
+        Ok(self)
+    }
+
     pub(crate) fn check_nas_deployment(&self, endpoint: &reqwest::Url) -> Result<(), (u16,&'static str)> {
         let Some(expected)=&self.nas_deployment else{return Ok(());};
         let bad=(409,"NAS_DEPLOYMENT_MISMATCH");
@@ -212,7 +224,9 @@ impl CloudTransport {
         }
         let mut bytes=Vec::new();
         response.take(4097).read_to_end(&mut bytes).map_err(|_|(503,"NETWORK_OR_RESPONSE_ERROR"))?;
-        if bytes.len()>4096||!serde_json::from_slice::<Value>(&bytes).is_ok_and(|health|health["deployment_id"]==expected.as_str()&&health["ok"]==true){
+        if bytes.len()>4096||!serde_json::from_slice::<Value>(&bytes).is_ok_and(|health|
+            health["deployment_id"]==expected.as_str()&&health["ok"]==true&&
+                (!self.nas_local_auth||matches!(health["auth_mode"].as_str(),Some("local"|"migration")))){
             return Err(bad);
         }
         Ok(())
@@ -398,12 +412,21 @@ impl CloudTransport {
     // 清空本机会话并推进代次，使迟到的登录或业务响应不能恢复已退出状态。
     pub fn logout(&self) -> Result<Value, String> {
         let mut state = self.state()?;
+        let refresh = if self.nas_local_auth {
+            state.session.as_ref().map(|session|session.tokens.refresh.clone())
+                .or_else(||state.saved.as_ref().map(|saved|saved.refresh.clone()))
+        } else { None };
         state.epoch = state.epoch.wrapping_add(1);
         state.session = None;
         self.forget_saved(&mut state)?;
-        // 状态读取也会获取会话锁，登出必须先释放写锁。
+        // 先清本机并释放写锁，迟到的认证结果不能恢复当前会话。
         drop(state);
-        self.status()
+        let mut result=self.status()?;
+        if let Some(refresh)=refresh {
+            // NAS 离线时仍退出本机，界面单独显示远端撤销状态。
+            result["nas_session_revoked"]=json!(self.post("/api/v1/auth/logout",&json!({"refresh_token":refresh}),None).is_ok());
+        }
+        Ok(result)
     }
 
     /// Current validated member for local binding checks; performs no network work.
@@ -641,6 +664,13 @@ impl CloudTransport {
         Ok(bytes)
     }
 
+    #[cfg(feature = "agent-tools")]
+    pub(crate) fn nas_actor(&self) -> Option<(String, String)> {
+        let state = self.state().ok()?;
+        let member = &state.session.as_ref()?.member;
+        Some((member["workspaceId"].as_str()?.into(), member["uid"].as_str()?.into()))
+    }
+
     // 原账号令牌始终留在进程内。目标 URL 由原生 NAS 边界从本机固定配置解析。
     pub(crate) fn nas_request(
         &self,
@@ -790,6 +820,13 @@ impl CloudTransport {
     }
 
     fn business(&self, request: &Value, access: &str) -> Result<Value, HttpError> {
+        if self.nas_local_auth {
+            return if request["action"]=="session.get" {
+                self.post("/api/v1/auth/session",&json!({}),Some(access))
+            } else {
+                Err(HttpError::Safe("正式 NAS 工作区仅支持 NAS 业务接口".into()))
+            };
+        }
         if request["action"] == "costs.page" {
             self.post("/v1/rdb/rest/rpc/wa_cost_prices", &json!({"request":request}), Some(access))
         } else if request["action"] == "records.commits" {
@@ -807,12 +844,25 @@ impl CloudTransport {
 
     fn post(&self, path: &str, body: &Value, access: Option<&str>) -> Result<Value, HttpError> {
         self.require_configured().map_err(HttpError::Safe)?;
-        let stage = auth_stage(path, body);
-        let mut request = self
-            .client
-            .post(format!("{}{}", self.base, path))
-            .header("x-device-id", &self.device_id)
-            .json(body);
+        let (mut request,stage) = if self.nas_local_auth {
+            let (route,stage)=match path {
+                "/auth/v1/signin"=>("/api/v1/auth/login","NAS 账号认证"),
+                "/auth/v1/token"=>("/api/v1/auth/refresh","NAS 登录续期"),
+                "/api/v1/auth/session"=>(path,"NAS 成员核验"),
+                "/api/v1/auth/logout"=>(path,"NAS 退出登录"),
+                _=>return Err(HttpError::Safe("正式 NAS 工作区仅支持 NAS 账号认证".into())),
+            };
+            let base=reqwest::Url::parse(&self.base).map_err(|_|HttpError::Safe("NAS 地址无效".into()))?;
+            self.check_nas_deployment(&base).map_err(|(_,code)|HttpError::Safe(
+                if code=="NAS_DEPLOYMENT_MISMATCH" {"当前 NAS 未启用本地认证或部署标识已变化".into()}
+                else {"暂时无法建立到 NAS 的可信 HTTPS 连接".into()}))?;
+            let deployment=self.nas_deployment.as_ref().ok_or(HttpError::Unauthorized)?;
+            let client=self.nas_client.as_ref().ok_or(HttpError::Unauthorized)?;
+            (client.post(format!("{}{route}",self.base)).header("x-workbench-deployment",deployment),Some(stage))
+        } else {
+            (self.client.post(format!("{}{}",self.base,path)).header("x-device-id",&self.device_id),auth_stage(path,body))
+        };
+        request=request.json(body);
         if let Some(access) = access {
             let mut header = HeaderValue::from_str(&format!("Bearer {access}"))
                 .map_err(|_| HttpError::Safe("登录凭据格式无效".into()))?;
@@ -823,6 +873,14 @@ impl CloudTransport {
             stage, "连接", if error.is_timeout() { "超时" } else { "中断或不可用" },
         )))?;
         let status = response.status();
+        if self.nas_local_auth {
+            if response.headers().get("x-workbench-deployment").and_then(|value|value.to_str().ok())!=self.nas_deployment.as_deref() {
+                return Err(HttpError::Safe("NAS 认证响应的部署标识已变化".into()));
+            }
+            if status.as_u16()==429 {
+                return Err(HttpError::Safe("NAS 登录请求过多，请稍后再试".into()));
+            }
+        }
         if status.as_u16() == 401
             || (path.starts_with("/auth/") && matches!(status.as_u16(), 400 | 403))
         {

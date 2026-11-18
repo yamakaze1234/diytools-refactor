@@ -16,12 +16,12 @@ const ACTIVE_CONFIG: &str = r#"
         AND json_extract(document,'$.deletedAt')='')
 "#;
 const METHODS: &[&str] = &["status", "shops.list", "configs.find", "configs.get"];
-const SHOPS: &[(&str, &str)] = &[
+pub(crate) const SHOPS: &[(&str, &str)] = &[
     ("intel", "英特尔官方旗舰店"),
     ("gigabyte", "技嘉旗舰店"),
     ("jonsbo", "乔思伯官方旗舰店"),
 ];
-fn invalid(message: &str) -> AgentError {
+pub(crate) fn invalid(message: &str) -> AgentError {
     AgentError::new("INVALID_PARAMS", message)
 }
 // 数据库错误不外传路径、正文或底层诊断，避免带出私有资料。
@@ -36,7 +36,7 @@ fn parse(raw: &str) -> Result<Value> {
     serde_json::from_str(raw)
         .map_err(|_| AgentError::new("INTERNAL_ERROR", "已保存业务数据格式无效"))
 }
-fn string<'a>(params: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>> {
+pub(crate) fn string<'a>(params: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>> {
     params
         .get(key)
         .map(|v| {
@@ -46,7 +46,7 @@ fn string<'a>(params: &'a Map<String, Value>, key: &str) -> Result<Option<&'a st
         })
         .transpose()
 }
-fn number(params: &Map<String, Value>, key: &str, default: i64) -> Result<i64> {
+pub(crate) fn number(params: &Map<String, Value>, key: &str, default: i64) -> Result<i64> {
     params
         .get(key)
         .map(|v| {
@@ -66,7 +66,7 @@ fn fields(value: &Value, keys: &[&str]) -> Value {
     }
     Value::Object(out)
 }
-fn business(value: &Value, detail: bool) -> Value {
+pub(crate) fn business(value: &Value, detail: bool) -> Value {
     let mut out = fields(
         value,
         &[
@@ -145,7 +145,7 @@ fn effective_shop(row: &Value) -> &'static str {
         .map(|(key, _)| *key)
         .unwrap_or("intel")
 }
-fn shop(id: &Value) -> Value {
+pub(crate) fn shop(id: &Value) -> Value {
     json!({"id":id,"name":id.as_str().and_then(|id|SHOPS.iter().find(|(key,_)|*key==id).map(|(_,name)|*name))})
 }
 

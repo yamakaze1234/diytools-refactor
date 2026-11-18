@@ -44,7 +44,6 @@ fn launch_environment(directory:&Path,config:&LaunchConfig)->Vec<(&'static str,s
         ("DIYTOOLS_NAS_MAIN","1".into()),
         ("DIYTOOLS_NAS_API_URL",config.api_url.clone().into()),
         ("DIYTOOLS_NAS_DEPLOYMENT_ID",config.deployment_id.clone().into()),
-        ("DIYTOOLS_AGENT_ENABLED","0".into()),
         ("WEBVIEW2_USER_DATA_FOLDER",directory.join("data/webview2").into_os_string()),
         ("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS","".into()),
     ]
@@ -72,7 +71,6 @@ pub unsafe fn prepare_formal_launch()->Result<(),String>{
     }
     unsafe{
         std::env::set_var("DIYTOOLS_NAS_MAIN","1");
-        std::env::set_var("DIYTOOLS_AGENT_ENABLED","0");
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER",directory.join("data/webview2"));
         std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS","");
         std::env::set_var("DIYTOOLS_NAS_SYSTEM_CA","1");
@@ -99,13 +97,13 @@ mod tests {
         assert_eq!(config.deployment_id,"intel-production-example");
     }
     #[test]
-    fn direct_launch_reuses_existing_data_and_disables_legacy_agent(){
+    fn direct_launch_reuses_existing_data_and_preserves_agent_opt_out(){
         let config=parse(&document("https://192.168.1.11:19443/","intel-production-example")).unwrap();
         let directory=Path::new("portable-folder");
         let values:std::collections::HashMap<_,_>=launch_environment(directory,&config).into_iter().collect();
         assert_eq!(values["WEBVIEW2_USER_DATA_FOLDER"],directory.join("data/webview2").into_os_string());
         assert_eq!(values["DIYTOOLS_NAS_MAIN"],"1");
-        assert_eq!(values["DIYTOOLS_AGENT_ENABLED"],"0");
+        assert!(!values.contains_key("DIYTOOLS_AGENT_ENABLED"));
         assert_eq!(values["DIYTOOLS_NAS_DEPLOYMENT_ID"],"intel-production-example");
     }
     #[test]

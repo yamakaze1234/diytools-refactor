@@ -121,6 +121,9 @@ enum ConfigsCommand {
     Get {
         #[arg(long)]
         config_id: String,
+        /// 三店 NAS 中配置 ID 可能跨店重名
+        #[arg(long)]
+        shop_id: Option<String>,
     },
 }
 
@@ -236,8 +239,14 @@ fn command_request(command: &Command) -> Result<Request, AgentError> {
         Command::Status | Command::Doctor => Ok(request("status", json!({}))),
         Command::Shops { .. } => Ok(request("shops.list", json!({}))),
         Command::Configs {
-            command: ConfigsCommand::Get { config_id },
-        } => Ok(request("configs.get", json!({"configId": config_id}))),
+            command: ConfigsCommand::Get { config_id, shop_id },
+        } => {
+            let mut params = json!({"configId": config_id});
+            if let Some(shop) = shop_id {
+                params["shopId"] = json!(shop);
+            }
+            Ok(request("configs.get", params))
+        }
         Command::Configs {
             command: ConfigsCommand::Find(args),
         } => {
@@ -285,7 +294,7 @@ fn print_response(response: &Response, json_mode: bool, doctor: bool) {
         return;
     }
     if doctor {
-        println!("本机实例连接正常。授权范围：当前 Windows 用户。\n读取范围：桌面程序已保存的 snapshot。可用操作以实例返回的 capabilities 为准。\n长任务排队后请通过 jobs status 查询；本机保存、导出和云同步分别记账。");
+        println!("本机实例连接正常。读取范围和权限见 status。长任务排队后请通过 jobs status 查询终态。");
     }
     println!(
         "{}",
@@ -359,9 +368,10 @@ fn main() -> ExitCode {
                 .as_array()
                 .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(method)))
         };
+        let nas = response.data.as_ref().is_some_and(|status| status["snapshot"] == "nasSaved");
         response.data = Some(json!({
             "status": response.data,
-            "authorization": "currentWindowsUser",
+            "authorization": if nas { "currentWindowsUserAndWorkbenchLogin" } else { "currentWindowsUser" },
             "dataScope": "savedSnapshotOnly",
             "writesSupported": supports("changes.apply"),
             "syncSupported": supports("sync.run"),

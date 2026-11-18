@@ -2,6 +2,7 @@
 type Invoke = <T = unknown>(command: string, args?: Record<string, unknown>) => Promise<T>;
 type AgentWindow = Window & {
   workbenchReady?: boolean;
+  workbenchAgentActor?: () => [string, string] | null;
   workbenchAgentExecute?: (job: any) => Promise<unknown>;
   workbenchAgentNative?: (action: string, payload: unknown) => Promise<any>;
 };
@@ -11,7 +12,7 @@ export function installAgentBridge(target: AgentWindow, invoke: Invoke) {
  let activeClaim: string|null=null;
  let pending: Record<string,unknown>|null=null;
  let retryAfter=0;
- const call=<T=unknown>(action:string,payload:unknown={})=>invoke<T>('agent_ui',{action,payload:{...(activeClaim?{claimToken:activeClaim}:{}),...(payload as Record<string,unknown>),sessionId}});
+ const call=<T=unknown>(action:string,payload:unknown={})=>invoke<T>('agent_ui',{action,payload:{...(activeClaim?{claimToken:activeClaim}:{}),...(payload as Record<string,unknown>),sessionId,actor:target.workbenchAgentActor?.()??null}});
  target.workbenchAgentNative=call;
  const pulse=async()=>{
   if(stopped||busy||Date.now()<retryAfter||!target.workbenchReady||!target.workbenchAgentExecute)return;

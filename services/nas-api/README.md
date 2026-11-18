@@ -1,6 +1,15 @@
 # NAS 工作台业务接口
 
-本服务通过原工作台 `session.get` 核验身份，再逐请求读取 NAS 的成员启用状态与店铺角色。它不提供旧同步协议。默认 `NAS_DATASET=samples` 兼容旧样本只读接口；只有明确配置 `NAS_DATASET=intel_live` 才读取独立运行区，两种模式不会混读。
+本服务逐请求核验身份，再读取 NAS 的成员启用状态与店铺角色。正式三店可启用 NAS 签发的本地会话。它不提供旧同步协议。默认 `NAS_DATASET=samples` 兼容旧样本只读接口；只有明确配置 `NAS_DATASET=intel_live` 才读取独立运行区，两种模式不会混读。
+
+## 正式三店账号认证迁移
+
+1. 由正式库管理员执行 [认证表安装](sql/019-nas-local-auth.sql)。安装新增认证对象。用 [只读预检](sql/019-nas-local-auth-preflight.sql) 记录启用成员和三店生效授权数量。
+2. 将 NAS API 切为 `NAS_AUTH_MODE=migration`，保留原 `AUTH_ORIGIN` 和正式部署标识。在此期间新旧客户端均可使用。已安装新客户端的成员用原账号密码登录一次，旧认证成功且 NAS 有同 UID 的启用成员时即登记。登记后的新客户端登录、续期和保存均直接使用 NAS。
+3. 用预检确认启用成员大于零、缺失登记为零、三店生效授权与切换前一致，再换成 `NAS_AUTH_MODE=local` 并移除 `AUTH_ORIGIN`。此前登记的 NAS 会话延续可用，旧客户端需升级。健康接口报告 `auth_mode: local`。用已登记账号校验重启后免登、三店权限与保存回执。
+4. 若需回退，优先恢复迁移模式及原 `AUTH_ORIGIN`，让已有 NAS 会话及旧客户端继续使用。需回退二进制时恢复上一部署及对应客户端。保留认证表，后续可继续登记。
+
+NAS 保存随机盐和 scrypt 密码校验值，以及访问令牌和续期令牌的摘要。续期令牌会轮换，退出撤销设备会话。正式管理员可核对成员身份后运行 `node tools/set-local-password.mjs <workspace> <uid> <username> <display-name>` 设置或重置本地密码。连接使用既有管理员 PostgreSQL 配置，密码通过标准输入提供。该操作保留权限并撤销该账号的原设备会话。
 
 ## 正式三店运行
 
@@ -101,7 +110,7 @@ py -3 tools/prepare-operations-role.py --output <当前用户私有目录内的�
 - 对应 `/api/v1/sales/...`：仅返回已发布配置的销售字段，拒绝访问运营接口；过滤成本、利润、内部备注、原始快照和服务器路径。纯文案加购暂不向销售开放。
 - `/healthz` 只检查进程；`/api/v1/me` 成功才同时覆盖真实身份验证和数据库授权读取。
 
-所有业务入口均需 `Authorization: Bearer <原工作台访问令牌>`。没有用户组或店铺授权即拒绝。原身份最多缓存 30 秒，过期后上游故障不延长缓存；本地停用每个请求生效。旧样本不开放写入；运行区写入每次重新验证原账号。
+所有业务入口均需 `Authorization: Bearer <访问令牌>`。没有用户组或店铺授权即拒绝，本地停用每个请求生效。旧样本为只读。旧认证模式读请求最多缓存身份 30 秒，写入仍请求原身份服务。
 
 金额字段 `final_price_cents`、`additional_price_cents` 是十进制整数字符串，单位分；使用字符串避免 PostgreSQL bigint 被 JavaScript Number 截断。缺失返回 null，不补零。版本也是十进制字符串。
 
@@ -115,7 +124,7 @@ py -3 tools/prepare-operations-role.py --output <当前用户私有目录内的�
 | 展示与实际 BOM | configuration_parts.part_kind | 销售仅展示行；运营可读实际行及成本 |
 | 加购文案/金额 | configuration_addons + addon_options | 显式覆盖优先，其次快照字段，再按跟随读取共享定义；缺失不代填 |
 | 加购配件 | addon_items + components | 当前只读导入定义；写入阶段须补齐配件快照及共享修改版本约束 |
-| 身份与角色 | 原账号 + nas_business.members/shop_roles | 可信 UID 授权，不接受客户端自报角色或姓名；管理员维护授权 |
+| 身份与角色 | NAS 会话 + 原 UID 对应的成员与三店授权 | 可信 UID 授权，不接受客户端自报角色或姓名；管理员维护授权 |
 | 共用配件 | 现有 component/source 标识 | 只读保持原引用，暂不合并、复制、分配跨店写权限；迁移和编辑前确认归属 |
 
 旧样本详情不是完整编辑文档；完整保存只对独立运行区开放。两种模式均将报价记录的选择与销售发布分开：运营可以看到选定的价格，销售还需 published=true。

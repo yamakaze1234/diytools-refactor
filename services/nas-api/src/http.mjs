@@ -13,9 +13,9 @@ const identifier=raw=>{
  requireValue(value.length>0&&value.length<=256&&value!=='.'&&value!=='..'&&!/[\x00-\x1f\x7f]/.test(value));
  return value;
 };
-async function jsonBody(req){
+async function jsonBody(req,limit=1024*1024){
  requireValue(/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||''),'INVALID_CONTENT_TYPE',415);
- const limit=1024*1024,parts=[];let size=0,tooLarge=false;
+ const parts=[];let size=0,tooLarge=false;
  requireValue(!req.headers['content-length']||Number(req.headers['content-length'])<=limit,'PAYLOAD_TOO_LARGE',413);
  for await(const piece of req){size+=piece.length;if(size>limit)tooLarge=true;else parts.push(piece);}
  requireValue(!tooLarge,'PAYLOAD_TOO_LARGE',413);
@@ -28,7 +28,7 @@ function capabilities(store,operations,dataSource){
   ...(store?.sharedSources?{shared_sources:operations}:{}),
   workspace_writes:operations&&store?.workspaceWritable===true,image_upload:operations&&!!store?.catalog?.writeImage};
 }
-export function createHandler({authenticate,store:defaultStore,shopStores=null,serveImage,clientOrigins=[],deploymentId=null,lanGallery=null}){
+export function createHandler({authenticate,store:defaultStore,shopStores=null,serveImage,clientOrigins=[],deploymentId=null,lanGallery=null,localAuth=null,authMode='cloud'}){
  const live=!!shopStores||typeof defaultStore?.lookupReceipt==='function';
  return async(req,res)=>{
   const requestId=randomUUID(),cors={};
@@ -40,7 +40,8 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
   };
   try{
    const url=new URL(req.url,'http://localhost'),method=req.method;
-   if(url.pathname==='/healthz'&&method==='GET')return send(200,{ok:true,checks:{process:true},...(deploymentId?{deployment_id:deploymentId}:{})});
+   if(url.pathname==='/healthz'&&method==='GET')return send(200,{ok:true,checks:{process:true},...(deploymentId?{deployment_id:deploymentId}:{}),
+    ...(localAuth?{auth_mode:authMode}:{})});
    if(url.pathname.startsWith('/case-gallery/v1/')){
     // 无账号入口在 TLS 的真实来源检查之后执行，只开放图库列表与在用原图。
     requireValue(lanGallery&&serveImage,'NOT_FOUND',404);
@@ -68,6 +69,20 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
    }
    // 正式服务在认证和任何读写前拒绝旧试验程序或错误环境；匿名原图仍按摘要访问。
    if(deploymentId)requireValue(req.headers['x-workbench-deployment']===deploymentId,'NAS_DEPLOYMENT_MISMATCH',409);
+   if(url.pathname.startsWith('/api/v1/auth/')){
+    // 登录凭据只允许原生 HTTPS 客户端提交，WebView 不直接持有令牌。
+    requireValue(localAuth,'NOT_FOUND',404);
+    requireValue(!req.headers.origin&&!url.search,'FORBIDDEN',403);
+    requireValue(method==='POST','METHOD_NOT_ALLOWED',405);
+    const body=await jsonBody(req,16*1024);
+    switch(url.pathname.slice('/api/v1/auth/'.length)){
+    case 'login': return send(200,{ok:true,...await localAuth.login(body,req.socket.remoteAddress)});
+    case 'refresh': return send(200,{ok:true,...await localAuth.refresh(body)});
+    case 'logout': return send(200,{ok:true,...await localAuth.logout(body)});
+    case 'session': return send(200,{ok:true,...await localAuth.authenticate(req.headers.authorization)});
+    default: throw new Fault('NOT_FOUND',404);
+    }
+   }
    const write=method==='POST'||method==='PUT';
    const member=await authenticate(req.headers.authorization,{fresh:live&&write});
    // 写请求额外在数据库事务内重新核对运营权限，读请求也不缓存本地授权。

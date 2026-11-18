@@ -60,7 +60,7 @@ export default function App() {
       if (!trustedWorkbenchSignOut(event, frame, location.origin) || window.workbenchClosePending || window.workbenchUpdatePending) return;
       // The sender has already completed stop/save/logout. Only its own same-origin
       // frame can release this editing surface; incidental session refresh cannot.
-      controller?.signedOut(); setPage('workbench'); setDirty(false); setNotice(''); setUpdateOpen(false); setUpdateFrozen(false);
+      controller?.signedOut(event.data?.nasLogoutUnconfirmed===true); setPage('workbench'); setDirty(false); setNotice(''); setUpdateOpen(false); setUpdateFrozen(false);
     };
     window.addEventListener('message', signedOut);
     return () => { disposed=true; controller?.dispose(); window.removeEventListener('message', signedOut); if (loginController.current === controller) loginController.current = null; };

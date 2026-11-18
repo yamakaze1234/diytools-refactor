@@ -15,8 +15,9 @@ flowchart TB
     Editor --> Preview[受限预览 / 高清导出]
     Native --> Settings[连接文件 / 系统凭据管理器]
   end
-  Native -->|账号认证| Auth[已有账号认证服务]
-  Native -->|HTTPS / 版本 / 操作回执| API[NAS 工作台 API]
+
+  Native -->|HTTPS / 账号认证 / 操作回执| API[NAS 工作台 API]
+  API --> Auth[密码校验与会话]
   API --> Roles[成员与店铺权限]
   API --> PG[(PostgreSQL 配置 / 价格 / 历史)]
   API --> Images[原图文件]
@@ -32,7 +33,7 @@ flowchart LR
   Root[仓库] --> Desktop[apps/desktop]
   Desktop --> React[src: App / ConnectionSettings / StartupLogin / legacy]
   Desktop --> Business[public/workbench: NAS / 草稿 / 价格 / 绘图 / 主题]
-  Desktop --> Native[src-tauri: nas_launch / nas_connection / embedded_auth / cloud_native / updater]
+  Desktop --> Native[src-tauri: nas_launch / nas_connection / cloud_native / updater]
   Root --> Services[services]
   Services --> NAS[nas-api: src / sql / deploy / test / tools]
   Services --> Workers[erp-worker / cost-reader]
@@ -46,7 +47,7 @@ flowchart LR
 | 模块 | 当前职责与入口 |
 | --- | --- |
 | 连接设置 | `nas_launch.rs` 在线程启动前读配置；`nas_connection.rs` 匿名 TLS 检查和原子落盘；重启切换 |
-| 身份与权限 | `cloud_transport.rs` 处理原账号会话；`nas-api/src/auth.mjs` 和店铺作用域在服务端鉴权 |
+| 身份与权限 | `cloud_transport.rs` 处理原生会话，`nas-api/src/local-auth.mjs` 验证 NAS 凭据，店铺作用域沿用原授权 |
 | 编辑与恢复 | `nas-main-workspace.js`、`nas-draft-controller.js`、`nas-operation-plan.js` 按端点、部署、成员隔离草稿和回执 |
 | PostgreSQL | `services/nas-api/src` 通过受限角色操作各店数据；SQL 与部署模板不带生产密码 |
 | 图片 | 预览分辨率受限，旧画布释放，原图缓存有数量和体积上限；导出生成高清图 |

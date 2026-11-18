@@ -191,13 +191,13 @@
   html[data-workbench-design] :is(button, input, textarea, select, summary, dialog, [data-slot], .continuous-sheet, .config-item, .gallery-card, .source-item, .app-more-menu, .update-dialog, .login-card) {
     border-radius: 0 !important; box-shadow: none !important;
   }
-  html[data-workbench-design] :is(input:not([type=checkbox]):not([type=radio]):not([type=color]), select, textarea) {
+  html[data-workbench-design] :is(input:not([type=checkbox]):not([type=radio]):not([type=color]), select, textarea):not(:where(#continuous-workbench *,#price-profit-page *)) {
     background-color: var(--ef-panel) !important; color: var(--ef-ink) !important; border-color: var(--ef-rule) !important;
   }
   html[data-workbench-design] :is(input,select,textarea)::placeholder { color: var(--ef-ink-2) !important; opacity: .8; }
   html[data-workbench-design] :is(input,select,textarea):focus { outline-color: var(--ef-trace) !important; border-color: var(--ef-trace) !important; }
   html[data-workbench-design] [aria-invalid=true] { border-color: var(--ef-trace) !important; outline: 2px solid var(--ef-trace) !important; background-color: var(--ef-signal) !important; color: var(--ef-on-signal) !important; }
-  html[data-workbench-design] :where(button:not(.color-swatch):not(.poster-resize-handle):not([data-slot=checkbox]):not([data-slot=autocomplete-trigger]):not([data-slot=autocomplete-clear]):not([role=checkbox])) {
+  html[data-workbench-design] :where(button:not(.color-swatch):not(.poster-resize-handle):not([data-slot=checkbox]):not([data-slot=autocomplete-trigger]):not([data-slot=autocomplete-clear]):not([role=checkbox])):not(:where(#continuous-workbench *,#price-profit-page *)) {
     clip-path: polygon(0 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%);
     background-color: var(--ef-chip) !important; color: var(--ef-ink) !important; border-color: transparent !important;
     transition: background-color 100ms var(--ef-mech),color 100ms var(--ef-mech) !important;
@@ -206,7 +206,7 @@
     background-color: var(--ef-ink) !important; color: var(--ef-panel) !important;
   }
   html[data-workbench-design] :is(button.danger,button[data-ui-destructive=true]) { color: var(--ef-danger) !important; }
-  html[data-workbench-design] button:not(:disabled):not(.color-swatch):not(.poster-resize-handle):not([role=checkbox]):is(:hover,:focus-visible) {
+  html[data-workbench-design] button:not(:disabled):not(.color-swatch):not(.poster-resize-handle):not([role=checkbox]):is(:hover,:focus-visible):not(:where(#continuous-workbench *,#price-profit-page *)) {
     background-color: var(--ef-signal) !important; color: var(--ef-on-signal) !important;
   }
   html[data-workbench-design] :is(button,summary,[role=button],input,select,textarea):focus-visible {
@@ -217,7 +217,7 @@
   html[data-workbench-design] [role=checkbox][aria-checked=true] { color: var(--ef-on-signal) !important; background: var(--ef-signal) !important; border-color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.hint,.muted,.sidebar-note,.preview-hint,.storage-note,.image-status,.breadcrumb,.product-heading small,.selection-tools,.field,.dialog-title small) { color: var(--ef-ink-2) !important; }
   html[data-workbench-design] :is(.workspace > .main,.workspace > .sidebar,.workspace > .preview-side,.config-editor,.config-sidebar,.login-card,.checks,.config-fields,.parts-scroll,dialog,.update-dialog,.update-versions) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; border-color: var(--ef-rule) !important; box-shadow: none !important; }
-  html[data-workbench-design] :is(h1,h2,h3,.product-heading strong,.preview-head h2,.side-title,.config-item strong,.source-item strong,.gallery-card strong) { color: var(--ef-ink) !important; }
+  html[data-workbench-design] :is(h1,h2,h3,.product-heading strong,.preview-head h2,.side-title,.config-item strong,.source-item strong,.gallery-card strong):not(:where(#continuous-workbench *,#price-profit-page *)) { color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) { background: #161616 !important; color: #ededed !important; border-color: #353535 !important; box-shadow: none !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) :is(.brand,.brand span,#save-status,small,.prototype,.sandbox-label,.app-more > summary) { color: #a3a3a3 !important; border-color: #353535 !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) .brand { color: #ededed !important; }
@@ -245,9 +245,9 @@
   html[data-workbench-design] .config-finance :is(.tabular-nums,input[type=number]) { font-family: var(--ef-font-ui) !important; font-stretch: 112%; font-variant-numeric: tabular-nums; font-weight: 650; }
   html[data-workbench-design] .config-finance input[type=number] { border-color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.tabular-nums,td.numeric,[data-slot=autocomplete-item] [data-price]) { font-family: var(--ef-font-ui) !important; font-stretch: 112%; font-variant-numeric: tabular-nums; }
-  html[data-workbench-design] :is(th,td) { border-color: var(--ef-rule) !important; }
-  html[data-workbench-design] th { background: var(--ef-paper) !important; color: var(--ef-ink-2) !important; }
-  html[data-workbench-design] :is(td,[data-slot=data-grid-table-cell]) { background: var(--ef-panel); color: var(--ef-ink); }
+  html[data-workbench-design] :is(th,td):not(:where(#continuous-workbench *,#price-profit-page *)) { border-color: var(--ef-rule) !important; }
+  html[data-workbench-design] th:not(:where(#continuous-workbench *,#price-profit-page *)) { background: var(--ef-paper) !important; color: var(--ef-ink-2) !important; }
+  html[data-workbench-design] :is(td,[data-slot=data-grid-table-cell]):not(:where(#continuous-workbench *,#price-profit-page *)) { background: var(--ef-panel); color: var(--ef-ink); }
   html[data-workbench-design] :is([data-slot=autocomplete-popup],[data-slot=select-popup],[data-slot=popover-content],[data-slot=dropdown-menu-content]) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; border: 1px solid var(--ef-trace) !important; box-shadow: none !important; }
   html[data-workbench-design] [data-slot=autocomplete-item]:is([data-highlighted],:hover) { background: var(--ef-signal) !important; color: var(--ef-on-signal) !important; }
   html[data-workbench-design] [data-slot=autocomplete-item]:is([data-highlighted],:hover) * { color: var(--ef-on-signal) !important; }
@@ -353,8 +353,8 @@
   html[data-workbench-design] .main .maintenance-tools > summary { padding: 11px 12px; border-block: 1px solid var(--ef-rule) !important; }
   html[data-workbench-design] .main .maintenance-tools > .main-actions { padding: 9px 0 0; gap: 8px; }
   html[data-workbench-design] .main > .tabs { background: var(--ef-panel) !important; border: 1px solid var(--ef-rule) !important; }
-  html[data-workbench-design] .reui-continuous > div:first-child { background: var(--ef-panel); border-inline: 1px solid var(--ef-rule); padding: 10px 12px !important; }
-  html[data-workbench-design] .reui-continuous > p { background: var(--ef-panel); border-inline: 1px solid var(--ef-rule); margin: 0; padding: 8px 12px !important; font-size: 11px !important; }
+  html[data-workbench-design] .reui-continuous > div:first-child:not(.ov-toolbar) { background: var(--ef-panel); border-inline: 1px solid var(--ef-rule); padding: 10px 12px !important; }
+  html[data-workbench-design] .reui-continuous > p:not(.ov-hint) { background: var(--ef-panel); border-inline: 1px solid var(--ef-rule); margin: 0; padding: 8px 12px !important; font-size: 11px !important; }
   html[data-workbench-design] .continuous-sheet [data-slot=frame] { padding: 0 !important; gap: 0 !important; }
   html[data-workbench-design] .continuous-sheet [data-slot=frame-panel] { border-inline: 0 !important; }
   html[data-workbench-design] .continuous-sheet [data-slot=frame-panel]:has(> .continuous-config-heading) { padding: 16px 12px !important; }
@@ -734,6 +734,32 @@
 body .main .page-heading:has(.action-menu[open]),
 body .main #product-panel:has(.action-menu[open]) { position:relative; z-index:20; }
 body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:relative; }
+
+/* 总表和价格工作表使用各自稿件的版面尺寸，旧主题继续管理其它业务页。 */
+@layer endfield-theme {
+ html[data-workbench-design] body:is(.overview-mode,:has(.price-profit-active)) .topbar {
+  height: var(--desktop-toolbar-height) !important; min-height: var(--desktop-toolbar-height) !important;
+ }
+ html[data-workbench-design] body.overview-mode .workspace > .main { padding: 0 !important; background: var(--ov-page) !important; }
+ html[data-workbench-design] body.overview-mode .main #product-panel { background: var(--ov-sheet) !important; }
+ html[data-workbench-design] body.overview-mode .main > .tabs { background: var(--ov-sheet) !important; border-width: 0 0 1px !important; border-color: var(--ov-line) !important; }
+ html[data-workbench-design] body.overview-mode .main > .tabs button.active { border-bottom-color: var(--ov-ink) !important; }
+ html[data-workbench-design] body.overview-mode .main .maintenance-tools > summary { background: var(--ov-sheet) !important; border-color: var(--ov-line) !important; }
+ html[data-workbench-design] body.overview-mode .workspace > .sidebar { padding: 13px 12px !important; }
+ html[data-workbench-design] body.overview-mode .workspace > .preview-side:not(.preview-expanded) { padding: 13px 11px 10px !important; gap: 8px !important; }
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-panel) { display: none !important; }
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) .preview-canvas-panel { min-height: 0 !important; padding: 0 !important; border: 0 !important; }
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) #preview-scroll { background: color-mix(in srgb,var(--ov-page),#8a9889 10%) !important; border: 0 !important; padding: 11px !important; }
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) :is(.ov-preview-modes,.ov-preview-footer) button {
+  clip-path: none; border: 1px solid var(--ov-line) !important; background: var(--ov-sheet) !important; color: var(--ov-ink) !important;
+  min-height: 25px; padding: 4px 8px; font-size: 11px;
+ }
+ html[data-workbench-design] body.overview-mode .ov-preview-modes button[aria-pressed=true] { background: #fbfad9 !important; color: #181a19 !important; border-color: #cdcb89 !important; }
+ html[data-workbench-design] body.overview-mode .ov-preview-footer #ov-preview-enlarge { background: #181a19 !important; color: #fff !important; border-color: #181a19 !important; }
+ html[data-workbench-design] body.overview-mode .sidebar #config-list .product-group.editing-product:not([data-link-colored]) > .compact-link-card { background: #fbfad9 !important; border-left: 3px solid #a6a205 !important; }
+ html[data-workbench-design] body.overview-mode .sidebar #config-list .compact-link-card { padding: 6px !important; margin-top: 7px; }
+ html[data-workbench-design] body.overview-mode .sidebar #config-list .config-item { padding-block: 7px !important; min-height: 0; }
+}
 
 
 /* 金额区：共享标签与数值基线，仅放大售价，分期采用轻量说明行。 */

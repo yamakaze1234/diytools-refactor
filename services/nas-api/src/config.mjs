@@ -5,8 +5,11 @@ import {liveScopes} from './shop-scope.mjs';
 export class Fault extends Error {constructor(code,status=400,details){super(code);this.code=code;this.status=status;this.details=details;}}
 export const requireValue=(value,code='INVALID_REQUEST',status=400)=>{if(!value)throw new Fault(code,status);};
 export function settings(env=process.env){
- const auth=new URL(env.AUTH_ORIGIN||'https://unconfigured.invalid');
- requireValue(auth.protocol==='https:'&&!auth.username&&!auth.password&&!auth.search&&!auth.hash&&auth.pathname==='/'&&!auth.hostname.endsWith('.invalid'),'INVALID_AUTH_ORIGIN');
+ const authMode=env.NAS_AUTH_MODE||'cloud';
+ requireValue(['cloud','migration','local'].includes(authMode),'INVALID_AUTH_MODE');
+ // 完成切换后，即使外部还留有旧配置，也无需读取腾讯云地址。
+ const auth=authMode==='local'?null:new URL(env.AUTH_ORIGIN||'https://unconfigured.invalid');
+ requireValue(!auth||auth.protocol==='https:'&&!auth.username&&!auth.password&&!auth.search&&!auth.hash&&auth.pathname==='/'&&!auth.hostname.endsWith('.invalid'),'INVALID_AUTH_ORIGIN');
  const profile=env.NAS_PROFILE||'trial',production=profile==='intel-production';
  requireValue(['trial','intel-production'].includes(profile),'INVALID_NAS_PROFILE');
  const database=production?'diy_workbench':'diy_workbench_trial';
@@ -72,7 +75,8 @@ export function settings(env=process.env){
   'SHARED_GALLERY_REQUIRES_THREE_STORE_WRITES');
  const sharedSources=env.NAS_ENABLE_SHARED_SOURCES==='true';
  requireValue(!sharedSources||production&&additionalShops.length===2&&workspaceWritable,'SHARED_SOURCES_REQUIRE_THREE_STORE_WRITES');
- return {authOrigin:auth.origin,workspace:env.WORKSPACE_ID,sessionCacheMs:30000,port,dataset,writable,clientOrigins,profile,deploymentId,batch,additionalShops,lanCaseGallery,sharedGallery,sharedSources,
+ requireValue(authMode==='cloud'||production&&writable&&tls&&additionalShops.length===2,'LOCAL_AUTH_REQUIRES_THREE_STORE_TLS');
+ return {authMode,authOrigin:auth?.origin??null,workspace:env.WORKSPACE_ID,sessionCacheMs:30000,port,dataset,writable,clientOrigins,profile,deploymentId,batch,additionalShops,lanCaseGallery,sharedGallery,sharedSources,
   imagesRoot:env.NAS_IMAGE_ROOT||null,imagesWriteRoot:catalogWritable?env.NAS_IMAGE_WRITE_ROOT||null:null,catalogWritable,workspaceWritable,
   host:env.LISTEN_HOST||'0.0.0.0',tls,pg};
 }

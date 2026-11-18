@@ -19,7 +19,7 @@ pnpm --dir apps/desktop tauri dev --features formal-nas-client --config src-taur
 node --test apps/desktop/tests/*.test.mjs apps/desktop/tests/legacy/*.test.mjs packages/*/tests/*.test.mjs tools/*.test.mjs
 cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --features formal-nas-client
 pnpm build:web
-pnpm --dir apps/desktop tauri build --no-bundle --features formal-nas-client --config src-tauri/tauri.nas-intel-production.conf.json
+pwsh -NoProfile -File packages/agent-cli/build-local.ps1
 ```
 
 按改动范围运行必要测试。集成服务、原生窗口与实际数据流程需要各自验收，不能由构建成功代替。可分发程序按[发布流程](PUBLIC-RELEASE.md)打包。
@@ -44,7 +44,7 @@ README 面向首次使用者，保留下载入口与产品简介。docs 只维�
 
 本机 Agent 入口的使用与协议见 [Agent 工具入口](AGENT-TOOLS.md)。
 
-正式发行使用 `formal-nas-client`，不启用旧 Agent/CLI。先准备下述 Excel 只读组件，再按上方命令构建。旧 `agent-tools` 仅为兼容路径，不能用于新版发布。完整结构与模块边界见 [项目结构与架构图](PUBLIC-ARCHITECTURE.md)。
+正式 Windows 构建使用 `formal-nas-client,agent-tools`。上方脚本先构建并嵌入同一源码的 CLI，再构建桌面程序。请先准备下述 Excel 只读组件。`-Acceptance` 用于独立的合成三店验收包。完整结构与模块边界见 [项目结构与架构图](PUBLIC-ARCHITECTURE.md)。
 
 ## 内置 Excel 只读组件
 
@@ -58,6 +58,4 @@ Windows release 构建前执行 `pwsh -File tools/build-cost-reader.ps1`，设�
 
 ## 组织默认认证构建
 
-正式特性可设置 `DIYTOOLS_AUTH_DEFAULTS_PATH` 指向源码外的版本 1 接入 JSON。build.rs 严格提取 cloud.envId 和 cloud.endpoint；不嵌入其他字段或原文件。未设置时写入空默认值，防止增量构建复用上一组织参数。运行时只有外部 integrations.json 完全不存在才回退内置值，外部格式错误不能静默切换账号环境。
-
-默认接入不是保密信息，可从 EXE 提取。构建输入不得含员工密码、令牌或数据库凭据。通过 `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --lib --features formal-nas-client embedded_auth -- --test-threads=1` 验证新目录、外部覆盖和错误配置行为。
+正式特性使用 NAS 登录接口，无需为构建注入账号服务地址。正式联调使用启用本地认证的 NAS HTTPS 环境和测试成员。
