@@ -106,6 +106,38 @@ test('新增底部文案保存重读后不会套用原来跟随配件的自由�
  assert.deepEqual(projected.addons.map(a=>a.text),['底部新文案','配件加购']);
  assert.deepEqual(projected.textStyles,{'addons.1.text':{text:'配件加购自由编辑',size:22}});
 });
+
+test('批量底部文案可合入现有草稿并撤销，配件加购不被界面派生值覆盖',async()=>{
+ const t=fixture(),main=t.build();
+ const linked={sourceId:'cpu-source',text:'原始配件加购',priceCents:1500,items:[],followPolicy:'snapshot'};
+ t.update({...raw,addons:[linked]});
+ const index=await main.request('/api/workspace/index');
+ const load=await main.request('/api/configs/load',{method:'POST',body:JSON.stringify({ids:['c'],revision:index.revision})});
+ const view=load.configs[0];
+ view.addons[0].text='界面派生加购';
+ main.attach(view);
+ view.name='应用前未保存的名称';
+ main.stage(view);
+ const edited=applyBatchContent({addons:[{text:'底部新文案'}]},structuredClone(view),{addons:true});
+ const applied=main.stage(edited).document;
+ assert.equal(applied.name,view.name);
+ assert.deepEqual(applied.addons,[{text:'底部新文案',note:'',items:[]},linked]);
+ assert.deepEqual(main.stage(view).document.addons,[linked]);
+ assert.deepEqual(main.stage(edited).document.addons,applied.addons);
+ assert.equal(t.commands.filter(c=>c.method==='PUT').length,0);
+});
+
+test('独立文案新增在用户选定位置，保存时保留已有配件加购的行号',()=>{
+ const linked={sourceId:'s',text:'原始方案',priceCents:1500,items:[]};
+ const raw={parts:[],addons:[linked],textStyles:{'addons.0.text':{color:'#000000'}}};
+ const visible={...raw,addons:[{...linked,text:'界面派生方案'}]};
+ const edited=structuredClone(visible);
+ addPosterExtra(edited,'addons');
+ edited.addons[1].text='追加文案';
+ const saved=projectNasEdits(raw,visible,edited);
+ assert.deepEqual(saved.addons,[linked,edited.addons[1]]);
+ assert.deepEqual(saved.textStyles,raw.textStyles);
+});
 test('暂存和旧路由不会发写，显式保存以发送时快照确认飞行前的输入',async()=>{
  const t=fixture(),main=t.build(),view=await attach(main);
  view.name='首次提交';main.stage(view);

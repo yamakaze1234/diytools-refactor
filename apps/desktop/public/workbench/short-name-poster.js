@@ -15,3 +15,8 @@ export function syncPosterShortName(config){
   if(styles?.['header.subtitle'])delete styles['header.subtitle'].text;
  }
 }
+
+/** 自动简称按当前配置生成；手动填写的简称直接使用原值。 */
+export function maintenanceShortName(config){
+ return config.shortNameAuto===true?suggestedName(config,config.nameFormat||'compact'):config.shortName;
+}

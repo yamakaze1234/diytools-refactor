@@ -35,6 +35,15 @@ test('三店全局核算价事务：版本、原价恢复、持久标记、其�
   await api.db.exec(await readFile(new URL('../sql/020-workbench-global-tax.sql',import.meta.url),'utf8'));
   await api.db.exec(await readFile(new URL('../sql/021-workbench-alias-addons.sql',import.meta.url),'utf8'));
   for(const [index,shop] of shops.entries())await local(shop,13+index);
+  // 模拟旧版手改记录。补标记后金额、版本和审计回执全部保留。
+  for(const shop of shops)await api.db.exec(`UPDATE ${shop}_live.intel_cost_overrides SET document=document-'nasManualTax';`);
+  const oldManual=await readCosts();
+  const migration=await readFile(new URL('../sql/023-shop-manual-tax.sql',import.meta.url),'utf8');
+  await api.db.exec(migration);await api.db.exec(migration);
+  for(const [shop,old] of Object.entries(oldManual)){
+   const updated=await call(shop,'costs/100001');
+   assert.deepEqual(updated,{...old,document:{...old.document,nasManualTax:true}});
+  }
   // 与新价相同的独立覆盖会取消，其他覆盖应保留。
   await api.db.exec(`UPDATE intel_live.parts SET attrs=attrs||'{"tax":25,"taxOverride":{"goodsId":"100001","base":13,"value":25}}'
    WHERE part_kind='actual' AND goodsid='100001';
@@ -83,10 +92,28 @@ test('三店全局核算价事务：版本、原价恢复、持久标记、其�
   await call('intel','catalog/shared-sources/100001',{method:'PUT',body:{operation_id:randomUUID(),expected_version:shared.version,
    document:{id:'100001',edits:{gigabyte:{values:{tax:46},restore:[]}}}}});
   assert.equal((await call('gigabyte','costs/100001')).document.globalTax,undefined);
-  for(const action of ['tax_edit','tax_file']){
-   await global(await plan({tax:47}));await local('jonsbo',48,action);
-   assert.equal((await call('jonsbo','costs/100001')).document.globalTax,undefined);
-  }
+  await global(await plan({tax:47}));
+  await local('jonsbo',48,'tax_edit');
+  assert.equal((await call('jonsbo','costs/100001')).document.globalTax,undefined);
+  // 旧客户端发送的整批成本表计划也只更新普通行，手改行的原价与版本保持。
+  const manual=await call('jonsbo','costs/100001'),ordinary=await call('jonsbo','costs/9900013');
+  const importPlan={operation_id:randomUUID(),changes:[
+   {id:'100001',action:'tax_file',expected_version:'1',fields:{tax:58}},
+   {id:'9900013',action:'tax_file',expected_version:ordinary.version,fields:{tax:300}}]};
+  const imported=await call('jonsbo','workspace/costs',{body:importPlan});
+  assert.deepEqual(imported.changes[0],{id:'100001',version:manual.version,skipped:'manual_tax'});
+  assert.deepEqual(await call('jonsbo','workspace/receipts/'+importPlan.operation_id),imported);
+  assert.deepEqual(await call('jonsbo','costs/100001'),manual);
+  const fileCost=await call('jonsbo','costs/9900013');
+  assert.equal(fileCost.document.tax,300);assert.equal(fileCost.document.nasManualTax,false);
+  await api.db.exec("UPDATE jonsbo_live.intel_cost_overrides SET document=document-'nasManualTax' WHERE goodsid='9900013'");
+  await api.db.exec(migration);
+  assert.deepEqual(await call('jonsbo','costs/9900013'),fileCost);
+  await local('jonsbo',48,'tax_resume');
+  const resumed=await call('jonsbo','costs/100001');
+  assert.equal(resumed.document.nasManualTax,false);assert.equal(resumed.document.tax,48);
+  await local('jonsbo',57,'tax_file');
+  assert.equal((await call('jonsbo','costs/100001')).document.tax,57);
   // 任意店发起都使用其自身版本和回执，不能靠替换 shop 参数重用已提交编号。
   for(const shop of ['gigabyte','jonsbo']){
    const alternative=await plan({tax:49});alternative.changes[0].expected_version=alternative.changes[0].expected_versions[shop];

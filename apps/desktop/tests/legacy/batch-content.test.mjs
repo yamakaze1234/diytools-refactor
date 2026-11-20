@@ -1,6 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {applyBatchContent,posterAddonTextRows} from '../../public/workbench/batch-content.js';
+import {copyText} from '../../public/workbench/core.js';
+
+test('同步版本保存新的自动简称，维护表复制也补正已存旧简称',()=>{
+ const auto={name:'配置2',version:'进阶版',shortName:'旧简称',shortNameAuto:true,nameFormat:'compact',posterSubtitle:'自定义副标题',
+  parts:[{slot:'CPU',name:'AMD Ryzen 7 9700X',goodsId:'1',qty:1}]};
+ const autoInSavedData={...auto,version:'黑色'};
+ const manual={...auto,shortNameAuto:false,shortName:'维护表人工简称'};
+ const reference={version:'黑色'};
+ applyBatchContent(reference,auto,{version:true});
+ applyBatchContent(reference,manual,{version:true});
+ assert.equal(auto.version,'黑色');
+ assert.match(auto.shortName,/黑色$/);
+ assert.equal(auto.posterSubtitle,'自定义副标题');
+ assert.equal(manual.version,'黑色');
+ assert.equal(manual.shortName,'维护表人工简称');
+ assert.equal(copyText([autoInSavedData,manual],'name'),auto.shortName+'\r\n'+manual.shortName);
+});
 test('批量同步只替换底部文字，保留目标配件加购、旧组合商品和单独的福利选项',()=>{
  const linked={text:'目标配件加购',sourceId:'s',items:[{goodsId:'9',qty:2}],priceCents:9800,followPolicy:'follow',followAll:true};
  const multi={text:'目标多选加购',choices:[{goodsId:'8',qty:1,priceCents:1100}]};

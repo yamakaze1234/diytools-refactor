@@ -747,7 +747,7 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:rela
  html[data-workbench-design] body.overview-mode .main .maintenance-tools > summary { background: var(--ov-sheet) !important; border-color: var(--ov-line) !important; }
  html[data-workbench-design] body.overview-mode .workspace > .sidebar { padding: 13px 12px !important; }
  html[data-workbench-design] body.overview-mode .workspace > .preview-side:not(.preview-expanded) { padding: 13px 11px 10px !important; gap: 8px !important; }
- html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-panel) { display: none !important; }
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-scroll) { display: none !important; }
  html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) .preview-canvas-panel { min-height: 0 !important; padding: 0 !important; border: 0 !important; }
  html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) #preview-scroll { background: color-mix(in srgb,var(--ov-page),#8a9889 10%) !important; border: 0 !important; padding: 11px !important; }
  html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) :is(.ov-preview-modes,.ov-preview-footer) button {
@@ -946,6 +946,10 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:rela
  html[data-workbench-design] #image-export-panel select {width:100%!important;min-width:0!important;height:34px!important;margin:0!important;padding:0 8px!important;font-size:12px!important;}
  html[data-workbench-design] #image-export-panel .image-export-actions {display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important;align-items:center!important;}
  html[data-workbench-design] #image-export-panel .image-export-actions button {width:100%!important;min-width:0!important;height:36px!important;min-height:36px!important;margin:0!important;padding:0 6px!important;line-height:1.2!important;font-size:12px!important;white-space:nowrap!important;}
+ /* 常驻预览和自由编辑共用同一套导出表单及选择状态。 */
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) .preview-bottom {order:7!important;flex:none!important;padding-top:8px!important;}
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) .preview-bottom #poster-layer-control {display:none!important;}
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) #image-export-panel button {min-height:31px!important;height:31px!important;}
 }
 
 /* 连接引导与登录沿用工作台同一套中性色、黄色强调和直角控件。 */

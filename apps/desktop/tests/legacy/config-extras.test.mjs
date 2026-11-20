@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {posterExtraRows,editPosterExtra,addPosterExtra,removePosterExtra,setPosterExtraVisible} from '../../public/workbench/config-extras.js';
+import {posterExtraRows,posterAddonCopyRows,editPosterExtra,addPosterExtra,removePosterAddonCopy,removePosterExtra,setPosterExtraVisible} from '../../public/workbench/config-extras.js';
 import {applySharedTaxEdit} from '../../public/workbench/shared-source-editor.js';
 
 test('独立文字加购保留原有商品成本字段，新增记录满足 NAS 的 items 合同',()=>{
@@ -70,4 +70,17 @@ test('明确开启缺失模块可恢复旧文字，未保存模块数组仍沿�
  const implicit={shopId:'intel',theme:'dark'};setPosterExtraVisible(implicit,'addons',true);
  assert.deepEqual(implicit.modules.map(module=>module.type),['header','parts','addons','benefits','service','footer']);
  assert.throws(()=>setPosterExtraVisible(config,'parts',true),/无效/);
+});
+
+test('仅文案读出旧配置的展示文字，移除后保留配件和新加购包',()=>{
+ const linked=[{id:'new-plan',mode:'parts',text:'新加购包'}];
+ const config={modules:[{type:'addons',id:'addon-area'}],posterAddonPacks:linked,
+  addons:[{text:'配件加购',sourceId:'source-a'},{text:'原始内容',note:'原有说明',goodsId:'123',priceCents:9900}],
+  textStyles:{'addon-area.1.text':{text:'曾修改的旧文案',size:25},'addon-area.pack:new-plan.text':{size:27}}};
+ assert.deepEqual(posterAddonCopyRows(config).map(({index,text,note})=>[index,text,note]),[[1,'曾修改的旧文案','原有说明']]);
+ removePosterAddonCopy(config,1);
+ assert.deepEqual(posterAddonCopyRows(config),[]);
+ assert.deepEqual(config.addons,[{text:'配件加购',sourceId:'source-a'},{text:'',note:'',goodsId:'123',priceCents:9900}]);
+ assert.deepEqual(config.textStyles,{'addon-area.1.text':{size:25},'addon-area.pack:new-plan.text':{size:27}});
+ assert.equal(config.posterAddonPacks,linked);
 });

@@ -15,6 +15,7 @@ export function visibleNasCosts(config,byId){
 export function planNasErpRows(rows,before,kind,at){
  if(!Array.isArray(rows))throw Error('查询结果无效。');
  const seen=new Set(),changes=[];
+ let protectedCount=0;
  for(const row of rows){
   const id=kind==='erp'?row?.goodsId:row?.goods_id;
   if(!before.has(id)||!/^\d{1,20}$/.test(id)||seen.has(id))throw Error('结果含非预期或重复的商品 ID。');
@@ -31,10 +32,12 @@ export function planNasErpRows(rows,before,kind,at){
    fields={erp:row.erp,stockAvailable:row.stockAvailable,name:row.name,sku:row.sku,stockUpdatedAt:at};
   }else{
    if(!amount(row.tax))throw Error('成本表金额无效。');
+   // 手动价只有逐项恢复后才重新进入成本表同步。
+   if(old.document.nasManualTax===true){protectedCount++;continue;}
    if(old.document.nasTaxOverride&&row.tax===old.document.tax)continue;
    fields={tax:row.tax,taxUpdatedAt:at};
   }
   changes.push({id,action:kind==='erp'?'erp_snapshot':'tax_file',expected_version:old.version,fields});
  }
- return {changes,missing:before.size-seen.size};
+ return {changes,missing:before.size-seen.size,protectedCount};
 }

@@ -189,16 +189,31 @@ export function openLinkParts(api){
   if(api.renderOverview?.($('#link-part-diff'),{summary,rules:plan.rules,rows}))return;
   $('#link-part-diff').innerHTML=`<h3>修改结果总览</h3><p class="hint">${summary}</p><div class="link-part-rule-results">${plan.rules.map((r,i)=>`<span>任务 ${i+1} · ${r.mode==='add'?'新增':r.mode==='delete'?'删除':'替换'} ${esc(r.name)}：${r.count} 套</span>`).join('')}</div>${rows.length?`<div class="link-part-overview-wrap" tabindex="0" aria-label="修改结果总览"><table class="link-part-overview"><thead><tr><th>配置</th><th>修改内容</th><th>槽位</th><th>修改前</th><th>修改后</th></tr></thead><tbody>${rows.map(r=>`<tr class="${r.changed?'is-changed':''}"><th scope="row">${esc(r.name)}<small>${esc(r.product)}</small></th><td>${r.field==='parts'?'展示配件':'实际配置'}</td><td>${esc(r.slot)}</td><td>${esc(partText(r.before))}<small>${esc(r.before?.goodsId?'ERP ID '+r.before.goodsId:'')}</small></td><td>${esc(r.after?partText(r.after):'删除')}<small>${esc(r.after?.goodsId?'ERP ID '+r.after.goodsId:'')}${r.changed?' · 已修改':''}</small></td></tr>`).join('')}</tbody></table></div>`:'<p class="hint">没有需要修改的配件。可勾选“显示全部配件”查看当前配置。</p>'}`;
  };
- for(const id of ['link-part-display','link-part-actual','link-part-scope'])$('#'+id).onchange=()=>{invalidate();scopeSummary();rules.forEach(r=>r.refreshMatches());};
+ const refreshScope=()=>{scopeSummary();rules.forEach(rule=>rule.refreshMatches());};
+ for(const id of ['link-part-display','link-part-actual'])$('#'+id).onchange=()=>{invalidate();refreshScope();};
+ const loadScope=async()=>{
+  if(api.loadScope)await api.loadScope(configs().map(config=>config.id));
+ };
+ // 跨链接只在选中该范围时补齐详情，切换前不把全店摘要当成实际 BOM。
+ $('#link-part-scope').onchange=async()=>{
+  invalidate();
+  if(!api.loadScope){refreshScope();return;}
+  lock(true);status('正在载入所选配置详情…');
+  try{await loadScope();if(active()){refreshScope();status('');}}
+  catch(error){if(active())status(api.errorText?.(error)||error.message);}
+  finally{if(active())lock(false);}
+ };
  $('#link-part-add-replace').onclick=()=>addRule('replace');$('#link-part-add-new').onclick=()=>addRule('add');
  $('#link-part-show-all').onchange=renderOverview;
  scopeSummary();addRule();
- $('#link-part-preview').onclick=()=>{try{
+ $('#link-part-preview').onclick=async()=>{if(busy)return;try{
+  if(api.loadScope){lock(true);await loadScope();if(!active())return;}
   const targets=configs();plan=linkPartsBatchPlan(targets,{scope:scope(),rules:rules.map(r=>r.read())});
   plan.scopeIds=targets.map(c=>c.id).sort();plan.scopeType=$('#link-part-scope').value;
   renderOverview();$('#link-part-status').textContent=`将修改 ${plan.changes.length} 套配置，${plan.scope.parts?'维护表加购描述写入逐项升级说明，人工加购保留。':'仅更新实际配置。'}`;$('#link-part-apply').disabled=!plan.changes.length;
   $('#link-part-diff').scrollIntoView({block:'start'});
- }catch(e){invalidate();$('#link-part-status').textContent=e.message;}};
+ }catch(e){if(active()){invalidate();status(api.errorText?.(e)||e.message);}}
+ finally{if(active()&&busy){const canApply=!!plan?.changes.length;lock(false);$('#link-part-apply').disabled=!canApply;}}};
  let lockedControls=[];
  const lock=value=>{
   busy=value;
@@ -227,7 +242,7 @@ export function openLinkParts(api){
    await session.save(approved);plan=null;
    if(!active())return;
    toast('所选范围内配件已统一修改并保存');showSavedScope();status(`已保存 ${approved.changes.length} 套配置，请选择导出范围和图片类型。也可继续调整任务并重新预览。`);
-  }catch(error){if(active()){invalidate();if(error.saved){$('#link-part-export-panel').classList.add('hidden');status('修改已保存，导出范围未准备完成：'+error.message);}else status(error.message);}}
+  }catch(error){if(active()){invalidate();const message=api.errorText?.(error)||error.message;if(error.saved){$('#link-part-export-panel').classList.add('hidden');status('修改已保存，导出范围未准备完成：'+message);}else status(message);}}
   finally{phase='';lock(false);if(active()&&!plan)$('#link-part-apply').disabled=true;}
  };
  $('#link-part-export').onclick=async()=>{

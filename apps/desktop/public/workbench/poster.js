@@ -17,8 +17,31 @@ const bound=(value,min,max)=>Math.max(min,Math.min(max,value));
 const hasText=value=>!!String(value??'').trim();
 const partTitle=p=>String(p.name||'').trimEnd()+(Number(p.qty)>1?` ×${p.qty}`:'');
 const entryContent=entry=>typeof entry==='string'?hasText(entry):hasText(entry?.text)||hasText(entry?.note);
+const comparableCopy=value=>String(value??'').normalize('NFKC').replace(/\s+/g,'');
+/** 配置图使用方案 ID 定位链接文案。旧文案继续使用自己的行号与样式。 */
+export function posterAddonEntries(config,moduleId){
+ const legacy=(config.addons||[]).map((row,index)=>({index,entry:displayedAddon(typeof row==='string'?{text:row}:row,config)}))
+  .filter(({entry})=>entryContent(entry));
+ const packs=new Map();
+ for(const {id,mode,text} of config.posterAddonPacks||[]){
+  const index='pack:'+id,entry=displayedAddon({text},config),copy=comparableCopy(entry.text);
+  if(!copy||config.textStyles?.[`${moduleId}.${index}.text`]?.hidden)continue;
+  const current=packs.get(copy);
+  if(!current||current.mode==='text'&&mode==='parts')packs.set(copy,{index,entry,mode});
+ }
+ if(!packs.size)return legacy;
+ // 新旧内容相同只画一次，旧行及其排版仍原样保留在当前配置中。
+ return [...legacy.filter(({index,entry})=>{
+  const style=config.textStyles?.[`${moduleId}.${index}.text`],note=config.textStyles?.[`${moduleId}.${index}.note`];
+  const copy=(style?.hidden?'':style?.text??entry.text??'')+(entry.note&&!note?.hidden?(note?.text??entry.note):'');
+  return !packs.has(comparableCopy(copy));
+ }),...packs.values()];
+}
 /** 根据模块类型提取待绘制条目，统一处理模块内容来源。 */
-function moduleEntries(c,m){return (m.type==='addons'?c.addons:m.type==='benefits'?c.benefits:[{text:m.text||'',note:''}])?.map((entry,index)=>({entry:m.type==='addons'?displayedAddon(entry,c):entry,index})).filter(({entry})=>entryContent(entry))||[];}
+function moduleEntries(c,m){
+ if(m.type==='addons')return posterAddonEntries(c,m.id);
+ return (m.type==='benefits'?c.benefits:[{text:m.text||'',note:''}])?.map((entry,index)=>({entry,index})).filter(({entry})=>entryContent(entry))||[];
+}
 /** 根据配置版式确定默认绘图宽度。 */
 export function defaultPosterWidth(c){return c.layout==='square'?1400:1000;}
 /** 加载字体与素材并绘制海报；interactive 模式同时提供编辑器所需的区域信息。 */
@@ -76,7 +99,9 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
     if(c.shopId==='gigabyte')color=dark?'#FF715F':'#8C52FF';
    }
    const custom=c.textStyles?.[key]||{};if(custom.hidden)return 0;
-   value=custom.text??value;x=Number.isFinite(custom.x)?custom.x:x;top=Number.isFinite(custom.y)?custom.y:top;max=Number.isFinite(custom.width)?Math.max(20,custom.width):max;
+   const linkedAddonPack=key.startsWith(moduleId+'.pack:');
+   if(!linkedAddonPack)value=custom.text??value;
+   x=Number.isFinite(custom.x)?custom.x:x;top=Number.isFinite(custom.y)?custom.y:top;max=Number.isFinite(custom.width)?Math.max(20,custom.width):max;
    const s=spec(key,size,weight,color),transform=c.textTransforms?.[c.layout]?.[key]||{};
    const boxWidth=Number.isFinite(transform.boxWidth)?Math.max(20,transform.boxWidth):null;
    const boxHeight=Number.isFinite(transform.boxHeight)?Math.max(12,transform.boxHeight):0;
@@ -97,12 +122,12 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
    }
    if(custom.ranges?.length&&!singleLine){
     const lines=richTextLayout(measure,value,max,s,custom.ranges,font,fitScale),height=Math.max(boxHeight,lines.reduce((n,l)=>n+l.height,0)),inkWidth=boxWidth??Math.max(20,...lines.map(l=>l.width)),flowHeight=boxWidth!==null?richTextLayout(measure,value,flowMax,s,custom.ranges,font).reduce((n,l)=>n+l.height,0):lines.reduce((n,l)=>n+l.height,0);if(align==='center')x+=(max-inkWidth)/2;
-    addText({key,label,moduleId,value:String(value??''),x,top,width:inkWidth,height,lineCount:lines.length,...s},ctx=>{ctx.save();let y=top;for(const line of lines){for(const glyph of line.glyphs){ctx.font=font(glyph.style);ctx.fillStyle=glyph.style.color;drawPosterText(ctx,glyph.ch,x+glyph.x+(align==='center'?(inkWidth-line.width)/2:0),y,glyph.style);}y+=line.height;}ctx.restore();});return flowHeight;
+    addText({key,label,moduleId,linkedAddonPack,value:String(value??''),x,top,width:inkWidth,height,lineCount:lines.length,...s},ctx=>{ctx.save();let y=top;for(const line of lines){for(const glyph of line.glyphs){ctx.font=font(glyph.style);ctx.fillStyle=glyph.style.color;drawPosterText(ctx,glyph.ch,x+glyph.x+(align==='center'?(inkWidth-line.width)/2:0),y,glyph.style);}y+=line.height;}ctx.restore();});return flowHeight;
    }
    measure.font=font(s);const lines=singleLine?[value]:wrapText(measure,value,max),lh=s.size*lineHeight,height=Math.max(boxHeight,lines.length*lh),flowHeight=(singleLine?1:wrapText(measure,value,flowMax).length)*lh;
    const inkWidth=boxWidth??Math.min(max,Math.max(20,...lines.map(t=>measure.measureText(t).width)));
    if(align==='center')x+=(max-inkWidth)/2;
-   addText({key,label,moduleId,value:String(value??''),x,top,width:inkWidth,height,lineCount:lines.length,...s},ctx=>{ctx.save();ctx.font=font(s);ctx.fillStyle=s.color;if(centered)ctx.textBaseline='middle';if(align==='center')ctx.textAlign='center';lines.forEach((line,i)=>drawPosterText(ctx,line,x+(align==='center'?inkWidth/2:0),top+i*lh+(centered?lh/2:0),s));ctx.restore();});
+   addText({key,label,moduleId,linkedAddonPack,value:String(value??''),x,top,width:inkWidth,height,lineCount:lines.length,...s},ctx=>{ctx.save();ctx.font=font(s);ctx.fillStyle=s.color;if(centered)ctx.textBaseline='middle';if(align==='center')ctx.textAlign='center';lines.forEach((line,i)=>drawPosterText(ctx,line,x+(align==='center'?inkWidth/2:0),top+i*lh+(centered?lh/2:0),s));ctx.restore();});
    return flowHeight;
   }
   function line(top){ops.push(ctx=>{ctx.strokeStyle=colors.line;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(pad,top);ctx.lineTo(base-pad,top);ctx.stroke();});}
@@ -228,8 +253,9 @@ export async function renderPoster(c,width=defaultPosterWidth(c),{interactive=fa
     for(let i=0;i<entries.length;i+=columns){let rowHeight=0;y+=stretch;
      for(let col=0;col<columns&&i+col<entries.length;col++){
       const {index,entry}=entries[i+col],text=typeof entry==='string'?entry:entry.text,note=typeof entry==='string'?'':entry.note,x=pad+inner+col*(colWidth+colGap);
-      let h=block(`${m.id}.${index}.text`,`${m.title} ${index+1}`,m.id,text,x,y,colWidth,size,weight,moduleText);
-      if(note)h+=block(`${m.id}.${index}.note`,`${m.title} ${index+1} 说明`,m.id,note,x,y+h,colWidth,square?9:12,400,moduleMuted);
+      const label=typeof index==='number'?index+1:i+col+1;
+      let h=block(`${m.id}.${index}.text`,`${m.title} ${label}`,m.id,text,x,y,colWidth,size,weight,moduleText);
+      if(note)h+=block(`${m.id}.${index}.note`,`${m.title} ${label} 说明`,m.id,note,x,y+h,colWidth,square?9:12,400,moduleMuted);
       rowHeight=Math.max(rowHeight,h);
      }y+=rowHeight+space(7)+stretch;
     }

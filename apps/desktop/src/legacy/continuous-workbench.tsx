@@ -220,9 +220,13 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
    'data-cp':copiedCell||undefined,...Object.fromEntries(['t','b','l','r'].map(side=>['data-cp-'+side,copiedCell&&edge(copied!,side)||undefined]))};
  };
  const gridProps=(row:number,col:0|1)=>({'data-ov-cell':col,'data-ov-row':row,tabIndex:0,...selectionProps(row,col)});
+ const benefits=model.configurationBenefits?.(c)??[];
  return <section className="ov-config" data-continuous-config={c.id} data-active={model.active===c.id||undefined}
   onFocusCapture={()=>model.activate(c.id)} onCopy={copy} onPaste={paste}>
   <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual} mobile/>
+  {benefits.length>0&&<section className="addon-pack-overview"><strong>福利点</strong>
+   {benefits.map((text:string,i:number)=><p key={i}>{text}</p>)}
+  </section>}
   <table ref={table} className="ov-table" aria-label={c.name+'配置总表'}
    onPointerDown={e=>{
     const target=e.target as HTMLElement,pos=position(target);
@@ -270,7 +274,14 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
     </tr>;
    })}</tbody>
   </table>
-  <div className="ov-row-tools"><button className="ov-add-row" aria-label={c.name+' 新增配件'} onClick={()=>model.addRow(c.id)}>＋ 增加配件</button><button onClick={()=>model.removeLastRow(c.id)}>－ 减少配件</button><span className="ov-row-tools-gap"/><button onClick={()=>model.duplicate(c.id)}>复制当前配置</button><button onClick={()=>model.insertBlank(c.id)}>＋ 插入空白配置</button><button className="ov-delete-config" onClick={()=>model.remove(c.id)}>删除当前配置</button></div>
+  <div className="ov-row-tools">
+   <button className="ov-add-row" aria-label={c.name+' 新增配件'} onClick={()=>model.addRow(c.id)}>＋ 增加配件</button>
+   <button onClick={()=>model.removeLastRow(c.id)}>－ 减少配件</button>
+   <span className="ov-row-tools-gap"/>
+   <button onClick={()=>model.duplicate(c.id)}>复制当前配置</button>
+   <button onClick={()=>model.insertBlank(c.id)}>＋ 插入空白配置</button>
+   <button className="ov-delete-config" onClick={()=>model.remove(c.id)}>删除当前配置</button>
+  </div>
   {!!(c.extras.parts.length+c.extras.actualParts.length)&&<p className="ov-notice">含额外或重复槽位，原配置数据保留。</p>}
   {c.hardwareIssues?.map((issue:Row,index:number)=><p key={index} className="ov-notice">{issue.label}：{issue.message}</p>)}
  </section>;
@@ -289,6 +300,8 @@ export function ContinuousWorkbench({model}:{model:Row}){
  const rangeExtractor=useCallback((range:Parameters<typeof defaultRangeExtractor>[0])=>{const indexes=defaultRangeExtractor(range);if(focusedIndex>=0&&!indexes.includes(focusedIndex))indexes.push(focusedIndex);return indexes.sort((a,b)=>a-b);},[focusedIndex]);
  const getItemKey=useCallback((index:number)=>list[index].id,[list]);
  const virtualizer=useVirtualizer({count:list.length,getScrollElement:()=>sheet.current,estimateSize:()=>780,getItemKey,overscan:1,rangeExtractor,enabled:virtual});
+ // 换链接时定位到新链接的编辑项，清掉上一链接的搜索和滚动位置。
+ useLayoutEffect(()=>{setQuery('');setLocateId(model.active??null);},[model.productId]);
  useLayoutEffect(()=>{
   const host=sheet.current?.closest('#continuous-workbench');if(!host)return;
   const locate=(event:Event)=>{setQuery('');setLocateId((event as CustomEvent<string>).detail);};
@@ -323,7 +336,7 @@ export function ContinuousWorkbench({model}:{model:Row}){
   <p className="ov-hint">实际配件和数量可双击或键入编辑，删空型号即清除。用 <kbd>Shift</kbd> 选区，两列粘贴从实际配件格开始，顺序为型号、数量。</p>
   {model.error&&<p role="alert">{model.error} <button onClick={()=>model.retry()}>重试加载</button></p>}
   {!list.length&&<p>没有匹配的配置 <button onClick={()=>setQuery('')}>清空搜索</button></p>}
-  <div ref={sheet} className="ov-sheet-scroll" aria-label="连续配置表" tabIndex={0}
+  <div ref={sheet} className="ov-sheet-scroll" data-product-id={model.productId} aria-label="连续配置表" tabIndex={0}
    onFocusCapture={event=>setFocusedId((event.target as HTMLElement).closest<HTMLElement>('[data-continuous-config]')?.dataset.continuousConfig||null)}
    onBlurCapture={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setFocusedId(null);}}>
    <div className="ov-content" style={virtual?{height:virtualizer.getTotalSize(),position:'relative'}:undefined}>

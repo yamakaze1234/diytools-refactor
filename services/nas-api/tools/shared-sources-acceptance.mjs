@@ -67,6 +67,7 @@ export async function startSourceAcceptance({fixture,folder,root,authenticate,tl
  const db = await openFixture(fixture,folder,sharedSources);
  // 已试用的本机库只修正保存函数，保留用户配置、来源和草稿，不重新导入样本。
  if(sharedSources)await db.exec(await readFile(new URL('../sql/022-shared-source-field-preservation.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../sql/023-shop-manual-tax.sql',import.meta.url),'utf8'));
  let pending = Promise.resolve();
  // PGlite 验收库只使用一个连接，真实 PostgreSQL 使用各店池及各自运行角色。
  const underRole = task => {

@@ -30,7 +30,7 @@ export function createNasErpUiAdapter({read,snapshot,context,apply,shopName='英
   plans.set(kind,{id:key,at,stamp,changes:plan.changes});
   return {id:key,source:source.settings||input?.settings,total:source.rows.length,matched:source.rows.length,unmatched:plan.missing,
    unknown:kind==='erp'?source.rows.filter(row=>row.stockAvailable===null).length:0,changes:table,
-   examples:table.slice(0,80),changed:table.length,invalidCount:source.invalidCount||0};
+   examples:table.slice(0,80),changed:table.length,invalidCount:source.invalidCount||0,protectedCount:plan.protectedCount};
  }
  async function confirm(kind,input){
   const draft=plans.get(kind);
@@ -38,7 +38,8 @@ export function createNasErpUiAdapter({read,snapshot,context,apply,shopName='英
    throw Error('预览已过期或工作区已变化，请重新读取预览。');
   const outcome=await apply(draft.changes,kind);
   if(!outcome)return {cancelled:true};
-  plans.delete(kind);return {committed:true};
+  const skipped=outcome.batches?.flatMap(batch=>batch.result?.changes??[]).filter(row=>row.skipped==='manual_tax').length??0;
+  plans.delete(kind);return {committed:true,skipped};
  }
  return {
   async sqlRequest(route,data){

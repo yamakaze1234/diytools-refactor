@@ -299,16 +299,23 @@ export function openGlobalBatch(api){
   try{
    for(const row of approved.replacements)if(JSON.stringify(getCatalog().find(r=>r.sourceId===row.sourceId))!==JSON.stringify(row))throw Error('新配件资料已变化，请重新预览');
    if(auto)exportEntries(getConfigs(),approved.productIds,'both',exportOptions(approved.changes.map(c=>c.id)));validateReplacement(approved,getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);
-   await apply(approved);saved=true;tasks.reset();exportIds=approved.productIds;changedConfigIds=approved.changes.map(c=>c.id);undoRecords=captureBatchRevert(approved,getConfigs());$('#global-undo').classList.remove('hidden');$('#global-undo').textContent='一键还原本次修改';plan=null;$('#global-retry').classList.remove('hidden');
+   const result=await apply(approved);saved=true;tasks.reset();exportIds=approved.productIds;changedConfigIds=approved.changes.map(c=>c.id);
+   undoRecords=api.undoSaved?result:captureBatchRevert(approved,getConfigs());
+   $('#global-undo').classList.toggle('hidden',!undoRecords);$('#global-undo').textContent='一键还原本次修改';plan=null;$('#global-retry').classList.remove('hidden');
    if(auto){lock(false);await exportImages();}else status(`已统一修改并保存 ${approved.changes.length} 套配置。可以继续修改，或导出刚修改的链接图片。`);
-  }catch(error){status((saved?'修改已保存，导出未完成：':'修改未完成：')+error.message);toast(error.message);}
+  }catch(error){const message=api.errorText?.(error)||error.message;status((saved?'修改已保存，导出未完成：':'修改未完成：')+message);toast(message);}
   finally{lock(false);if(root.isConnected){plan=null;$('#global-apply').disabled=true;$('#global-undo').disabled=!undoRecords;}}
  };
  // 还原也走同一事务保存和基线校验；成功后消耗此批次的还原机会。
  $('#global-undo').onclick=async()=>{
   if(busy||!undoRecords)return;
-  try{lock(true);const reversal=batchRevertPlan(undoRecords,getConfigs());if(reversal.changes.length)await apply(reversal);undoRecords=null;plan=null;status('已还原本次批量修改并保存，可重新选择配件或导出图片。');$('#global-undo').textContent='本次修改已还原';}
-  catch(error){status('还原未完成：'+error.message);toast(error.message);}
+  try{
+   lock(true);
+   if(api.undoSaved)await api.undoSaved(undoRecords);
+   else{const reversal=batchRevertPlan(undoRecords,getConfigs());if(reversal.changes.length)await apply(reversal);}
+   undoRecords=null;plan=null;status('已还原本次批量修改并保存，可重新选择配件或导出图片。');$('#global-undo').textContent='本次修改已还原';
+  }
+  catch(error){const message=api.errorText?.(error)||error.message;status('还原未完成：'+message);toast(message);}
   finally{lock(false);if(root.isConnected){$('#global-undo').disabled=!undoRecords;invalidate();}}
  };
  $('#global-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(error){status('修改已保存，导出未完成：'+error.message);}finally{lock(false);if(root.isConnected)invalidate();}};
@@ -320,10 +327,21 @@ export async function exportBatchImages(api,exportIds,status=()=>{},options={}){
  const active=()=>{if(options.signal?.aborted)throw options.signal.reason||new DOMException('图片导出已取消','AbortError');};
  // 保存可能与继续编辑并行，先固定本次点击的完整输入。
  active();const snapshots=clone(options.snapshots||api.getConfigs());
+ if(!options.snapshots&&api.loadExportConfigs){
+  const links=new Set(exportIds),selected=options.configIds==null?null:new Set(options.configIds);
+  const targets=snapshots.filter(row=>!row.deletedAt&&links.has(row.productId)&&(!selected||selected.has(row.id)));
+  const full=new Map((await api.loadExportConfigs(targets.map(row=>row.id))).map(row=>[row.id,row]));
+  if(targets.some(row=>!Array.isArray(full.get(row.id)?.modules)||!Array.isArray(full.get(row.id)?.actualParts)))throw Error('部分配置详情未载入，未生成图片；请重新导出。');
+  // 未导出的摘要保留原有链接编号，只有已读回的完整配置进入渲染。
+  for(const [index,row] of snapshots.entries())if(full.has(row.id))snapshots[index]=clone(full.get(row.id));
+  active();
+ }
  // 重试保留业务快照，但固定样式采用本次点击时的已保存选择。
  if(options.snapshots&&api.getSkuModes){const modes=api.getSkuModes();for(const c of snapshots){if(modes.has(c.id))c.skuExportMode=modes.get(c.id);}}
  if(!options.snapshots)await api.save?.();active();
  const entries=exportEntries(snapshots,exportIds,options.imageKind||'both',{configIds:options.configIds??null,skuMode:options.skuMode});
+ // 导图任务只捕获本次点击时的链接文案，后续编辑不改变队列。
+ if(api.projectExportConfig)for(const entry of entries)entry.config=api.projectExportConfig(entry.config);
  if(!entries.length)throw Error('本次没有可导出的链接配置');
  // 仅对实际导出的 SKU 目标保存明确选择，沿用模式不触发写入。
  await api.saveSkuMode?.([...new Set(entries.filter(e=>e.config.layout==='square').map(e=>e.config.id))],options.skuMode);

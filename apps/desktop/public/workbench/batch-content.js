@@ -1,5 +1,6 @@
 /** 只复制本次选中的配置图内容。 */
-import {clearPosterExtraTextOverride,editPosterExtra,insertPosterExtra,posterExtraRows,removePosterExtra,setPosterExtraVisible} from './config-extras.js';
+import {clearPosterExtraTextOverride,editPosterExtra,insertPosterExtra,posterExtraRows,removePosterAddonCopy,removePosterExtra,setPosterExtraVisible} from './config-extras.js';
+import {maintenanceShortName} from './short-name-poster.js';
 
 export function posterAddonTextRows(config){
  return posterExtraRows(config,'addons').filter(row=>row.text?.trim()||row.note?.trim());
@@ -23,18 +24,14 @@ export function syncPosterAddonText(reference,target){
   }
  }
  // 旧记录带有商品或价格时保留这些字段，即使底部文案被清空。
- for(const row of existing.slice(incoming.length).reverse()){
-  if(row.goodsId||row.items?.length||row.priceCents!=null||row.variants?.length){
-   editPosterExtra(target,'addons',row.index,'text','');
-   editPosterExtra(target,'addons',row.index,'note','');
-  }else{
-   removePosterExtra(target,'addons',row.index);
-  }
- }
+ for(const row of existing.slice(incoming.length).reverse())removePosterAddonCopy(target,row.index);
 }
 
 export function applyBatchContent(reference,target,{addons=false,benefits=false,version=false}={}){
- if(version)target.version=reference.version||'';
+ if(version){
+  target.version=reference.version||'';
+  if(target.shortNameAuto===true)target.shortName=maintenanceShortName(target);
+ }
  if(addons)syncPosterAddonText(reference,target);
  if(benefits){
   const incoming=reference.benefits||[];

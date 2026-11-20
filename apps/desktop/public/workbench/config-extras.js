@@ -1,9 +1,18 @@
 /** 配置图底部的独立加购、选配和福利；配件来源维护仍由原同步流程负责。 */
 import {modulesDefault,posterModules} from './core.js';
-const isPosterExtraRow=(entry,kind)=>kind==='benefits'||!entry.sourceId&&entry.choices===undefined;
+export const isPosterExtraRow=(entry,kind)=>kind==='benefits'||!entry.sourceId&&entry.choices===undefined;
 export function posterExtraRows(config,kind){
  return (config[kind]||[]).flatMap((entry,index)=>isPosterExtraRow(entry,kind)
   ?[{...(typeof entry==='string'?{text:entry,note:''}:entry),index}]:[]);
+}
+const hasAddonItems=row=>row.goodsId||row.items?.length||row.priceCents!=null||row.variants?.length;
+/** 编辑页读出已显示的旧文案，保留自由编辑中已有的文字。 */
+export function posterAddonCopyRows(config){
+ const id=extraModuleId(config,'addons');
+ return posterExtraRows(config,'addons').map(row=>{
+  const shown=field=>id&&row[field]?(config.textStyles?.[`${id}.${row.index}.${field}`]?.text??row[field]):row[field];
+  return {...row,text:shown('text'),note:shown('note')};
+ }).filter(row=>row.text||row.note||!hasAddonItems(row));
 }
 function editable(config,kind,index){
  if(!['addons','benefits'].includes(kind)||!Number.isInteger(index)||config[kind]?.[index]==null)throw Error('内容已变化，请重新打开当前配置');
@@ -40,6 +49,7 @@ export function addPosterExtra(config,kind){
  (config[kind]??=[]).push({text:'',note:'',...(kind==='addons'?{items:[]}:{})});
  setPosterExtraVisible(config,kind,true);
  for(const field of ['text','note'])clearPosterExtraTextOverride(config,kind,config[kind].length-1,field);
+ return config[kind].length-1;
 }
 /** 旧配置可能缺少文字模块；显式显示时补入默认模块，保留其它模块及未知字段。 */
 export function setPosterExtraVisible(config,kind,visible){
@@ -65,6 +75,14 @@ export function removePosterExtra(config,kind,index){
  editable(config,kind,index);
  shiftPosterExtraStyles(config,kind,index,-1);
  config[kind].splice(index,1);
+}
+
+/** 清理独立文案时保留旧条目可能仍在使用的商品和价格。 */
+export function removePosterAddonCopy(config,index){
+ const entry=editable(config,'addons',index);
+ if(hasAddonItems(entry)){
+  for(const field of ['text','note'])editPosterExtra(config,'addons',index,field,'');
+ }else removePosterExtra(config,'addons',index);
 }
 
 export function insertPosterExtra(config,kind,index,row){

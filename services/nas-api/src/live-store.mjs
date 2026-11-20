@@ -12,6 +12,7 @@ import {addonItems,choiceAddon,effectiveNasAddons} from '../../../apps/desktop/p
 import {DEFAULT_PRICING_RULE,normalizePricingRule,normalizeProfitAlert,normalizeProfitAlerts} from '../../../apps/desktop/public/workbench/pricing.js';
 import {applyNameFormatPlan,nameFormatPlan} from '../../../apps/desktop/public/workbench/name-format-batch.js';
 import {planConfigRenumber} from '../../../apps/desktop/public/workbench/config-order.js';
+import {validAddonPack} from '../../../apps/desktop/public/workbench/link-addon-packs.js';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const plain=o=>o!==null&&typeof o==='object'&&!Array.isArray(o);
@@ -363,7 +364,7 @@ export class LiveStore extends Store{
     AND g.attrs->>'deletedAt' IS NULL ORDER BY g.gallery_id`,[shop])).rows;
    const caseGallery=galleryRows.map(row=>row.document);
    return {dataVersion:3,shops:[entry.profile],shopSettings:{[shop]:shopOverride?.settings??entry.settings},sourceCatalog,costSource,caseGallery,templates:[],logs:[],
-    ...(this.workspaceWritable?{costVersions:Object.fromEntries(costs.map(row=>[row.goodsid,row.version])),settingsVersion:shopOverride?.version??null}:{})};
+    ...(this.workspaceWritable?{costVersions:Object.fromEntries(costs.map(row=>[row.goodsid,row.version])),settingsVersion:shopOverride?.version??null,addonPacksSupported:true}:{})};
   });
  }
  async configurationChange(db,shop,id,action,body,op){
@@ -662,18 +663,19 @@ export class LiveStore extends Store{
    if(kind==='costs'){
     validated(row,['fields']);
     const f=row.fields;
-    failure(/^\d{1,20}$/.test(row.id)&&plain(f)&&safeValue(f)&&Object.keys(f).length&&['erp_snapshot','tax_edit','tax_file'].includes(row.action),'changes.costs');
+    failure(/^\d{1,20}$/.test(row.id)&&plain(f)&&safeValue(f)&&Object.keys(f).length&&['erp_snapshot','tax_edit','tax_file','tax_resume'].includes(row.action),'changes.costs');
     const erp=row.action==='erp_snapshot';
     failure(Object.keys(f).every(k=>(erp?['erp','stockAvailable','name','sku','stockUpdatedAt']:['tax','taxUpdatedAt']).includes(k))&&
      (erp?own(f,'erp')&&own(f,'stockAvailable'):own(f,'tax')),'changes.cost_fields');
     for(const k of ['erp','tax'])if(own(f,k))failure(f[k]===null||(typeof f[k]==='number'&&Number.isFinite(f[k])&&f[k]>=0&&f[k]<=Number.MAX_SAFE_INTEGER/100),'changes.'+k);
+    if(row.action==='tax_resume')failure(f.tax!==null,'changes.tax');
     if(own(f,'stockAvailable'))failure(f.stockAvailable===null||(typeof f.stockAvailable==='number'&&Number.isFinite(f.stockAvailable)&&Math.abs(f.stockAvailable)<=Number.MAX_SAFE_INTEGER),'changes.stockAvailable');
     for(const k of ['name','sku','stockUpdatedAt','taxUpdatedAt'])if(own(f,k))failure(goodText(f[k],512),'changes.'+k);
    }else if(kind==='settings'){
     validated(row,['fields']);
     const f=row.fields;
     failure(row.id===shop&&row.action==='replace'&&plain(f)&&safeValue(f)&&Object.keys(f).length&&
-     Object.keys(f).every(k=>['coupon','serviceText','erpShopId','erpShopName','pricingRule','profitAlert','posterView'].includes(k)),'changes.settings');
+     Object.keys(f).every(k=>['coupon','serviceText','erpShopId','erpShopName','pricingRule','profitAlert','posterView','addonPackChange'].includes(k)),'changes.settings');
     if(own(f,'coupon'))failure(price(f.coupon),'changes.coupon');
     if(own(f,'serviceText'))failure(typeof f.serviceText==='string'&&f.serviceText.length<=1000,'changes.serviceText');
     if(own(f,'erpShopId'))failure(typeof f.erpShopId==='string'&&/^(?:|\d{1,20})$/.test(f.erpShopId),'changes.erpShopId');
@@ -681,6 +683,11 @@ export class LiveStore extends Store{
     if(own(f,'pricingRule'))failure(pricingRuleOk(f.pricingRule),'changes.pricingRule');
     if(own(f,'profitAlert'))failure(profitAlertOk(f.profitAlert),'changes.profitAlert');
     if(own(f,'posterView'))failure(plain(f.posterView)&&Object.keys(f.posterView).length===2&&['long','square'].includes(f.posterView.layout)&&['padded','dedicated'].includes(f.posterView.skuMode),'changes.posterView');
+    if(own(f,'addonPackChange')){
+     const change=f.addonPackChange;
+     failure(Object.keys(f).length===1&&plain(change)&&identity(change.id)&&identity(change.productId)&&Object.keys(change).length===3&&
+      (change.pack===null||validAddonPack(change.pack)&&change.pack.id===change.id&&change.pack.productId===change.productId),'changes.addonPackChange');
+    }
    }else if(kind==='quotations'){
     validated(row,row.action==='select_workbook'?['spu','sku','amount_cents','workbook_sha256','workbook_row']:[]);
     failure(version(row.expected_version)&&['select_workbook','publish','withdraw'].includes(row.action),'changes.quotation');
@@ -697,12 +704,21 @@ export class LiveStore extends Store{
     if(kind==='costs'){
      const [old]=await effectiveCosts(db,shop,[id],true);
      previousVersion=old?.version??null;
+     // 批量成本表不能覆盖单店手改。兼容旧客户端及预览后新增的手改。
+     if(action==='tax_file'&&old?.document.nasManualTax===true){
+      rows.push({id,action:'tax_file_skipped',previousVersion,result:{id,version:previousVersion,skipped:'manual_tax'}});
+      continue;
+     }
      if(previousVersion!==row.expected_version)throw new Fault('VERSION_CONFLICT',409,{goods_id:id,current_version:previousVersion});
+     if(action==='tax_resume'&&old?.document.nasManualTax!==true)throw new Fault('VERSION_CONFLICT',409,{goods_id:id,current_version:previousVersion});
      const document={...old?.document,...fields,goodsId:id};
      // 普通维护和 ERP 读取会替代全局改价基线，禁止沿用旧恢复标记。
      delete document.globalTax;
      if(action==='erp_snapshot'){document.erpMissing=false;document.erpUnknown=fields.erp===null;document.stockMissing=false;document.nasErpOverride=true;}
-     else document.nasTaxOverride=true;
+     else{
+      document.nasTaxOverride=true;
+      document.nasManualTax=action==='tax_edit';
+     }
      if(document.tax!==old?.document.tax||document.erp!==old?.document.erp||document.erpUnknown!==old?.document.erpUnknown||document.erpMissing!==old?.document.erpMissing)
       priceChanges.set(id,{before:old?.document,after:document});
      updated=(BigInt(previousVersion||'0')+1n).toString();
@@ -711,13 +727,26 @@ export class LiveStore extends Store{
      if(this.sharedSources&&action!=='erp_snapshot'&&document.tax!==old?.document.tax)
       await db.query('SELECT workbench_sources.note_tax($1,$2,$3,$4,$5::jsonb)',[shop,member.workspaceId,member.uid,id,JSON.stringify(document.tax)]);
     }else if(kind==='settings'){
+     // 设置行可能尚未创建。按店串行校验版本，避免同时保存不同加购包时覆盖另一笔。
+     await shopLock(db,shop,814519,id);
      const {rows:[old]}=await db.query(`SELECT coalesce(o.settings,s.settings) AS settings,o.version::text FROM intel_live.shops s
       LEFT JOIN intel_live.intel_settings_overrides o USING(shop_id) WHERE s.shop_id=$1`,[shop]);
      previousVersion=old.version;
      if(previousVersion!==row.expected_version)throw new Fault('VERSION_CONFLICT',409,{current_version:previousVersion});
      updated=(BigInt(previousVersion||'0')+1n).toString();
+     const {addonPackChange,...patch}=fields;
+     if(addonPackChange){
+      const {id:packId,productId,pack}=addonPackChange;
+      const previous=old.settings.addonPacks??[],existing=previous.find(item=>item.id===packId);
+      failure(!existing||existing.productId===productId,'changes.addonPackChange.productId');
+      if(pack){
+       const {rows:[link]}=await db.query('SELECT 1 FROM intel_live.configurations WHERE shop_id=$1 AND product_id=$2 AND archived_at IS NULL LIMIT 1',[shop,productId]);
+       failure(Boolean(link)&&previous.length+Number(!existing)<=400,'changes.addonPackChange.link');
+      }
+      patch.addonPacks=existing?previous.flatMap(item=>item.id!==packId?[item]:pack?[pack]:[]):pack?[...previous,pack]:previous;
+     }
      await db.query(`INSERT INTO intel_live.intel_settings_overrides(shop_id,settings,version) VALUES($1,$2,$3)
-      ON CONFLICT(shop_id) DO UPDATE SET settings=excluded.settings,version=excluded.version`,[shop,JSON.stringify({...old.settings,...fields}),updated]);
+      ON CONFLICT(shop_id) DO UPDATE SET settings=excluded.settings,version=excluded.version`,[shop,JSON.stringify({...old.settings,...patch}),updated]);
     }else{
      const {rows:[old]}=await db.query('SELECT sku,spu,version::text FROM intel_live.configurations WHERE configuration_id=$1 AND shop_id=$2 AND archived_at IS NULL FOR UPDATE',[id,shop]);
      if(!old)throw new Fault('NOT_FOUND',404);
@@ -737,7 +766,7 @@ export class LiveStore extends Store{
     }
     rows.push({id,action,previousVersion,result:{id,version:updated,...(kind==='quotations'?{published:action==='publish'}:{})}});
    }
-   if(priceChanges.size)await this.recordPriceHistory(db,shop,op,priceChanges,entries.every(row=>row.action==='erp_snapshot')?'ERP 库存与成本同步':entries.every(row=>row.action==='tax_file')?'含税成本表更新':'成本价维护');
+   if(priceChanges.size)await this.recordPriceHistory(db,shop,op,priceChanges,entries.every(row=>row.action==='erp_snapshot')?'ERP 库存与成本同步':entries.every(row=>['tax_file','tax_resume'].includes(row.action))?'含税成本表更新':'成本价维护');
    return rows;
   });
  }

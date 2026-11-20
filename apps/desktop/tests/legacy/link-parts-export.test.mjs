@@ -97,6 +97,20 @@ test('原批量入口仍先保存并默认导出两种图片',async()=>{
  assert.equal(saves,1);assert.equal(renders,2);assert.equal(downloads,1);
 });
 
+test('批量保存淘汰详情后，导图只重读目标配置并保留链接内编号',async()=>{
+ const detail={...config('2'),parts:[{slot:'主板',name:'电竞雕',goodsId:'87095',qty:1}]};
+ const getConfigs=()=>[config('1'),{id:'2',productId:'a',product:'链接a',spu:'888888888888888888',name:'配置2'},config('3','b')];
+ const rendered=[];
+ const api={getConfigs,loadExportConfigs:async ids=>{assert.deepEqual(ids,['2']);return [detail];},
+  renderImage:async config=>{rendered.push(config);return renderer(config);},saveFolder:async()=>({directory:'测试'})};
+ const options={imageKind:'long',configIds:['2']};
+ const task=await exportBatchImages(api,['a'],()=>{},options);
+ assert.equal(task.items[0].name,'2_配置2.png');
+ assert.equal(rendered[0].parts[0].name,'电竞雕');assert.deepEqual(rendered[0].modules,detail.modules);
+ await assert.rejects(exportBatchImages({...api,loadExportConfigs:async()=>[]},['a'],()=>{},options),/部分配置详情未载入/);
+ assert.equal(rendered.length,1);
+});
+
 test('导图中途取消不打开文件夹或下载，后续配置不再渲染',async()=>{
  const controller=new AbortController();let renders=0,folders=0,downloads=0;
  await assert.rejects(exportBatchImages({renderImage:async c=>{renders++;controller.abort();return renderer(c);},saveFolder:async()=>folders++,download:()=>downloads++},['a'],()=>{},{snapshots:[config('1'),config('2')],signal:controller.signal}),{name:'AbortError'});

@@ -17,7 +17,7 @@ test('saving edited configurations schedules no image work and releases stale pe
 test('explicit export downloads the click-time draft directly without an application cache copy',async()=>{
  let config={id:'one',name:'first',layout:'long'},finish;const waits=new Promise(resolve=>finish=resolve),rendered=[],downloads=[];
  const context={exportSingleImage:(blob,name,options)=>exportSingleImage(blob,name,{...options,saveFolder:async()=>null}),current:()=>config,clone:structuredClone,$:()=>({value:'1400'}),defaultPosterWidth:()=>1000,dirty:true,savePromise:null,conflict:false,exportJobs:0,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),numberedImageEntries:rows=>rows.map(config=>({config,name:'test.png'})),imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1400}),filename:c=>(c.name||'test')+'.png',
- imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async(c,w)=>{rendered.push([c,w]);await waits;return{canvas:{width:1400,height:1000}};},toBlob:async()=>new Blob(['png']),downloadBlob:(blob,name)=>downloads.push({blob,name}),toast(){},scheduleImageSave(){},request(){throw Error('No intermediate disk cache');}};
+ withAddonPackText:config=>config,addonPackDrafts:new Map(),imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},drawPoster:async(c,w)=>{rendered.push([c,w]);await waits;return{canvas:{width:1400,height:1000}};},toBlob:async()=>new Blob(['png']),downloadBlob:(blob,name)=>downloads.push({blob,name}),toast(){},scheduleImageSave(){},request(){throw Error('No intermediate disk cache');}};
  vm.runInNewContext('var nasMain=false;\n'+exportCode,context);const pending=context.exportCurrent();config.name='changed';finish();await pending;
  assert.equal(rendered[0][0].name,'first');assert.equal(rendered[0][1],1400);assert.equal(downloads[0].name,'first.png');assert.equal(context.exportJobs,0);
 });
@@ -25,7 +25,7 @@ test('explicit export downloads the click-time draft directly without an applica
 test('overflow export reports failure without downloading or saving a cached PNG',async()=>{
  // 渲染器即使溢出也返回画布，模拟真实返回值以覆盖失败后的资源释放。
  const errors=[];const context={current:()=>({id:'one'}),clone:structuredClone,$:()=>({value:'0'}),defaultPosterWidth:()=>1000,dirty:false,savePromise:null,conflict:false,exportJobs:0,state:{revision:1},activeShopId:'intel',currentShop:()=>({name:'测试'}),numberedImageEntries:rows=>rows.map(config=>({config,name:'test.png'})),imageExportOptions:()=>({kind:'long',skuMode:'dedicated',width:1400}),filename:c=>(c.name||'test')+'.png',
- imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},renderPoster:async()=>({overflow:true,canvas:{width:1400,height:1000}}),downloadBlob(){throw Error('Unexpected download');},toast:text=>errors.push(text),scheduleImageSave(){}};
+ withAddonPackText:config=>config,addonPackDrafts:new Map(),imageRenderGate:{run:async work=>work({beforeDraw:()=>{}})},drawPoster:async()=>({overflow:true,canvas:{width:1400,height:1000}}),downloadBlob(){throw Error('Unexpected download');},toast:text=>errors.push(text),scheduleImageSave(){}};
  vm.runInNewContext('var nasMain=false;\n'+exportCode,context);await context.exportCurrent();assert.match(errors[0],/超出/);assert.equal(context.exportJobs,0);
 });
 

@@ -177,7 +177,7 @@ body.overview-mode:not(.continuous-mode) .main > .editor { margin: 12px var(--ov
 .ov-preview-modes,.ov-preview-footer { display: none; }
 body.overview-mode .preview-side:not(.preview-expanded) :is(.ov-preview-modes,.ov-preview-footer) { display: flex; flex: none; gap: 5px; }
 body.overview-mode .preview-side:not(.preview-expanded) #preview-close { display: inline-block; }
-body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-panel) { display: none; }
+body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-scroll) { display: none; }
 body.overview-mode .preview-side:not(.preview-expanded) #poster-stage { pointer-events: none; }
 body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-modes { order: 1; }
 body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer { order: 6; padding-top: 10px; border-top: 1px solid var(--ov-line); }
@@ -724,3 +724,131 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  html.dark #continuous-workbench .ov-row-tools button:not(.ov-delete-config){background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
  html.dark #continuous-workbench .ov-row-tools button:not(.ov-delete-config):hover{background:var(--ef-panel)!important;}
 }
+
+/* 链接加购包复用工作台表格和金额颜色，明细允许横向滚动。 */
+.addon-pack-overview,.addon-pack-maintenance{padding:10px;margin:8px 0;border:1px solid var(--ui-line,#c9cad0)}
+.addon-pack-table{overflow:auto}
+.addon-pack-table table{width:100%;border-collapse:collapse;min-width:470px}
+.addon-pack-table th,.addon-pack-table td{padding:7px;text-align:left;border-bottom:1px solid var(--ui-line,#c9cad0)}
+.addon-pack-overview p{white-space:pre-wrap;overflow-wrap:anywhere;margin:3px 0}
+.addon-pack-maintenance{display:block}
+.addon-pack-maintenance summary{cursor:pointer}
+.addon-pack-match{padding:5px 0}
+#pack-profit-value [data-profit-tone=positive],#pack-maintenance-list [data-profit-tone=positive]{color:var(--ef-success,#20653c)}
+#pack-profit-value [data-profit-tone=negative],#pack-maintenance-list [data-profit-tone=negative]{color:var(--ef-danger,#a62c22)}
+
+/* 加购页按 HTML 原型排列；表头、段落底色和按钮层级与原页一致。 */
+#link-addon-editor{margin:12px var(--ov-gutter,16px) 16px;min-width:0;container-type:inline-size}
+#editor[hidden],#link-addon-editor[hidden],#link-addon-editor [hidden],.pack-reuse-fields [hidden]{display:none!important}
+.pack-sheet,.pack-reuse-fields{
+ --pack-ink:#171917;--pack-muted:#565a55;--pack-sheet:#fff;--pack-line:#d3d6cf;
+ --pack-paper:#f1f2ee;--pack-soft:#f9faf7;--pack-chip:#e5e7e1;--pack-accent:#f6f23f;
+ color:var(--pack-ink)
+}
+html.dark :is(.pack-sheet,.pack-reuse-fields){
+ --pack-ink:var(--ef-ink);--pack-muted:var(--ef-ink-2);--pack-sheet:var(--ef-panel);
+ --pack-line:var(--ef-rule);--pack-paper:var(--ef-paper);--pack-soft:var(--ef-panel);
+ --pack-chip:var(--ef-chip);--pack-accent:var(--ef-signal)
+}
+.pack-sheet{border:1px solid var(--pack-line);background:var(--pack-sheet);font-size:13px;line-height:1.45}
+.pack-sheet :is(h2,h3,p,dl,dd){margin:0}
+.pack-sheet h2{font-size:17px;line-height:1.35}
+.pack-sheet h3{font-size:15px;line-height:1.4}
+.pack-sheet :is(.hint,small),.pack-reuse-fields .hint{font-size:11px;color:var(--pack-muted);font-weight:400}
+.pack-section{padding:11px 13px;border-bottom:1px solid var(--pack-line);min-width:0}
+.pack-section:last-child{border:0}
+.pack-head,.pack-subhead,.pack-profit,.pack-benefit-settings{display:flex;align-items:center;justify-content:space-between;gap:9px}
+.pack-head{margin-bottom:8px}
+.pack-subhead{margin-bottom:5px}
+.pack-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.pack-sheet label.field,.pack-reuse-fields label.field{display:grid;min-width:0;gap:4px;align-content:start;margin:0;font-size:11px;font-weight:700}
+.pack-sheet :is(input:not([type=checkbox]),textarea,select),.pack-reuse-fields select{
+ display:block;background:var(--pack-sheet);color:var(--pack-ink);width:100%;min-width:0;min-height:31px;border:1px solid var(--pack-line);
+ border-radius:0;padding:5px 7px;margin:0;box-sizing:border-box;font-family:inherit;font-size:13px;font-weight:400;line-height:1.4
+}
+.pack-sheet textarea{resize:vertical}
+.pack-sheet button,.pack-reuse-fields button{border-radius:0;min-height:31px;padding:4px 10px;border:1px solid var(--pack-line);color:var(--pack-ink);background:var(--pack-sheet);clip-path:none}
+.pack-sheet button:hover:not(:disabled),.pack-reuse-fields button:hover:not(:disabled){background:var(--pack-chip)}
+.pack-sheet button.primary,.pack-reuse-fields button.primary{background:var(--pack-accent);color:#171917;border-color:#171917;font-weight:700;clip-path:polygon(0 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%)}
+.pack-mode button{font-size:11px;min-height:27px;padding-inline:7px}
+.pack-mode button[aria-pressed=true]{background:var(--pack-ink)!important;color:var(--pack-sheet)!important;border-color:var(--pack-ink)!important}
+.pack-plan-bar,.pack-plan-fields,.pack-copy-fields{display:grid;gap:6px;align-items:end}
+.pack-plan-bar{grid-template-columns:minmax(0,1fr) auto}
+.pack-plan-fields{grid-template-columns:minmax(0,1fr) minmax(110px,150px);gap:8px;margin-top:7px}
+.pack-plan-fields:has(>label:only-child){grid-template-columns:minmax(0,1fr)}
+.pack-copy-fields{grid-template-columns:minmax(130px,205px) minmax(0,1fr);align-items:start;gap:8px}
+.pack-copy-tools{display:flex;justify-content:flex-end}
+.pack-copy-tools button{font-size:11px;margin-top:3px;border-color:transparent}
+.pack-scope,.pack-manifest{background:var(--pack-soft)}
+.pack-scope p,.pack-sheet .pack-origin,.pack-sheet .pack-rule-note{margin-top:5px}
+.pack-profit{background:var(--pack-paper)}
+#pack-profit-value{font:750 19px/1.25 'Cascadia Mono',Consolas,monospace;white-space:nowrap}
+.pack-rule{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(108px,135px) 72px auto;align-items:start;gap:6px;padding:7px;border:1px solid var(--pack-line);margin:4px 0;background:var(--pack-soft)}
+.pack-rule-add{grid-template-columns:minmax(0,1fr) 72px auto}
+.pack-rule [data-pack-remove]{margin-top:20px;padding:0 8px;font-size:16px}
+.pack-rule output{min-height:31px;border:1px solid var(--pack-line);background:var(--pack-paper);padding:5px 7px}
+.pack-rule-summary{grid-column:1/-1;font-size:11px;overflow-wrap:anywhere}
+.pack-rule .product-search{position:relative;min-width:0}
+.pack-rule .product-search :is(.product-picked,[data-product-count]){display:none!important}
+.pack-rule .product-results:empty{display:none}
+.pack-rule .product-results{position:absolute;z-index:6;inset:100% 0 auto;width:100%;max-height:230px;overflow:auto;background:var(--pack-sheet);border:1px solid var(--pack-line);box-shadow:0 4px 9px #17191722}
+.pack-rule .product-results button{display:block;width:100%;text-align:left;overflow-wrap:anywhere}
+.pack-trial{width:125px;flex:none}
+#pack-manifest-name{font-weight:700;margin-top:3px}
+.pack-sheet .pack-manifest-table{border:1px solid var(--pack-line);table-layout:fixed;background:var(--pack-sheet);font-size:12px;min-width:370px}
+.pack-sheet .pack-manifest-table :is(th,td){padding:7px 8px;border-color:var(--pack-line);overflow-wrap:anywhere}
+.pack-sheet .pack-manifest-table th{font-size:11px;color:var(--pack-muted);background:var(--pack-chip)}
+.pack-manifest-table td{vertical-align:top}
+.pack-manifest-table th:first-child{width:72px}
+.pack-manifest-table th:last-child{width:111px}
+.pack-manifest-table small{display:block;margin-top:3px}
+.pack-manifest-table .pack-part+.pack-part{margin-top:6px}
+.pack-tags,.pack-deltas,.pack-totals dd{font-variant-numeric:tabular-nums;font-family:'Cascadia Mono',Consolas,monospace}
+.pack-operation{display:inline-block;font-size:10px;font-weight:700;padding:1px 4px;background:var(--pack-chip);border:1px solid var(--pack-line)}
+.pack-operation[data-kind=add]{background:#faf9d7;color:#171917}
+.pack-deltas small{display:flex;justify-content:space-between;gap:4px}
+.pack-totals{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));background:var(--pack-paper);border:1px solid var(--pack-line);border-top:0}
+.pack-totals div{padding:7px 8px;border-right:1px solid var(--pack-line)}
+.pack-totals div:last-child{border-right:0}
+.pack-totals dt{color:var(--pack-muted);font-size:11px}
+.pack-totals dd{font-weight:750}
+.pack-empty{padding:8px 9px;background:var(--pack-paper,var(--ov-page));color:var(--pack-muted,var(--ov-ink));font-size:12px}
+.pack-benefit-settings{margin-top:8px}
+.pack-benefit-settings label{display:flex;align-items:center;gap:5px}
+.pack-benefit-row,.pack-config-copy-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.75fr) auto;align-items:end;gap:8px;padding:7px;margin:6px 0;border:1px solid var(--pack-line);background:var(--pack-soft)}
+.pack-config-copy-row{grid-template-columns:minmax(0,1fr) auto}
+.pack-config-copy-row>.field:first-child{grid-column:1/-1}
+/* 旧文案占满整行，保留换行并随文字和可用宽度增高。 */
+.pack-config-copy-row textarea{field-sizing:content;height:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.pack-config-copy-row textarea[data-copy-field="text"]{min-height:84px}
+.pack-reuse-fields{display:grid;gap:8px}
+.pack-reuse-fields .pack-actions{justify-content:flex-end}
+.pack-reuse-match{background:var(--pack-paper);padding:8px;border:1px solid var(--pack-line)}
+.pack-reuse-match :is(strong,small){display:block}
+@layer workbench-interaction {
+ /* 页内交互用原型的白底按钮、黑色选中和黄色保存，避免继承通用按钮配色。 */
+ html[data-workbench-design] :is(#link-addon-editor,.pack-reuse-fields) button{
+  background:var(--pack-sheet)!important;color:var(--pack-ink)!important;border:1px solid var(--pack-line)!important;
+ }
+ html[data-workbench-design] :is(#link-addon-editor,.pack-reuse-fields) button:hover:not(:disabled){background:var(--pack-chip)!important}
+ html[data-workbench-design] #link-addon-editor .pack-mode button[aria-pressed=true]{
+  background:var(--pack-ink)!important;color:var(--pack-sheet)!important;border-color:var(--pack-ink)!important;
+ }
+ html[data-workbench-design] :is(#link-addon-editor,.pack-reuse-fields) button.primary{
+  background:var(--pack-accent)!important;color:#171917!important;border-color:#171917!important;font-weight:700!important;
+ }
+ html[data-workbench-design] #link-addon-editor :is(h2,h3){font-weight:700!important}
+}
+@container (max-width:680px){
+ .pack-rule{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto}
+ .pack-rule>[data-pack-source]{grid-column:2/-1}
+ .pack-rule-add>[data-pack-source]{grid-column:1/-1}
+ .pack-plan-bar{grid-template-columns:minmax(0,1fr)}
+}
+@container (max-width:420px){
+ .pack-copy-fields,.pack-benefit-row,.pack-config-copy-row{grid-template-columns:minmax(0,1fr)}
+}
+.cost-source-table .cost-manual-row>td{background:#fff3ab}
+html.dark .cost-source-table .cost-manual-row>td{background:#5c4a13}
+.cost-row-actions{display:flex;flex-wrap:wrap;gap:4px}
+.cost-row-actions button{white-space:nowrap}

@@ -36,6 +36,7 @@ try{
  page.setDefaultTimeout(9000);
  const errors=[];
  let workbookVersion=0;
+ let missingCost=false;
  let denySiblingCatalog=false;
  page.on('pageerror',error=>{errors.push(error.message);console.error(error.stack);});
  page.on('dialog',dialog=>dialog.accept());
@@ -61,7 +62,9 @@ try{
   if(command==='nas_erp_read'&&args.kind==='tax-current'){
    workbookVersion++;
    if(workbookVersion===3)return result({ok:false,error:'测试成本表暂不可读取'},503);
-   return result({ok:true,rows:[{goods_id:'100001',tax:70+workbookVersion}],
+   const ids=args.goodsIds??[];
+   const rows=missingCost?[]:[{goods_id:'100001',tax:70+workbookVersion},{goods_id:'9900013',tax:314.249999}].filter(row=>ids.includes(row.goods_id));
+   return result({ok:true,rows,
     workbook:{name:'主机成本表V2新_修复版.xlsb'}});
   }
   if(command==='nas_erp_read')return result({ok:true,rows:[]});
@@ -200,6 +203,37 @@ try{
  assert.equal(await costInput.inputValue(),'13');
  assert.equal(await el('#cost-paste-apply').isDisabled(),true);
  assert.equal(await el('#cost-paste-diff').innerText(),'');
+ // 按分币比较，工作簿浮点误差不视作价差。
+ await el('#cost-workbook-refresh').click();
+ await frame.getByText(/主机成本表V2新_修复版.xlsb · 匹配/).waitFor();
+ await el('#cost-price-filter').selectOption('different');
+ assert.equal(await costInput.count(),1);
+ assert.equal(await el('[data-manual-price="9900013"]').count(),0);
+ await el('#cost-paste-check').click();
+ await el('#cost-paste-apply').click();
+ await el('#cost-message').getByText(/已更新 1 条核算价/).waitFor();
+ const manualRow=el('#cost-source-rows tr.cost-manual-row');
+ assert.equal(await manualRow.count(),1);
+ const expectedYellow=await manualRow.evaluate(row=>row.ownerDocument.documentElement.classList.contains('dark')?'rgb(92, 74, 19)':'rgb(255, 243, 171)');
+ assert.deepEqual(await manualRow.locator('td').evaluateAll(cells=>[...new Set(cells.map(cell=>getComputedStyle(cell).backgroundColor))]),[expectedYellow]);
+ assert.equal(await costInput.inputValue(),'82');
+ await close();
+ await frame.getByRole('button',{name:'维护',exact:true}).click();
+ await frame.getByRole('button',{name:'当前店铺核算价',exact:true}).click();
+ await frame.getByText(/主机成本表V2新_修复版.xlsb · 匹配/).waitFor();
+ await el('#cost-price-filter').selectOption('manual');
+ assert.equal(await manualRow.count(),1);
+ assert.equal(await costInput.inputValue(),'82');
+ missingCost=true;
+ await el('[data-cost-resume="100001"]').click();
+ await el('#cost-message').getByText(/已保留手动核算价/).waitFor();
+ assert.equal(await costInput.inputValue(),'82');
+ missingCost=false;
+ await el('[data-cost-resume="100001"]').click();
+ await el('#cost-message').getByText(/已重新同步为 ¥77.00/).waitFor();
+ assert.equal(await manualRow.count(),0);
+ await el('#cost-price-filter').selectOption('all');
+ assert.equal(await costInput.inputValue(),'77');
  await close();
  if(useLegacy){
   // 兄弟店的目录接口失败时，本店原有正式维护仍可打开。

@@ -4,6 +4,7 @@ import {createNasDraftController,ensureNasPartLineIds,nasDependencies} from './n
 import {createNasCatalogController} from './nas-catalog-controller.js';
 import {createNasOperationQueue,nasPlanStorage} from './nas-operation-plan.js';
 import {syncPosterAddonText} from './batch-content.js';
+import {isPosterExtraRow} from './config-extras.js';
 const dup=value=>structuredClone(value);
 const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const own=(o,k)=>Object.hasOwn(o,k);
@@ -18,6 +19,29 @@ export const visibleNasAddons=(list,fallback)=>Array.isArray(list)&&list.length=
 const itemId=value=>obj(value)?(value.lineId??value.id):undefined;
 const keyed=array=>array.length>0&&array.every(x=>typeof itemId(x)==='string'&&itemId(x))&&new Set(array.map(itemId)).size===array.length;
 
+// 只改底部独立文案时，沿用保存原文中的配件加购，避免把展开的跟随组写成独立记录。
+function projectPosterAddons(raw,visible,edited){
+ if(![raw,visible,edited].every(Array.isArray))return;
+ const manual=row=>isPosterExtraRow(row,'addons');
+ const saved=raw.filter(row=>!manual(row)),shown=visible.filter(row=>!manual(row));
+ if(equal(saved,shown)||!equal(shown,edited.filter(row=>!manual(row))))return;
+ const group=row=>row.followPolicy==='follow'&&row.followAll===true;
+ const result=[],emitted=new Set();
+ let cursor=0;
+ for(const row of edited){
+  if(manual(row)){result.push(row);continue;}
+  if(group(row)&&emitted.has(row.sourceId))continue;
+  const index=saved.findIndex((item,i)=>i>=cursor&&item.sourceId===row.sourceId&&group(item)===group(row)&&
+   (group(row)||(item.variantId||'')===(row.variantId||'')));
+  if(index>=0){result.push(...saved.slice(cursor,index+1));cursor=index+1;}
+  else if(group(row))result.push({sourceId:row.sourceId,text:'',items:[],followPolicy:'follow',followAll:true});
+  else return;
+  if(group(row))emitted.add(row.sourceId);
+ }
+ result.push(...saved.slice(cursor));
+ return dup(result);
+}
+
 /** 只写编辑器输入相对显示基线改变的节点；按行 ID 对齐 BOM、素材、模块，重排不丢未显示字段。 */
 export function projectNasEdits(raw,visible,edited){
  if(equal(visible,edited))return dup(raw);
@@ -26,7 +50,9 @@ export function projectNasEdits(raw,visible,edited){
   for(const key of new Set([...Object.keys(visible),...Object.keys(edited)])){
    if(['__proto__','prototype','constructor'].includes(key)||equal(visible[key],edited[key])&&own(visible,key)===own(edited,key))continue;
    if(!own(edited,key))delete next[key];
-   else next[key]=own(visible,key)?projectNasEdits(raw?.[key],visible[key],edited[key]):dup(edited[key]);
+   else if(key==='addons'&&Array.isArray(edited.parts)&&equal(visible.parts,edited.parts)){
+    next[key]=projectPosterAddons(raw?.[key],visible[key],edited[key])??projectNasEdits(raw?.[key],visible[key],edited[key]);
+   }else next[key]=own(visible,key)?projectNasEdits(raw?.[key],visible[key],edited[key]):dup(edited[key]);
   }
   // 来源暂时无方案时，可见数组不含跟随组；编辑独立文案也要保留原文中的组身份。
   if(Array.isArray(raw?.addons)&&Array.isArray(next.addons)&&Array.isArray(edited.parts)){
@@ -199,6 +225,11 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   if(!row?.visible||!ctrl||config.shopId!==shopId)throw new NasApiError('INVALID_DRAFT');
   const proposed=projectNasEdits(row.raw,row.visible,config);
   if(!equal(proposed,ctrl.read().document))ctrl.edit(proposed);
+  // 后续批量文案编辑以先前已暂存的配件加购为基线，撤销也走同一份原文投影。
+  if(!equal(row.visible.addons,config.addons)){
+   row.raw.addons=dup(proposed.addons);
+   row.visible.addons=dup(config.addons);
+  }
   return ctrl.read();
  }
  function pendingState(id){const record=controllers.get(id)?.read();return record?!!record.pending:null;}
@@ -283,7 +314,8 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    if(action==='archive'||action==='replace'){
     // 删除只提交原服务端版本，不提交草稿；若已有保存请求在途，仍需先核实结果。
     if(action==='archive'&&record?.pending)throw new NasApiError('ARCHIVE_SAVE_PENDING');
-    if(!record||action==='replace'&&(record.pending||!equal(record.base,record.document)))throw new NasApiError('UNSAVED_DRAFT');
+    if(!record)throw new NasApiError('CONFIG_DETAIL_REQUIRED',409,{configuration_id:id});
+    if(action==='replace'&&(record.pending||!equal(record.base,record.document)))throw new NasApiError('UNSAVED_DRAFT',409,{configuration_id:id});
     if(row.expected_version!=null&&record.version!==row.expected_version)throw new NasApiError('VERSION_CONFLICT',409);
    }
    if(action==='restore'||action==='archive'){
@@ -398,6 +430,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    });
   },
   costVersion:id=>meta?.costVersions?.[id]??null,settingsVersion:()=>meta?.settingsVersion??null,
+  supportsAddonPacks:()=>meta?.addonPacksSupported===true,
   priceDraft,
   quotation:id=>call(()=>client.quotation(id)),activity:()=>call(()=>client.activity()),activityPage:query=>call(()=>client.activityPage(query)),
   profit:(action,input)=>call(()=>client.profit(action,input)),
@@ -445,6 +478,7 @@ export const nasErrorText=error=>{
  IMAGE_UPLOAD_DISABLED:'当前 NAS 服务没有开放图片上传。',
  ORIGINAL_IMAGE_REQUIRED:'要重试上传，请选择最初提交的同一张 PNG 或 JPG 原图。',
  UNSAVED_DRAFT:'操作范围含未保存的配置草稿。请先保存或放弃这些草稿。',
+ CONFIG_DETAIL_REQUIRED:'配置详情尚未载入，请重新打开操作并预览。',
  ARCHIVE_SAVE_PENDING:'所选配置有未确认的保存请求，请先查询保存结果，再移入回收站。',
  PRODUCT_MEMBERS_CHANGED:'商品链接的配置范围已变化，请刷新后重新核对。',
  WORKSPACE_PLAN_PENDING:'先处理上一项 NAS 批量操作，再建立新计划。',

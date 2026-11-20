@@ -6,6 +6,7 @@ import {shopServiceColor,shopServiceTextColor} from './poster-theme.js';
 import {isSpecialComponent} from './special-components.js';
 import {restoreConfigOrder} from './config-order.js';
 import {REPAIRED_HOST_COST} from './maintenance-workbook.js';
+import {maintenanceShortName} from './short-name-poster.js';
 export const slots=['CPU','散热','主板','内存','硬盘','显卡','电源','机箱','风扇','配件1','配件2','配件3','配件4','配件5','配件6','配件7'];
 export const clone=x=>structuredClone(x);
 export const cents=x=>x===''||x==null?null:Math.round(Number(x)*100);
@@ -75,7 +76,16 @@ export function copyText(configs,kind,template,formulasForShop=()=>({})){
    return cells.join('\t');
   }).join('\r\n');
  }
- const key={spu:'spu',sku:'skuId',name:'shortName'}[kind];if(!key)throw Error('未知复制类型');for(const c of configs){if(!String(c[key]||'').trim())throw Error(`${c.name} 尚未填写${kind==='sku'?' SKU ID':kind==='spu'?' SPU':'简称'}`);if(kind!=='name'&&!/^\d+$/.test(c[key]))throw Error(`${c.name} 的 ID 只能包含数字`);if(/[\t\r\n]/.test(c[key]))throw Error('字段包含换行或制表符，请先清理');}return configs.map(c=>c[key]).join('\r\n');}
+ const key={spu:'spu',sku:'skuId',name:'shortName'}[kind];
+ if(!key)throw Error('未知复制类型');
+ return configs.map(config=>{
+  const value=kind==='name'?maintenanceShortName(config):config[key];
+  if(!String(value||'').trim())throw Error(`${config.name} 尚未填写${kind==='sku'?' SKU ID':kind==='spu'?' SPU':'简称'}`);
+  if(kind!=='name'&&!/^\d+$/.test(value))throw Error(`${config.name} 的 ID 只能包含数字`);
+  if(/[\t\r\n]/.test(value))throw Error('字段包含换行或制表符，请先清理');
+  return value;
+ }).join('\r\n');
+}
 export const serviceModule=(shopId,theme)=>({id:'service',type:'service',title:'服务承诺',text:DEFAULT_SERVICE_TEXT,visible:true,size:18,weight:700,color:shopServiceTextColor(shopId,theme),background:shopServiceColor(shopId,theme),fontFamily:'',gap:8});
 export const modulesDefault=(shopId,theme)=>[
  {id:'header',type:'header',title:'标题与机箱',visible:true,size:29,weight:700,color:'',gap:18},

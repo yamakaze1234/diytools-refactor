@@ -1,13 +1,24 @@
-// 11-19：右侧配置总表滚动时，左侧导航高亮当前看到的那套配置（只高亮，不切换编辑、不重绘列表）。
+// 总表只报告当前链接内滚动到的配置；编辑页和等待换链渲染期间沿用实际编辑项。
 let current=null,raf=0;
+let editingId=null,editingProductId=null;
+function activeSheet(){
+ const sheet=document.querySelector('#continuous-workbench:not([hidden]) .ov-sheet-scroll');
+ return sheet?.offsetParent&&sheet.dataset.productId===editingProductId?sheet:null;
+}
+export function syncScrollHighlight(config){
+ const id=config?.id??null,productId=config?.productId??null;
+ const moved=id!==editingId||productId!==editingProductId;
+ editingId=id;editingProductId=productId;
+ mark(moved||!activeSheet()?id:current??id);
+}
 function pick(){
  raf=0;
- const sheets=[...document.querySelectorAll('.ov-sheet-scroll')].filter(el=>el.offsetParent);
- const sheet=sheets[0];if(!sheet)return;
+ const sheet=activeSheet();
+ if(!sheet){mark(editingId);return;}
  const r0=sheet.getBoundingClientRect(),box={top:Math.max(r0.top,0),bottom:Math.min(r0.bottom,innerHeight)};box.height=box.bottom-box.top;const line=box.top+Math.min(160,box.height*0.3);
  let hit=null;
  for(const el of sheet.querySelectorAll('[data-continuous-config]')){const r=el.getBoundingClientRect();if(r.bottom<=box.top||r.top>=box.bottom)continue;if(r.top<=line)hit=el;else{hit??=el;break;}}
- mark(hit?.dataset.continuousConfig||null);
+ mark(hit?.dataset.continuousConfig||editingId);
 }
 function paint(el,bg,shadow){
  // 主题 CSS 在 @layer 里带 !important，类名样式压不过，只能用行内 !important。
