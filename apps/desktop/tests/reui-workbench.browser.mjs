@@ -20,6 +20,12 @@ state.configs.forEach((c,i)=>c.name='配置'+(i+1));
 state.sourceCatalog=[{shopId:'intel',sourceId:'s-cpu',goodsId:'1001',name:'验收CPU',erp:800,tax:850},{shopId:'intel',sourceId:'s-memory',goodsId:'1002',name:'验收内存',erp:220,tax:240}];
 state.costSource=state.sourceCatalog.map(p=>({...p,stockAvailable:12}));
 for(const c of state.configs){Object.assign(c.parts[0],state.sourceCatalog[0]);Object.assign(c.actualParts[0],state.sourceCatalog[0]);}
+// 用旧版自由编辑残留的文字复现联动问题，并为每套配置保留不同的配件加购。
+const targetAddon={sourceId:'s-cpu',text:'目标 CPU 加购',items:[{goodsId:'1002',qty:2}],qty:2,priceCents:16900};
+Object.assign(state.configs[0],{addons:[targetAddon,{text:'目标底部原文案',items:[]}],benefits:[{text:'目标原福利'}],
+ textStyles:{'addons.1.text':{text:'目标自由编辑旧文案',color:'#645432'}}});
+Object.assign(state.configs[1],{addons:[{...targetAddon,text:'基准 CPU 加购',priceCents:29900},{text:'基准底部文案',note:'基准补充说明',items:[]}],
+ benefits:[{text:'基准福利'}],textStyles:{'benefits.0.text':{text:'福利自由编辑旧文案',size:21}}});
 let host,callStore,storeDirectory;
 if(process.env.REUI_REAL_STORE==='1'){
  const directory=fileURLToPath(new URL(`../../../sandbox/reui-acceptance-${Date.now()}/`,import.meta.url));
@@ -125,6 +131,28 @@ try{
  await page.locator('.config-item[data-id="c1"]').click();await openAdvanced(page,'display');await page.locator('[data-config="version"]').fill('隔离版本批量');await page.locator('[data-config="version"]').press('Tab');await mainTable(page);await saveUi(page);
  await page.locator('#batch-style').click();assert.equal(await page.locator('#style-scope').inputValue(),'selected');await page.locator('#style-colors').uncheck();await page.locator('#style-format').uncheck();await page.locator('#style-images').uncheck();await page.locator('#style-version').check();await page.locator('#style-apply').click();await saveUi(page);
  assert.equal(state.configs.find(c=>c.id==='c0').version,'隔离版本批量');assert.equal(state.configs.find(c=>c.id==='c0').skuId,'98765432109876543210');assert.equal(state.configs.find(c=>c.id==='c1').price,5999);
+ await page.locator('.tabs [data-tab="perks"]').click();
+ await page.locator('[data-extra-kind="benefits"][data-extra-field="text"]').fill('最新福利文案');
+ await mainTable(page);await saveUi(page);
+ assert.deepEqual(state.configs.find(c=>c.id==='c1').textStyles['benefits.0.text'],{size:21});
+ const oldTarget=structuredClone(state.configs.find(c=>c.id==='c0'));
+ await page.locator('#batch-style').click();
+ await page.locator('#style-colors').uncheck();await page.locator('#style-format').uncheck();await page.locator('#style-images').uncheck();
+ await page.locator('#style-addons').check();
+ assert.match(await page.locator('#style-content-preview').innerText(),/1 条加购文案/);
+ assert.equal(await page.locator('#style-benefits').isChecked(),false);
+ await page.locator('#style-apply').click();await saveUi(page);
+ const updatedTarget=state.configs.find(c=>c.id==='c0');
+ assert.deepEqual(updatedTarget.addons[0],oldTarget.addons[0]);
+ assert.deepEqual(updatedTarget.addons[1],{text:'基准底部文案',note:'基准补充说明',items:[]});
+ assert.deepEqual(updatedTarget.benefits,oldTarget.benefits);
+ assert.deepEqual(updatedTarget.textStyles['addons.1.text'],{color:'#645432'});
+ const drawn=await page.evaluate(async config=>{
+  const {renderPoster}=await import('/workbench/poster.js');
+  const picture=await renderPoster(config,720,{interactive:true});
+  return picture.textRegions.find(row=>row.key==='addons.1.text')?.value;
+ },updatedTarget);
+ assert.equal(drawn,'基准底部文案');
  const beforeBatch=structuredClone(state.configs);
  await page.locator('#link-parts').click();await page.locator('[data-reui-link-parts]').waitFor();
  await page.locator('#link-part-scope').selectOption('selected');await page.locator('#link-part-actual').uncheck();

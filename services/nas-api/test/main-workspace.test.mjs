@@ -7,6 +7,7 @@ import {applyStructuredUpgrade,upgradeAddonDefinition} from '../../../apps/deskt
 import {withCurrentSharedSource} from '../../../apps/desktop/public/workbench/shared-source-fields.js';
 import {effectiveNasAddons,detachAddonFollow} from '../../../apps/desktop/public/workbench/addon-data.js';
 import {addPosterExtra} from '../../../apps/desktop/public/workbench/config-extras.js';
+import {applyBatchContent,syncPosterAddonText} from '../../../apps/desktop/public/workbench/batch-content.js';
 
 test('来源暂时清空方案后编辑独立文案，保存仍保留组跟随并与销售读取一致',()=>{
  const source={sourceId:'s',sharedSourceId:'1',goodsId:'1',addonText:'原方案',addonGoodsId:'2',addonPriceCents:10000};
@@ -67,6 +68,44 @@ async function attach(main){
  const load=await main.request('/api/configs/load',{method:'POST',body:JSON.stringify({ids:['c'],revision:index.revision})});
  const doc=load.configs[0];main.attach(doc);return doc;
 }
+test('批量底部加购文案提交保留 NAS 原文的配件加购并拒绝未保存的目标',async()=>{
+ const t=fixture(),main=t.build();
+ const linked={sourceId:'cpu-source',text:'已保存的配件加购',priceCents:1500,items:[],followPolicy:'snapshot'};
+ t.update({...raw,addons:[linked]});
+ const index=await main.request('/api/workspace/index');
+ const loaded=await main.request('/api/configs/load',{method:'POST',body:JSON.stringify({ids:['c'],revision:index.revision})});
+ const view=loaded.configs[0];
+ view.addons[0].text='界面派生的配件加购';
+ view.addons[0].priceCents=3600;
+ main.attach(view);
+ const reference={addons:[{text:'底部加购新文案',note:'补充说明',items:[]}]};
+ const target=applyBatchContent(reference,structuredClone(view),{addons:true});
+ const batch=[{id:'c',action:'replace',document:target,posterAddonText:reference.addons}];
+ const [change]=await main.configurationChanges(batch);
+ assert.deepEqual(change.document.addons,[reference.addons[0],linked]);
+ main.stage({...view,name:'尚未保存的修改'});
+ await assert.rejects(main.configurationChanges(batch),{code:'UNSAVED_DRAFT'});
+ assert.equal(t.commands.filter(c=>c.method==='PUT').length,0);
+});
+test('新增底部文案保存重读后不会套用原来跟随配件的自由编辑文字',()=>{
+ const source={sourceId:'s',addonText:'配件加购',addonGoodsId:'9',addonPriceCents:2100};
+ const sources=new Map([['s',source]]);
+ const saved={shopId:'intel',parts:[{sourceId:'s',sourceFollow:{upgrade:{mode:'follow',structured:true}}}],actualParts:[],addons:[],
+  textStyles:{'addons.0.text':{text:'配件加购自由编辑',size:22}}};
+ const visible=structuredClone(saved);
+ withCurrentSharedSource(visible,sources);
+ assert.equal(visible.addons[0].text,'配件加购');
+ const edited=structuredClone(visible);
+ const reference={addons:[{text:'底部新文案'}]};
+ applyBatchContent(reference,edited,{addons:true});
+ const projected=projectNasEdits(saved,visible,edited);
+ const rawAddons={addons:[]};
+ syncPosterAddonText(reference,rawAddons);
+ projected.addons=rawAddons.addons;
+ withCurrentSharedSource(projected,sources);
+ assert.deepEqual(projected.addons.map(a=>a.text),['底部新文案','配件加购']);
+ assert.deepEqual(projected.textStyles,{'addons.1.text':{text:'配件加购自由编辑',size:22}});
+});
 test('暂存和旧路由不会发写，显式保存以发送时快照确认飞行前的输入',async()=>{
  const t=fixture(),main=t.build(),view=await attach(main);
  view.name='首次提交';main.stage(view);

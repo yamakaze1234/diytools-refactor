@@ -36,7 +36,7 @@ export function BatchAppearance({model:m}:{model:Row}){
   ['format','全部编辑格式（文字框宽高与位置、字体、局部样式、模块布局、新增图片及其位置大小、顺序和显示开关）',true],
   ['images','仅同步机箱位置、大小和显示开关（已包含在全部格式内）',false],
   ['asset','批量更换机箱图片',false],
-  ['addons','同步加购与选配（整组商品、数量、加购总价、描述和说明）',false],
+  ['addons','同步加购与选配（仅配置图底部文案）',false],
   ['version',`同步版本（${m.reference.version||'空白版本'}）`,false],
   ['benefits','同步福利点',false],
  ] as const;
@@ -46,7 +46,7 @@ export function BatchAppearance({model:m}:{model:Row}){
   <Frame spacing="sm"><FramePanel><div className="flex flex-col gap-3">{options.map(([key,label,checked])=><label key={key} className="flex items-start gap-2 text-sm"><Input id={`style-${key}`} type="checkbox" checked={checked}/><span>{label}</span></label>)}</div></FramePanel></Frame>
   <p id="style-content-preview" className="text-sm text-muted-foreground" role="status"/>
   <div id="style-asset-panel" className="hidden"><div className="batch-case-preview"><img id="style-asset-preview" alt="将应用的机箱图片"/><span id="style-asset-name" className="hint"/></div><div className="flex flex-wrap gap-2"><Button id="style-asset-current" type="button">使用当前配置图片</Button><Button id="style-asset-upload" type="button">选择新机箱图片</Button><Input id="style-asset-file" type="file" accept="image/png,image/jpeg" hidden/></div><p className="text-sm text-muted-foreground">支持 PNG、JPG，最大 24MB。所有目标使用同一张图片；位置、大小及显示状态由全部格式或机箱格式选项控制。</p></div>
-  <p className="text-sm text-muted-foreground">保留各配置的主机配件、数量、售价及 SPU/SKU。版本、加购与福利仅在勾选时替换，未勾选的文案保留。未勾选更换图片时保留原机箱素材；目标独有的文字模块和新增图片保留。两种版式的文本框与自由布局一起同步；勾选全部格式时，基准配置新增的图片也会复制到目标并保留图层顺序。</p>
+  <p className="text-sm text-muted-foreground">保留各配置的主机配件、数量、售价及 SPU/SKU。配置总表里的配件加购保持原样。版本、配置图底部加购文案和福利点可分别勾选。未勾选更换图片时保留原机箱素材；目标独有的文字模块和新增图片保留。两种版式的文本框与自由布局一起同步；勾选全部格式时，基准配置新增的图片也会复制到目标并保留图层顺序。</p>
   <div id="style-scope-preview" className="text-sm text-muted-foreground"/>
   <div className="flex justify-end"><Button id="style-apply" type="button" variant="default">应用到所选配置</Button></div>
  </div>;

@@ -3,6 +3,7 @@ import {createNasApiClient,NasApiError,nasShopIds,nasOperationsCapability} from 
 import {createNasDraftController,ensureNasPartLineIds,nasDependencies} from './nas-draft-controller.js';
 import {createNasCatalogController} from './nas-catalog-controller.js';
 import {createNasOperationQueue,nasPlanStorage} from './nas-operation-plan.js';
+import {syncPosterAddonText} from './batch-content.js';
 const dup=value=>structuredClone(value);
 const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const own=(o,k)=>Object.hasOwn(o,k);
@@ -290,6 +291,12 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    }
    const document=action==='create'?dup(row.document):documentFor(row.document);
    guard('INVALID_DRAFT',document?.shopId===shopId);
+   if(action==='replace'&&row.posterAddonText){
+    // 按服务端原文同步底部文案，避免条目增减时把界面派生的加购值写回配件记录。
+    const savedAddons={addons:dup(editors.get(id).raw.addons)};
+    syncPosterAddonText({addons:row.posterAddonText},savedAddons);
+    document.addons=savedAddons.addons;
+   }
    ensureNasPartLineIds(document,record?.base);
    const prior=record?.dependencies||{sources:{},costs:{}};
    // 仅接受本次已确认维护回执中关联来源/成本的新版本；其余依赖保持录入时版本。

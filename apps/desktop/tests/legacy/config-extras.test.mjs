@@ -24,6 +24,23 @@ test('明确修改共用核算价只恢复三店 tax，保留名称、加购和�
  for(const shop of ['intel','gigabyte','jonsbo']){assert.ok(edits[shop].restore.includes('tax'));assert.ok(!Object.hasOwn(edits[shop].values,'tax'));}
 });
 
+test('修改底部文案时清掉两种版式的旧文字，删除时后续行带着原有排版前移',()=>{
+ const config={modules:[{type:'addons',id:'poster.add-ons'},{type:'benefits',id:'benefits'}],
+  addons:[{text:'旧文案'},{text:'配件加购',sourceId:'power'},{text:'另一条独立加购'}],benefits:[{text:'福利'}],
+  textStyles:{'poster.add-ons.0.text':{text:'长图自由编辑',size:23},'poster.add-ons.1.text':{text:'配件样式'},'poster.add-ons.2.note':{color:'#abc'},'benefits.0.text':{text:'另一个模块'}},
+  skuTextStyles:{'poster.add-ons.0.text':{text:'SKU 自由编辑'},'poster.add-ons.2.text':{weight:600}},
+  textTransforms:{long:{'poster.add-ons.0.text':{x:14},'poster.add-ons.2.note':{x:44}}}};
+ editPosterExtra(config,'addons',0,'text','新文案');
+ assert.deepEqual(config.textStyles['poster.add-ons.0.text'],{size:23});
+ assert.ok(!config.skuTextStyles['poster.add-ons.0.text']);
+ assert.deepEqual(config.textTransforms.long['poster.add-ons.0.text'],{x:14});
+ removePosterExtra(config,'addons',0);
+ assert.deepEqual(config.addons,[{text:'配件加购',sourceId:'power'},{text:'另一条独立加购'}]);
+ assert.deepEqual(config.textStyles,{'poster.add-ons.0.text':{text:'配件样式'},'poster.add-ons.1.note':{color:'#abc'},'benefits.0.text':{text:'另一个模块'}});
+ assert.deepEqual(config.skuTextStyles,{'poster.add-ons.1.text':{weight:600}});
+ assert.deepEqual(config.textTransforms.long,{'poster.add-ons.1.note':{x:44}});
+});
+
 test('旧配置缺少加购福利模块时补齐默认模块，保留其它模块、未知字段和条目身份',()=>{
  const custom={id:'benefits',type:'custom',text:'保留自定义内容',visible:true,unknown:{legacy:'原字段'}};
  const service={id:'service',type:'service',text:'原服务',visible:false,unknownStyle:7};

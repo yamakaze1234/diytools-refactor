@@ -946,7 +946,7 @@ function openTax(){const c=current(),parts=actualParts(c);openDialog('粘贴含�
 // 打开 ERP 同步入口，读取结果通过专门的工作区刷新流程接收。
 function openErp(){if(nasMain)return openNasErp();openDialog('三店共用 ERP 同步',`<p class="hint">库存与 ERP 成本只通过顶部“三店同步库存 / ERP”更新。同步按真实 goods_id 写入共享成本源，再更新三店所有引用配置；店铺展示名称、升级和加购文案不会被覆盖。</p><p class="hint">请先在“连接设置”安装并连接采集脚本，然后使用顶部同步按钮。</p>`);}
 // 对选择集合统一应用图片样式，记录全局撤销点。
-function openBatchStyleFull(){const scope=isLegacyTemplateConfig(current())?()=>currentProduct()?.configs||[]:ordinaryAvailable;openBatchAppearance({reference:clone(current()),render:model=>reactWorkbench.dialog($('#dialog-body'),'batch-style',model),openDialog,closeDialog,toast,esc,available:scope,chosen:()=>scope().filter(config=>selected.has(config.id)),request,upload:nasMain?uploadImage:null,
+function openBatchStyleFull(){const scope=isLegacyTemplateConfig(current())?()=>currentProduct()?.configs||[]:ordinaryAvailable;openBatchAppearance({reference:clone(current()),render:model=>reactWorkbench.dialog($('#dialog-body'),'batch-style',model),openDialog,closeDialog,toast,esc,available:scope,chosen:()=>scope().filter(config=>selected.has(config.id)),request,upload:nasMain?uploadImage:null,errorText:nasMain?nasErrorText:null,
  apply:async(reference,configs,options,url)=>{
   if(nasMain){
    const ids=configs.map(c=>c.id);
@@ -956,7 +956,7 @@ function openBatchStyleFull(){const scope=isLegacyTemplateConfig(current())?()=>
     if(options.colors||options.format||options.images)applyPosterStyle(reference,c,options);
     if(options.asset)c.caseImage=url;
     applyBatchContent(reference,c,options);
-    return {id,action:'replace',document:c};
+     return {id,action:'replace',document:c,posterAddonText:options.addons?reference.addons||[]:undefined};
    }),{title:'批量应用样式与内容'}));
   }
   checkpoint();for(const c of configs){if(options.colors||options.format||options.images)applyPosterStyle(reference,c,options);if(options.asset)c.caseImage=url;applyBatchContent(reference,c,options);}changed(`批量应用样式与内容${options.asset?'并更换机箱图片':''}：${configs.length} 套配置`,configs.map(c=>c.id));renderAll();}});}
