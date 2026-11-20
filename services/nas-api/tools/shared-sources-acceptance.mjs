@@ -11,6 +11,7 @@ import {combineImageHandlers,createImageHandler,createImageWriter} from '../src/
 import {scopedDatabase} from '../src/shop-scope.mjs';
 import {createLanCaseGallery} from '../src/lan-case-gallery.mjs';
 import {installSharedSources} from './install-shared-sources.mjs';
+import {seedRealSamples} from './real-samples-acceptance.mjs';
 
 const shops = ['intel','gigabyte','jonsbo'];
 export const fixtureActor = 'fixture_existing01';
@@ -20,8 +21,11 @@ export const fixtureDeployment = 'intel-production-acceptance';
 async function seed(db,fixture,sharedSources) {
  for (const file of ['intel-fixture.sql','gigabyte/02-gigabyte-import.sql','jonsbo/02-jonsbo-import.sql',
   'access/04-install-three-operations-private.sql']) await db.exec(await readFile(join(fixture,file),'utf8'));
- // 验收用的商品编号、名称、价格和库存均为合成资料。
- for (const [index,shop] of shops.entries()) {
+ let realSamples=null;
+ try{realSamples=JSON.parse(await readFile(join(fixture,'real-samples.json'),'utf8'));}catch(error){if(error.code!=='ENOENT')throw error;}
+ // 正常验收使用合成数据；显式附带真实抽样文件时只导入样本，不连正式服务。
+ if(realSamples)await seedRealSamples(db,realSamples);
+ else for (const [index,shop] of shops.entries()) {
   await db.query(`INSERT INTO ${shop}_live.sources (source_id,owner_shop,shared,goodsid,name,attrs)
    VALUES ('fixture-cost-history',$1,false,'9900011','测试显卡（含店铺原值）',$2),
           ('fixture-addon-choices',$1,false,'9900012','测试配件（两项加购）',$3)`,[shop,
@@ -40,6 +44,10 @@ async function seed(db,fixture,sharedSources) {
  }
  await db.exec(await readFile(new URL('../sql/016-shared-case-gallery.sql',import.meta.url),'utf8'));
  if(sharedSources)await installSharedSources(db,{});
+ if(realSamples){
+  await db.exec(await readFile(new URL('../sql/020-workbench-global-tax.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../sql/021-workbench-alias-addons.sql',import.meta.url),'utf8'));
+ }
 }
 
 async function openFixture(fixture,folder,sharedSources) {
@@ -57,6 +65,8 @@ async function openFixture(fixture,folder,sharedSources) {
 
 export async function startSourceAcceptance({fixture,folder,root,authenticate,tls,verifyError=()=>{},onStartupRequest=null,sharedSources=true}) {
  const db = await openFixture(fixture,folder,sharedSources);
+ // 已试用的本机库只修正保存函数，保留用户配置、来源和草稿，不重新导入样本。
+ if(sharedSources)await db.exec(await readFile(new URL('../sql/022-shared-source-field-preservation.sql',import.meta.url),'utf8'));
  let pending = Promise.resolve();
  // PGlite 验收库只使用一个连接，真实 PostgreSQL 使用各店池及各自运行角色。
  const underRole = task => {

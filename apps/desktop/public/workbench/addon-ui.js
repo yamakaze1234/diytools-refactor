@@ -6,6 +6,12 @@ import {mountProductSearch,destroyProductSearch} from './product-search.js';
 import {addonItems,addonCheck,validateAddon,addonGroups,addonBatchPlan,addonSummary,addonKey,sourceAddonOptions,choiceDescription,addonChecks} from './addon-data.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>v==null?'待补充':'¥'+(v/100).toFixed(2);
+/** 来源卡片只投影既有差价结果，不重复计算数量或把文案金额当成加购价格。 */
+export function addonChoiceStatusHtml(a,costs,originals=[]){
+ if(!addonItems(a).length)return '<p class="addon-text-only-note">仅文字说明 · 不核算商品成本与差价</p>';
+ const result=addonCheck(a,costs,originals);
+ return `<div class="addon-difference">${[...result.fields].sort((a,b)=>Number(b.key==='tax')-Number(a.key==='tax')).map(field=>`<div class="addon-difference-row ${field.diffCents!==null&&field.diffCents<0?'is-negative':''}"><span>${field.label}</span><span class="addon-equation">原配件 ${money(field.originalPriceCents)} ＋ 加购 ${money(a.priceCents)} − 新配件 ${money(field.costCents)}</span><strong>${field.diffCents===null?'待核对':field.diffCents<0?'负差价 ':'差价 '}${money(field.diffCents)}</strong></div>`).join('')}${result.reason?`<small>${esc(result.reason)}</small>`:''}${result.needsAdjustment?'<small class="addon-adjustment">ERP 与核算差价均达到红色阈值，需要重新核对加购价格。</small>':''}</div>`;
+}
 export function addonStatusHtml(a,costs,originals=[]){if(a.choices!==undefined)return addonChecks(a).map((v,i)=>`<section class="addon-choice-result"><strong>加购商品 ${i+1} · ${esc(v.text)}</strong>${addonStatusHtml(v,costs,originals)}</section>`).join('')||'<p class="hint">尚未选择加购商品</p>';if(!addonItems(a).length)return '<p class="hint">仅文字说明 · 不核算商品成本与差价</p>';const r=addonCheck(a,costs,originals),quoted=/^[+＋]\s*(\d+(?:\.\d{1,2})?)\s*元/.exec(a.text||''),mismatch=(a.qty??1)===1&&a.priceCents!=null&&quoted&&Math.round(Number(quoted[1])*100)!==a.priceCents;return `<div class="addon-check"><span>${esc(r.name||r.reason)}${a.goodsId?' · ID '+esc(a.goodsId):''}</span>${[...r.fields].sort((a,b)=>Number(b.key==='tax')-Number(a.key==='tax')).map(f=>`<span class="addon-${f.severity}">${f.label}：原配件 ${money(f.originalPriceCents)} ＋ 加购价 ${money(a.priceCents)} − 新配件成本 ${money(f.costCents)} ＝ 差价 ${money(f.diffCents)}</span>`).join('')}${r.needsAdjustment?'<strong class="addon-adjustment">ERP 与核算差价均达到红色阈值，需要重新调整加购描述。</strong>':''}${r.reason?`<small>${esc(r.reason)}</small>`:''}${mismatch?'<small>描述中的金额与设置的加购价不同，请一并核对描述。</small>':''}</div>`;}
 /** 挂载一个加购项的字段和状态反馈，改动通过 onChange 通知宿主。 */
 export function mountAddonFields(root,{initial,getCosts,onChange=()=>{},owners,getOriginals=()=>owners||[],renderStatus,react}){
@@ -53,6 +59,7 @@ export function openAddonEditor(api){
   }else{
    value=fields.read();
    if(follow&&value.followPolicy==='follow')value.followPolicy='snapshot';
+   if(value.followPolicy!=='follow')delete value.followAll;
   }
   if(api.allowFollow&&value.items===undefined)value.items=structuredClone(addonItems(value));
   api.commit(value);

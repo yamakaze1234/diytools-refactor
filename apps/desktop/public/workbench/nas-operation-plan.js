@@ -1,5 +1,5 @@
 /** 跨批操作按原工作区、服务和账号持久保存；重试仅重放选中的原批次。 */
-import {NasApiError,receiptNotFound,receiptLookupError,originalVersionRejected} from './nas-api-client.js';
+import {NasApiError,receiptNotFound,receiptLookupError,originalVersionRejected,migrationNotInstalled} from './nas-api-client.js';
 const known=new Set(['INVALID_REQUEST','INVALID_CONTENT_TYPE','PAYLOAD_TOO_LARGE','VALIDATION_FAILED','PRODUCT_MEMBERS_CHANGED',
  'DEPENDENCY_CONFLICT','INVALID_DEPENDENCY','VERSION_CONFLICT','QUOTATION_REVIEW_REQUIRED','CONFIGURATION_EXISTS',
  'NOT_FOUND','INVALID_CONFIGURATION_STATE','OPERATION_REUSED','WRITES_DISABLED','FORBIDDEN','UNAUTHENTICATED','SKU_ALREADY_USED',
@@ -80,6 +80,14 @@ export function createNasOperationQueue({client,storage,key,shopId='intel',lock=
  async function finish(plan,batch,receipt){
   batch.result=verify(plan,batch,receipt);
   batch.status='done';
+  // 编号会推进同链接剩余配置的版本，只接续尚未送出的批次；未知/被拒绝正文仍保持原样。
+  if(plan.kind==='configurations')for(const row of batch.result.changes.flatMap(change=>change.reordered??[])){
+   for(const later of plan.batches.filter(next=>next.status==='ready'))for(const change of later.body.changes){
+    if(change.id!==row.configuration_id||change.expected_version!==row.previous_version)continue;
+    change.expected_version=row.version;
+    if(change.document?.name===row.before)change.document.name=row.name;
+   }
+  }
   await persist(plan);return batch.result;
  }
  function add(plan){return run(async()=>{
@@ -97,7 +105,7 @@ export function createNasOperationQueue({client,storage,key,shopId='intel',lock=
    let receipt;
    try{receipt=await client.workspaceWrite(plan.kind,batch.body);}
    catch(error){
-    if(known.has(error?.code)&&error.status>=400&&error.status<500){
+    if(known.has(error?.code)&&error.status>=400&&error.status<500||migrationNotInstalled(error)){
      batch.status='rejected';batch.error={code:error.code,details:error.details};await persist(plan);
     }
     throw error;

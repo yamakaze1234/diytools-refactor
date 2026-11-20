@@ -3,6 +3,22 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createNasMainWorkspace,projectNasEdits,submitNasDraftSet} from '../../../apps/desktop/public/workbench/nas-main-workspace.js';
 import {NasApiError} from '../../../apps/desktop/public/workbench/nas-api-client.js';
+import {applyStructuredUpgrade,upgradeAddonDefinition} from '../../../apps/desktop/public/workbench/upgrade-addon-sync.js';
+import {withCurrentSharedSource} from '../../../apps/desktop/public/workbench/shared-source-fields.js';
+import {effectiveNasAddons,detachAddonFollow} from '../../../apps/desktop/public/workbench/addon-data.js';
+import {addPosterExtra} from '../../../apps/desktop/public/workbench/config-extras.js';
+
+test('来源暂时清空方案后编辑独立文案，保存仍保留组跟随并与销售读取一致',()=>{
+ const source={sourceId:'s',sharedSourceId:'1',goodsId:'1',addonText:'原方案',addonGoodsId:'2',addonPriceCents:10000};
+ const doc={id:'empty-follow',shopId:'intel',parts:[{slot:'CPU',sourceId:'s',goodsId:'1'}],actualParts:[],addons:[]};
+ const raw=applyStructuredUpgrade(doc,doc.parts[0],upgradeAddonDefinition(source),{sources:[source],follow:true}),visible=structuredClone(raw);
+ withCurrentSharedSource(visible,new Map([['s',{...source,addonChoices:[]}]]));assert.deepEqual(visible.addons,[]);
+ const edited=structuredClone(visible);addPosterExtra(edited,'addons');edited.addons[0].text='独立文字';
+ const saved=projectNasEdits(raw,visible,edited);assert.equal(saved.addons.filter(a=>a.followAll).length,1);
+ const future=new Map([['s',{...source,addonText:'新方案',addonGoodsId:'3',addonPriceCents:20000}]]),server=effectiveNasAddons(saved.addons,future),ui=structuredClone(saved);
+ withCurrentSharedSource(ui,future);assert.deepEqual(server.filter(a=>a.available).map(a=>a.addon),ui.addons);assert.equal(ui.addons.at(-1).goodsId,'3');
+ const detached=structuredClone(edited);detachAddonFollow(detached,'s');assert.equal(projectNasEdits(raw,visible,detached).addons.some(a=>a.followAll),false);
+});
 
 const raw={id:'c',shopId:'intel',name:'原配置',parts:[{lineId:'a',name:'人工配件',oldNull:null},{lineId:'b',name:'第二行',precision:0}],
  actualParts:[],addons:[],privateLegacy:{missing:null,numericZero:0},caseImage:'/uploads/'+'a'.repeat(64)+'.png'};
@@ -161,4 +177,15 @@ test('顶部服务端版本不读取配置商务版号，更新时间区分服�
  await assert.rejects(main.serverDataTime(),{code:'SERVICE_UNAVAILABLE'});
  t.setTime(null,[]);await main.request('/api/workspace/index');
  assert.deepEqual(await main.serverDataTime(),{updatedAt:null,firstImport:false});
+});
+
+test('删除编号回执接续重开后未打开的价格草稿及独立价格表草稿',async()=>{
+ const t=fixture(),first=t.build(),view=await attach(first);view.price=123;first.stage(view);
+ const newer=t.build();await newer.initialize();
+ newer.priceDraft([{id:'c',expected_version:'1',fields:{price:456}}]);
+ t.update({...t.remote(),name:'配置1'});
+ assert.deepEqual(newer.acceptRenumber([{configuration_id:'c',before:raw.name,name:'配置1',previous_version:'1',version:'2'}]),['c']);
+ assert.deepEqual(newer.priceDraft(),[{id:'c',expected_version:'2',fields:{price:456}}]);
+ const loaded=await attach(newer);assert.equal(loaded.name,'配置1');assert.equal(loaded.price,123);
+ await newer.submit(loaded);assert.equal(t.remote().name,'配置1');assert.equal(t.remote().price,123);
 });

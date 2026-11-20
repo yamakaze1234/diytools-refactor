@@ -207,5 +207,48 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
    return await submitPending(true);
   }finally{working=false;}
  }
- return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,discardArchived};
+ // 编号事务只推进名称基线，价格、数量和其它本机编辑继续保留。
+ function persistConfirmedMetadata(name,before,next){
+  try{
+   const saved=JSON.parse(storage.getItem(name)||'null');
+   // 其它窗口可能已经保存新的草稿或未知请求，只更新仍与当前基线一致的持久记录。
+   if(saved&&same(saved,before)){
+    if(same(next.base,next.document))storage.removeItem(name);else storage.setItem(name,JSON.stringify(next));
+   }
+  }catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
+ }
+ function acceptRenumber(row){
+  if(!owner||working)return false;
+  const loaded=record?.id===row.configuration_id,name=prefix()+JSON.stringify(row.configuration_id);
+  let saved=loaded?record:null;
+  if(!loaded)try{saved=JSON.parse(storage.getItem(name)||'null');}catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
+  if(!saved||saved.format!==1||saved.id!==row.configuration_id||saved.document?.id!==saved.id||saved.document.shopId!==shopId||
+     saved.pending||saved.version!==row.previous_version||saved.base?.name!==row.before)return false;
+  const next=clone(saved);next.version=row.version;next.base.name=row.name;
+  if(next.document.name===row.before)next.document.name=row.name;
+  // 重开后尚未载入的草稿也接续确认版本，不读取远端来覆盖本机输入。
+  persistConfirmedMetadata(name,saved,next);
+  if(loaded)record=next;
+  if(loaded&&remote?.version===row.previous_version)remote={...remote,version:row.version,document:{...remote.document,name:row.name}};
+  return true;
+ }
+ // 明确同步输出源时只接续本次预览核实的来源依赖；配置版本、其它成本和本机输入保持原样。
+ function acceptSourceVersions(versions){
+  if(!record||record.pending||working)return false;
+  if(Object.values(versions).some(value=>typeof value!=='string'||!/^[1-9]\d{0,18}$/.test(value)))throw new NasApiError('INVALID_API_RESPONSE');
+  const next=clone(record);
+  for(const [id,version] of Object.entries(versions))if(Object.hasOwn(next.dependencies.sources,id))next.dependencies.sources[id]=version;
+  persistConfirmedMetadata(key,record,next);record=next;
+  return true;
+ }
+ /** 本次来源保存后的已读投影只接续干净配置；草稿和未知请求仍保持原依赖。 */
+ function acceptObservedDependencies(versions){
+  if(!record||record.pending||working||!same(record.base,record.document))return false;
+  for(const kind of ['sources','costs'])if(Object.values(versions[kind]||{}).some(value=>typeof value!=='string'||!/^[1-9]\d{0,18}$/.test(value)))throw new NasApiError('INVALID_API_RESPONSE');
+  const next=clone(record);
+  for(const kind of ['sources','costs'])for(const [id,version] of Object.entries(versions[kind]||{}))if(Object.hasOwn(next.dependencies[kind],id))next.dependencies[kind][id]=version;
+  // 这里只接续当前窗口的已读基线，不清理其它窗口可能写入的同配置草稿。
+  record=next;return true;
+ }
+ return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,discardArchived,acceptRenumber,acceptSourceVersions,acceptObservedDependencies};
 }

@@ -27,6 +27,14 @@ export function projectNasEdits(raw,visible,edited){
    if(!own(edited,key))delete next[key];
    else next[key]=own(visible,key)?projectNasEdits(raw?.[key],visible[key],edited[key]):dup(edited[key]);
   }
+  // 来源暂时无方案时，可见数组不含跟随组；编辑独立文案也要保留原文中的组身份。
+  if(Array.isArray(raw?.addons)&&Array.isArray(next.addons)&&Array.isArray(edited.parts)){
+   const following=new Set(edited.parts.filter(part=>part.sourceFollow?.upgrade?.mode==='follow'&&part.sourceFollow.upgrade.structured===true).map(part=>part.sourceId));
+   for(const addon of raw.addons)if(addon.followPolicy==='follow'&&addon.followAll===true&&following.has(addon.sourceId)&&
+    !next.addons.some(row=>row.sourceId===addon.sourceId&&row.followPolicy==='follow'&&row.followAll===true)){
+    next.addons.push({sourceId:addon.sourceId,text:'',items:[],followPolicy:'follow',followAll:true});
+   }
+  }
   return next;
  }
  if(Array.isArray(visible)&&Array.isArray(edited)){
@@ -351,7 +359,25 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    return [id,await call(()=>reader.workspaceIndex())];
   }));
  }
- return {initialize,request,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,release,close,documentFor,
+ // 仅消费确认回执中的自动名称调整，显示投影与持久草稿一起接续新版本。
+ function acceptRenumber(rows){
+  const accepted=[];
+  for(const row of rows){
+   if(!versionNumber(row.previous_version)||!versionNumber(row.version)||typeof row.before!=='string'||typeof row.name!=='string')throw new NasApiError('INVALID_API_RESPONSE');
+   if(!(controllers.get(row.configuration_id)??lookup).acceptRenumber(row))continue;
+   const editor=editors.get(row.configuration_id);
+   if(editor){for(const key of ['raw','visible'])if(editor[key]?.name===row.before)editor[key].name=row.name;editor.remoteVersion=row.version;}
+   accepted.push(row.configuration_id);
+  }
+  // 价格利润表有独立草稿，编号回执只推进相同基线的版本。
+  const prices=priceDraft();let changed=false;
+  for(const row of rows)for(const draft of prices)if(draft.id===row.configuration_id&&draft.expected_version===row.previous_version){draft.expected_version=row.version;changed=true;}
+  if(changed)priceDraft(prices);
+  return accepted;
+ }
+ return {initialize,request,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,release,close,documentFor,acceptRenumber,
+  acceptSourceVersions:(ids,versions)=>{ready();for(const id of ids)if(!controllers.get(id)?.acceptSourceVersions(versions))throw new NasApiError('UNSAVED_DRAFT');},
+  acceptObservedDependencies:versions=>{ready();let count=0;for(const ctrl of controllers.values())if(ctrl.acceptObservedDependencies(versions))count++;return count;},
   agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],
   shop:()=>shopId,shops:()=>[...availableShops],serverVersion,serverDataTime,serverDisplayScope:()=>JSON.stringify([endpoint,identity]),
   editorAddons,configurationVersion:id=>controllers.get(id)?.read()?.version,

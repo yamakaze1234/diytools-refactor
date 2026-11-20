@@ -4,7 +4,9 @@ import {selectableComponents} from './component-policy.js';
 
 const copy=value=>structuredClone(value);
 const effective=(part,field)=>String(field==='name'?(part.displayName||part.name||''):(part.upgrade??''));
-const sourceValue=(config,row,field)=>field==='name'?String(row.name||''):sourceUpgradeDescription(row,config.addons?.filter(addon=>addon.sourceId===row.sourceId)||[]);
+// textOnly 属于配置展示字段，不改变来源的加购选配、商品或计价。
+const sourceValue=(config,row,field,part)=>field==='name'?String(row.name||''):part?.sourceFollow?.upgrade?.textOnly===true?
+ String(row.addonText??''):sourceUpgradeDescription(row,config.addons?.filter(addon=>addon.sourceId===row.sourceId)||[]);
 const catalog=rows=>new Map(selectableComponents(rows).filter(row=>!row.deletedAt).map(row=>[JSON.stringify([row.shopId||'intel',row.sourceId]),row]));
 function observe(record,value){if(record.sourceValue!==value)delete record.ignoredSourceValue;record.sourceValue=value;}
 function sourceFor(index,config,part){
@@ -15,7 +17,7 @@ function initializePart(config,part,row){
  // 未绑定输出源的空白配件也允许手工编辑，先建立跟随记录。
  if(!part.sourceFollow||part.sourceFollow.sourceId!==part.sourceId)part.sourceFollow={sourceId:part.sourceId};
  for(const field of ['name','upgrade']){
-  const value=effective(part,field),target=sourceValue(config,row,field),previous=part.sourceFollow[field];
+  const value=effective(part,field),target=sourceValue(config,row,field,part),previous=part.sourceFollow[field];
   if(!previous||!['follow','manual'].includes(previous.mode))part.sourceFollow[field]={mode:value===target?'follow':'manual',value,sourceValue:target};
   else if(previous.value!==value){part.sourceFollow[field]={mode:'manual',value,sourceValue:target};}
   else observe(previous,target);
@@ -38,7 +40,9 @@ export function markSourceFieldManual(part,field){
 }
 function writeFollow(part,field,value){
  if(field==='name'){part.name=value;delete part.displayName;}else part.upgrade=value;
- part.sourceFollow[field]={mode:'follow',value,sourceValue:value};
+ const textOnly=field==='upgrade'&&part.sourceFollow[field]?.textOnly===true;
+ const structured=field==='upgrade'&&part.sourceFollow[field]?.structured===true;
+ part.sourceFollow[field]={mode:'follow',value,sourceValue:value,...(textOnly?{textOnly:true}:{}),...(structured?{structured:true}:{})};
 }
 /** 比较来源前后值，只更新仍符合跟随条件的配置字段。 */
 export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges=false}={}){
@@ -48,10 +52,10 @@ export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges
   if(config.deletedAt)continue;
   for(const [partIndex,part] of (config.parts||[]).entries()){
    const before=sourceFor(beforeIndex,config,part),after=sourceFor(afterIndex,config,part);if(!before||!after)continue;
-   if(['name','upgrade'].every(field=>sourceValue(config,before,field)===sourceValue(config,after,field)))continue;
+   if(['name','upgrade'].every(field=>sourceValue(config,before,field,part)===sourceValue(config,after,field,part)))continue;
    const previousPart=JSON.stringify(part),tracking=initializePart(config,part,before);
    for(const field of ['name','upgrade']){
-    const oldSource=sourceValue(config,before,field),target=sourceValue(config,after,field),record=tracking[field];
+    const oldSource=sourceValue(config,before,field,part),target=sourceValue(config,after,field,part),record=tracking[field];
     if(oldSource!==target&&record.mode==='follow'){
      if(effective(part,field)!==target){
       count++;configIds.add(config.id);
@@ -88,7 +92,7 @@ export function sourceFollowPlan(configs,rows,fields,shopId,options={}){
    initializePart(after,part,row);
    for(const field of fields){
     const key=sourceFollowKey(config.id,part.sourceId,partIndex,part.slot,field);if(keys&&!keys.has(key))continue;
-    const target=field==='tax'?row.tax:sourceValue(after,row,field),current=field==='tax'?part.tax:effective(part,field),record=part.sourceFollow[field];
+    const target=field==='tax'?row.tax:sourceValue(after,row,field,part),current=field==='tax'?part.tax:effective(part,field),record=part.sourceFollow[field];
     if((current??'')===(target??''))continue;
     if(field!=='tax'&&(record.mode!=='manual'||Object.hasOwn(record,'ignoredSourceValue')&&record.ignoredSourceValue===target))continue;
     if(field==='tax'&&options.action==='ignore')continue;

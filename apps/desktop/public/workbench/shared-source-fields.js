@@ -1,7 +1,7 @@
 /** 共用目录只维护人工字段，ERP 实时报价、库存及旧配置引用仍使用原有记录。 */
 import {copyHardware} from './component-hardware.js';
 import {copyCapacity} from './component-capacity.js';
-import {effectiveNasAddon,selectedSourceAddons} from './addon-data.js';
+import {effectiveNasAddons,selectedSourceAddons} from './addon-data.js';
 export const sharedSourceAddonKeys = [
  'addonText','addonNote','addonGoodsId','addonPriceCents','addonQty','addonItems',
  'addonOriginalQty','addonVariants','addonShowTogether','addonChoices','addonMode',
@@ -43,10 +43,7 @@ export function withSourceFields(row, fields) {
 
 /** 只刷新已明确跟随来源的展示资料，配置写入仍使用工作台原有草稿投影。 */
 export function withCurrentSharedSource(config,byId) {
- config.addons=config.addons.map(addon=>{
-  const source=byId.get(addon.sourceId);
-  return source?.sharedSourceId && addon.followPolicy==='follow'?effectiveNasAddon(addon,source).addon:addon;
- });
+ config.addons=effectiveNasAddons(config.addons,byId,config.parts).map(row=>row.addon);
  for (const part of [...config.parts,...config.actualParts]) {
   const source = byId.get(part.sourceId);
   if (!source?.sharedSourceId || source.deletedAt || source.goodsId!==part.goodsId) continue;
@@ -60,12 +57,14 @@ export function withCurrentSharedSource(config,byId) {
    follow.name={mode:'follow',value:source.name,sourceValue:source.name};
   }
   if (follow.upgrade?.mode==='follow' && follow.upgrade.value===(part.upgrade??'')) {
-   const text = selectedSourceAddons(source,config.addons.filter(addon=>addon.sourceId===part.sourceId))
+   // 总表统一的是展示文案，选配商品及计价规则保持原样；显式文案跟随直接读取来源 addonText。
+   const textOnly=follow.upgrade.textOnly===true;
+   const text = textOnly?String(source.addonText??''):selectedSourceAddons(source,config.addons.filter(addon=>addon.sourceId===part.sourceId))
     .map(addon=>addon.text?.trim()).filter(Boolean).join('');
    // 没有维护加购的历史来源仍允许原配置展示自己的说明。
-   if (text || source.addonChoices!==undefined) {
+   if (text || source.addonChoices!==undefined || textOnly) {
     part.upgrade=text;
-    follow.upgrade={mode:'follow',value:text,sourceValue:text};
+   follow.upgrade={mode:'follow',value:text,sourceValue:text,...(textOnly?{textOnly:true}:{}),...(follow.upgrade.structured===true?{structured:true}:{})};
    }
   }
  }

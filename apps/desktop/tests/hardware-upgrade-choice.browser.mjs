@@ -1,5 +1,6 @@
 /** 真实工作台业务函数 + React 编辑器的隔离无窗口验收；接口仅写内存合成数据。 */
 import assert from 'node:assert/strict';
+import {openWorkbenchEditor} from './review-frontend-visible-ui.mjs';
 import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {blankConfig} from '../public/workbench/core.js';
@@ -31,10 +32,10 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto(base+'/workbench/editor-fixture');await page.waitForFunction(()=>window.workbenchReady===true).catch(async error=>{console.error(await page.locator('#save-status').textContent(),await page.locator('#editor').textContent());throw error;});
- await page.locator('[data-product-toggle="product-test"]').click();await page.locator('[data-id="config-test"]').click();await page.locator('.tabs [data-tab="display"]').click();await page.locator('[data-react-editor="parts"]').waitFor();
+ await page.locator('[data-product-toggle="product-test"] .link-arrow').click();await page.locator('[data-id="config-test"]').click();await openWorkbenchEditor(page,'display');await page.locator('[data-react-editor="parts"]').waitFor();
 
  const save=async()=>{await page.locator('#save').click();await page.waitForFunction(()=>!window.workbenchHasPendingChanges());};
- await page.locator('[data-tab="addons"]').click();
+ await openWorkbenchEditor(page,'addons');
  assert.equal(await page.locator('[data-upgrade="2"]').inputValue(),'');
  await page.locator('[data-hardware-upgrade="2"]').selectOption('use');
  assert.equal(await page.locator('[data-upgrade="2"]').inputValue(),'【升级Z890】');
@@ -43,8 +44,8 @@ try{
  assert.ok(state.configs.find(c=>c.id==='config-test').parts[2].hardwareUpgradeConfirmed);
  assert.ok(state.configs.find(c=>c.id==='config-test').addons[0].hardwareUpgradeConfirmed);
  await page.reload();await page.waitForFunction(()=>window.workbenchReady===true);
- if(await page.locator('[data-id="config-test"]').count()===0)await page.locator('[data-product-toggle="product-test"]').click();
- await page.locator('[data-id="config-test"]').click();await page.locator('[data-tab="addons"]').click();
+ if(await page.locator('[data-id="config-test"]').count()===0)await page.locator('[data-product-toggle="product-test"] .link-arrow').click();
+ await page.locator('[data-id="config-test"]').click();await openWorkbenchEditor(page,'addons');
  assert.equal(await page.locator('[data-hardware-upgrade="2"]').inputValue(),'use');
  assert.equal(await page.locator('[data-hardware-addon="0"]').inputValue(),'use');
  assert.equal(await page.locator('[data-upgrade="2"]').inputValue(),'【升级Z890】');
@@ -55,16 +56,22 @@ try{
  await page.locator('[data-hardware-addon="0"]').selectOption('');await save();
  assert.equal(state.configs.find(c=>c.id==='config-test').addons[0].hardwareUpgradeConfirmed,undefined);
  // 真实 Canvas 绘图：核对详情图与 SKU 图使用同一手动选择结果。
- const drawing=await page.evaluate(async config=>{
-  const {renderPoster}=await import('/workbench/poster.js');
-  const {selectHardwareUpgrade}=await import('/workbench/hardware-upgrade.js');
-  const original=CanvasRenderingContext2D.prototype.fillText,results=[];let texts=[];
-  CanvasRenderingContext2D.prototype.fillText=function(text,...args){texts.push(String(text));return original.call(this,text,...args);};
-  try{for(const layout of ['long','square']){config.layout=layout;config.showUpgrades=true;config.caseImage='';config.addons=[];
-   for(const show of [false,true]){selectHardwareUpgrade(config.parts[2],config,show);texts=[];await renderPoster(config);results.push({layout,show,found:texts.join('').includes('升级Z890')});}
-  }}finally{CanvasRenderingContext2D.prototype.fillText=original;}
-  return results;
- },state.configs.find(c=>c.id==='config-test'));
+ const drawing=[];
+ for(const show of [false,true]){
+  // 人工确认只从真实可见下拉提交；纯渲染接收保存后的副本，不改工作台模型。
+  await page.locator('[data-hardware-upgrade="2"]').selectOption(show?'use':'');await save();
+  const rendered=await page.evaluate(async config=>{
+   const {renderPoster}=await import('/workbench/poster.js');
+   const original=CanvasRenderingContext2D.prototype.fillText,results=[];let texts=[];
+   CanvasRenderingContext2D.prototype.fillText=function(text,...args){texts.push(String(text));return original.call(this,text,...args);};
+   try{for(const layout of ['long','square']){
+    texts=[];await renderPoster({...config,layout,skuExportMode:'dedicated',showUpgrades:true,caseImage:'',addons:[]});
+    results.push({layout,found:texts.join('').includes('升级Z890')});
+   }}finally{CanvasRenderingContext2D.prototype.fillText=original;}
+   return results;
+  },state.configs.find(c=>c.id==='config-test'));
+  drawing.push(...rendered.map(row=>({...row,show})));
+ }
  for(const result of drawing)assert.equal(result.found,result.show,JSON.stringify(result));
  assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',checks:['手动展示','提示保留','加购选择','保存重载','切回默认','撤销恢复'],saveReceipts:receipts.length,drawing,errors}));
 }finally{await browser.close();}

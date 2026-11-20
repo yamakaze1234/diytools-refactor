@@ -37,3 +37,10 @@ test('拒绝明文地址、路径穿越和越界分页',async()=>{
  await assert.rejects(client.detail('..'),{code:'INVALID_IDENTIFIER'});
  await assert.rejects(client.list({limit:101}),{code:'INVALID_QUERY'});
 });
+
+test('仅保留已回滚的缺迁移错误，其它服务端5xx仍为未知结果',async()=>{
+ for(const [code,expected]of [['NAS_GLOBAL_TAX_NOT_INSTALLED','NAS_GLOBAL_TAX_NOT_INSTALLED'],['NAS_GLOBAL_UPGRADE_NOT_INSTALLED','NAS_GLOBAL_UPGRADE_NOT_INSTALLED'],['SERVICE_UNAVAILABLE','SAVE_STATUS_UNKNOWN']]){
+  const client=createNasApiClient({shopId:'intel',nativeRequest:async()=>Response.json({ok:false,error:code},{status:503})});
+  await assert.rejects(client.workspaceWrite('costs',{}),{code:expected,status:503});
+ }
+});

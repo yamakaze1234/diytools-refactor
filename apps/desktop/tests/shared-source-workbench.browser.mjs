@@ -91,7 +91,7 @@ try{
   await el('#source-edit-scope').waitFor();
  }
  async function saveSource(){
-  await el('#source-save').click();
+  await el('#source-save-all').click();
   await frame.getByRole('status').filter({hasText:/已保存 \d+ 条输出源/}).waitFor({timeout:15000});
  }
  const close=()=>el('#dialog .dialog-title button').first().click();
@@ -111,10 +111,9 @@ try{
  assert.match(await projection('jonsbo','tax'),/240.*保留店铺原值/);
  await el('#source-tax').fill('250');
  await el('#source-edit-scope').selectOption('gigabyte');
- await el('[data-source-restore="tax"]').click();
  await saveSource();
  assert.match(await projection('gigabyte','tax'),/250.*共用/);
- assert.match(await projection('intel','tax'),/220.*保留店铺原值/);
+ assert.match(await projection('intel','tax'),/250.*共用/);
  await close();
  await openSource('9900012');
  assert.equal(await el('[data-choice]').count(),2);
@@ -128,17 +127,59 @@ try{
  await close();
  await openSource('9900012');
  await el('#source-new').click();
+ // 空白新配件即可切换范围，不要求先保存；仅切换不能制造草稿或丢掉身份。
+ assert.equal(await el('#source-edit-scope').isEnabled(),true);
+ for(const scope of ['intel','gigabyte','jonsbo','shared']){
+  await el('#source-edit-scope').selectOption(scope);assert.equal(await el('#source-edit-scope').inputValue(),scope);
+  assert.equal(await el('#source-id').inputValue(),'');assert.equal(await el('#source-name').inputValue(),'');
+ }
+ // 尚未输入 ERP ID 或名称的新配件也能直接维护容量、简称及板型。
+ assert.equal(await el('#source-maintenance-fields').getAttribute('open'),'');
+ for(const selector of ['[data-capacity="memoryGb"]','[data-capacity="vramGb"]','[data-capacity="storageGb"]','#source-hardware-cpu','#source-hardware-gpu','#source-hardware-board','[data-case-board]'])assert.equal(await el(selector).first().isVisible(),true,selector);
  await el('#source-id').fill('9900013');
  await el('#source-name').fill('测试新品 48GB');
  await el('#source-tax').fill('314.25');
+ await el('[data-capacity="memoryGb"]').fill('48');
  await el('[data-choice-add]').click();
+ await el('[data-choice-text-only]').first().check();
  await el('[data-choice-label]').first().fill('可加购风扇');
+ await el('#source-edit-scope').selectOption('jonsbo');
+ assert.equal(await el('#source-id').inputValue(),'9900013');assert.equal(await el('#source-id').isEditable(),true);
+ await el('#source-name').fill('乔思伯新品 64GB');await el('#source-tax').fill('320.50');await el('[data-capacity="memoryGb"]').fill('64');
+ await el('[data-choice-label]').first().fill('乔思伯加购风扇');
+ await el('#source-edit-scope').selectOption('shared');
+ assert.equal(await el('#source-name').inputValue(),'测试新品 48GB');assert.equal(await el('#source-tax').inputValue(),'314.25');
+ assert.equal(await el('[data-capacity="memoryGb"]').inputValue(),'48');assert.equal(await el('[data-choice-label]').first().inputValue(),'可加购风扇');
+ await el('#source-edit-scope').selectOption('jonsbo');assert.equal(await el('#source-name').inputValue(),'乔思伯新品 64GB');
+ await el('#source-edit-scope').selectOption('shared');
  await saveSource();
  assert.match(await projection('gigabyte','name'),/测试新品 48GB/);
+ assert.match(await projection('jonsbo','name'),/乔思伯新品 64GB.*单店覆盖/);
+ assert.match(await projection('jonsbo','tax'),/320\.50.*单店覆盖/);
+ assert.match(await projection('jonsbo','addon'),/乔思伯加购风扇/);
  await close();
  await shop('gigabyte');
  await openSource('9900013');
  assert.equal(await el('#source-name').inputValue(),'测试新品 48GB');
+ await el('#source-maintenance-fields summary').click();
+ assert.equal(await el('[data-capacity="memoryGb"]').inputValue(),'48');
+ assert.equal(await el('[data-capacity="memoryGb"]').isVisible(),true);
+ await el('#source-new').click();
+ await el('#source-edit-scope').selectOption('intel');
+ await el('#source-id').fill('9900014');await el('#source-name').fill('英特尔新芯片');
+ await el('#source-hardware-cpu').fill('14600KF');
+ await el('#source-save-all').click();assert.match(await el('#source-message').innerText(),/先填写三店共用/);
+ await el('#source-edit-scope').selectOption('gigabyte');assert.equal(await el('#source-name').inputValue(),'');
+ await el('#source-name').fill('技嘉新芯片');await el('#source-hardware-cpu').fill('13600KF');
+ await el('#source-edit-scope').selectOption('shared');assert.equal(await el('#source-name').inputValue(),'');
+ await el('#source-name').fill('测试新芯片');await el('#source-hardware-cpu').fill('12600KF');
+ await el('#source-edit-scope').selectOption('intel');assert.equal(await el('#source-name').inputValue(),'英特尔新芯片');assert.equal(await el('#source-hardware-cpu').inputValue(),'14600KF');
+ await el('#source-edit-scope').selectOption('gigabyte');assert.equal(await el('#source-name').inputValue(),'技嘉新芯片');assert.equal(await el('#source-hardware-cpu').inputValue(),'13600KF');
+ await el('#source-edit-scope').selectOption('shared');
+ await saveSource();await close();await openSource('9900014');
+ await el('#source-maintenance-fields summary').click();
+ assert.equal(await el('#source-hardware-cpu').inputValue(),'12600KF');
+ assert.equal(await el('#source-hardware-cpu').isVisible(),true);
  await close();
  await frame.getByRole('button',{name:'维护',exact:true}).click();
  await frame.getByRole('button',{name:'当前店铺核算价',exact:true}).click();
@@ -175,10 +216,21 @@ try{
  }
  if(useLegacy)assert.equal((await api.db.query("SELECT count(*)::int AS rows FROM gigabyte_live.sources WHERE goodsid='9900013'")).rows[0].rows,0);
  const config=el('[data-id="fixture-overlap"]');
- if(!await config.isVisible())await el('[data-product-toggle="fixture-link"]').click();
+ if(!await config.isVisible())await el('[data-product-toggle="fixture-link"] .link-arrow').click();
  await config.click();
+ // 链接操作按当前界面布局排列，菜单关闭时常用六项也应可见。
+ assert.equal(await el('#add-empty,#add-config-in-link').count(),0);
+ for(const id of ['duplicate-product','overview','copy-open','save-product-template','add-special-page','product-stock-check'])assert.equal(await el('.product-actions > #'+id).isVisible(),true,id);
+ assert.equal(await el('.ov-link-more #wps-export-open,.ov-link-more #poster-title-settings').count(),2);
+ // 展开链接菜单后，右上快捷区仍须能实际接收点击，不能仅在 DOM 中保持可见。
+ await el('.ov-link-more > summary').click();
+ await el('.heading-actions .action-menu > summary').click({timeout:2500});
+ for(const id of ['preview-toggle','undo','redo'])assert.equal(await el('#'+id).isVisible(),true,id);
+ assert.equal(await el('#renumber').isVisible(),true);
+ await el('.heading-actions .action-menu > summary').click();
+ await el('.ov-link-more > summary').click();
  await el('#select-all').check();
- await el('#copy-open').click();
+ await el('#copy-open').evaluate(button=>button.click());
  await el('[data-copy-kind="parts"]').click();
  const columns=(await el('#copy-preview').inputValue()).split('\t');
  assert.equal(columns.length,56);
@@ -192,7 +244,7 @@ try{
  assert.equal(configured[1],custom);
  assert.equal(configured[9],custom.replaceAll('CPU','主板'));
  await close();
- await el('#copy-open').click();
+ await el('#copy-open').evaluate(button=>button.click());
  assert.equal((await el('#copy-preview').inputValue()).split('\t')[1],custom);
  await frame.getByText('配件公式设置',{exact:true}).click();
  await el('#part-formula-range').selectOption('one');

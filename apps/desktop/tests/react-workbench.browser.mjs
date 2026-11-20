@@ -7,7 +7,8 @@ const browser=await chromium.launch({channel:'msedge',headless:true});
 try{
  const page=await browser.newPage();const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.route('**/react-fixture',route=>route.fulfill({contentType:'text/html',body:'<html><body></body></html>'}));
- await page.goto('http://127.0.0.1:5194/react-fixture');
+ // 允许整套隔离回归共用显式端口，避免误连另一项本地开发服务。
+ await page.goto((process.env.REACT_TEST_URL||'http://127.0.0.1:5194')+'/react-fixture');
  const result=await page.evaluate(async()=>{
   const refresh=await import('/@react-refresh');refresh.default.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;
   const {createWorkbenchReactRenderer}=await import('/src/legacy/react-workbench.tsx');
@@ -37,7 +38,8 @@ try{
   styledVersion.style.setProperty('--field-marker','7');styledVersion.style.color='rgb(1, 2, 3)';
   styledVersion.focus();styledVersion.value='A不同字段';styledVersion.dispatchEvent(new InputEvent('input',{bubbles:true}));
   const styledFieldsSurvive=document.querySelectorAll('#styled-fields [data-config]').length===5&&document.querySelector('[data-config="version"]')===styledVersion&&styledVersion.value==='A不同字段'&&styledConfig.version==='A不同字段';
-  const styledAttributesPreserved=styledVersion.id==='field-version'&&styledVersion.className==='config-field'&&styledVersion.inputMode==='text'&&styledVersion.placeholder==='请输入'&&styledVersion.getAttribute('aria-label')==='version'&&styledVersion.style.getPropertyValue('--field-marker')==='7'&&styledVersion.style.color==='rgb(1, 2, 3)';
+  // 原自定义class必须保留；ReUI输入框还会追加基础样式class。
+  const styledAttributesPreserved=styledVersion.id==='field-version'&&styledVersion.classList.contains('config-field')&&styledVersion.inputMode==='text'&&styledVersion.placeholder==='请输入'&&styledVersion.getAttribute('aria-label')==='version'&&styledVersion.style.getPropertyValue('--field-marker')==='7'&&styledVersion.style.color==='rgb(1, 2, 3)';
   styledVersion.style.color='';styledVersion.style.removeProperty('--field-marker');
   repaint();repaint();
   const unlockedFieldsSurvive=document.querySelectorAll('#styled-fields [data-config]').length===5&&styledVersion.getAttribute('style')==='';

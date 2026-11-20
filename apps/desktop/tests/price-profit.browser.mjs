@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {fileURLToPath} from 'node:url';
+import path from 'node:path';
 import {chromium} from 'playwright';
 import {blankConfig} from '../public/workbench/core.js';
 
@@ -26,11 +27,14 @@ await fs.writeFile(directory+'/source.json',JSON.stringify({dataVersion:3,revisi
  {sourceId:'intel-wps',shopId:'intel',goodsId:'99',slot:'CPU',name:'英特尔合成输出',upgrade:'英特尔专用'},
  {sourceId:'jonsbo-wps',shopId:'jonsbo',goodsId:'99',slot:'CPU',name:'乔思伯合成输出',upgrade:'乔思伯专用'}
 ],costSource:[],caseGallery:[],logs:[]}));
-const host=spawn(fileURLToPath(new URL('../src-tauri/target/debug/workbench-review-host.exe',import.meta.url)),[],{windowsHide:true,env:{...process.env,DIYTOOLS_REVIEW_DIRECTORY:directory},stdio:['pipe','pipe','inherit']});
-const pending=[];
+// 允许沿用当前构建缓存；宿主缺失必须立即报错，不能把请求留在永不完成的队列里。
+const executable=process.env.WORKBENCH_REVIEW_HOST||path.join(process.env.CARGO_TARGET_DIR||fileURLToPath(new URL('../src-tauri/target/',import.meta.url)),'debug/workbench-review-host.exe');
+await fs.access(executable).catch(()=>{throw Error('缺少隔离存储宿主，请先构建 --bin workbench-review-host --features review-host，并设置 WORKBENCH_REVIEW_HOST 或 CARGO_TARGET_DIR');});
+const host=spawn(executable,[],{windowsHide:true,env:{...process.env,DIYTOOLS_REVIEW_DIRECTORY:directory},stdio:['pipe','pipe','inherit']});
+const pending=[];let hostFailure=null;
 createInterface({input:host.stdout}).on('line',line=>{const item=pending.shift();if(item)item.resolve(JSON.parse(line));});
-for(const event of ['error','exit'])host.on(event,error=>{while(pending.length)pending.shift().reject(Error('隔离验收宿主退出 '+error));});
-const store=(method,path,body)=>new Promise((resolve,reject)=>{pending.push({resolve,reject});host.stdin.write(JSON.stringify({method,path,body:body==null?null:JSON.stringify(body)})+'\n');});
+for(const event of ['error','exit'])host.on(event,error=>{hostFailure=Error('隔离验收宿主退出 '+error);while(pending.length)pending.shift().reject(hostFailure);});
+const store=(method,path,body)=>new Promise((resolve,reject)=>{if(hostFailure)return reject(hostFailure);pending.push({resolve,reject});host.stdin.write(JSON.stringify({method,path,body:body==null?null:JSON.stringify(body)})+'\n');});
 const browser=await chromium.launch({channel:'msedge',headless:true});
 try{
  const errors=[],page=await browser.newPage({viewport:{width:1480,height:950},bypassCSP:true,permissions:['clipboard-read','clipboard-write']});
@@ -50,7 +54,8 @@ try{
  const state=async()=>{const result=await store('GET','/api/state');assert.equal(result.status,200,result.body);return JSON.parse(result.body);};
  const open=async()=>{
   await page.goto(base+'/workbench/price-profit-fixture');
-  await page.waitForFunction(()=>window.workbenchReady);
+  // 启动失败时保留界面错误，避免只得到就绪超时而丢失实际存储故障。
+  await page.waitForFunction(()=>window.workbenchReady,null,{timeout:30000}).catch(async error=>{console.error('STARTUP',JSON.stringify({status:await page.locator('#save-status').textContent(),editor:await page.locator('#editor').textContent()}));throw error;});
   await page.getByRole('button',{name:'价格',exact:true}).click();
   await page.locator('#price-profit-title').waitFor();
  };
@@ -61,8 +66,18 @@ try{
   await page.evaluate(t=>navigator.clipboard.writeText(t),text);
   await page.keyboard.press('Control+v');
  };
- const metric=async(id,child)=>page.locator('[data-pp-row="'+id+'"] > :nth-child('+child+')').innerText();
- const saved=async()=>{await page.locator('#pp-save').click();await page.waitForFunction(()=>/已保存|无需保存|已载入/.test(document.querySelector('#save-status').textContent));};
+ // 表格按确认稿显示整数；精确金额从真实公式明细读取，不依赖旧列序或四舍五入结果。
+ const close=()=>page.locator('#dialog>form [aria-label="关闭"]').click();
+ const menu=async id=>{const button=page.locator('#'+id);if(!await button.isVisible())await page.locator('.pp-menu>summary').click();await button.click();};
+ const dismissMenu=async()=>{if(await page.locator('.pp-menu').evaluate(node=>node.open))await page.locator('.pp-menu>summary').click();};
+ const metric=async(id,legacyColumn)=>{
+  await dismissMenu();await page.locator('[data-pp-row="'+id+'"] [data-pp-col="6"]').click();await page.locator('#pp-formula-detail').click();
+  const label={8:'核算成本 / 扣点 / 固定费用',10:'核算利润 / 利润率',15:'分期费'}[legacyColumn];
+  const value=await page.locator('.pp-details dt').filter({hasText:label}).evaluate(node=>node.nextElementSibling.textContent);
+  await close();return value.split(' / ')[0];
+ };
+ const targetCount=async()=>{await saved();const snapshot=await state();return page.evaluate(async snapshot=>{const {priceProfitRow,flagsFor}=await import('/workbench/price-profit-model.js');return snapshot.configs.filter(c=>c.shopId==='intel'&&flagsFor(priceProfitRow(c,snapshot.shopSettings.intel)).target).length;},snapshot);};
+ const saved=async()=>{await menu('pp-save');await page.waitForFunction(()=>/已保存|无需保存|已载入/.test(document.querySelector('#save-status').textContent));await dismissMenu();};
  await open();
  assert.equal(await page.locator('[data-pp-row]').count(),3);
  assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：3 套配置');
@@ -74,7 +89,7 @@ try{
  assert.equal(await metric('d',10),'—');
  await page.locator('#pp-shop').selectOption('intel');
  await page.locator('#pp-flat').click();
- await page.locator('#pp-sort').selectOption('desc');
+ await page.locator('[data-pp-sort="arrival"]').click();await page.locator('[data-pp-sort="arrival"]').click();
  assert.deepEqual(await page.locator('[data-pp-row]').evaluateAll(els=>els.map(el=>el.dataset.ppRow)),['b','a','c']);
  await paste('b','sku',"SKU\r\n'00090071992547409931234\r\n'00090071992547409931235\r\n");
  assert.equal(await value('b','sku'),'00090071992547409931234');assert.equal(await value('a','sku'),'00090071992547409931235');
@@ -85,25 +100,26 @@ try{
  await page.locator('#pp-redo').click();
  assert.equal(await value('a','sku'),'00090071992547409931235');
  await page.locator('#pp-grouped').click();
- await page.getByRole('button',{name:'▾ 合成链接甲',exact:true}).click();
+ await page.getByRole('button',{name:'收起合成链接甲',exact:true}).click();
  assert.deepEqual(await page.locator('[data-pp-row]').evaluateAll(els=>els.map(el=>el.dataset.ppRow)),['c']);
  await paste('c','sku','555\n556');
  assert.equal(await value('c','sku'),'003');
- await page.getByRole('button',{name:'▸ 合成链接甲',exact:true}).click();
+ await page.getByRole('button',{name:'展开合成链接甲',exact:true}).click();
  await cell('b','spu').fill('000080071992547409931235');
  await cell('b','spu').press('Tab');
  assert.equal(await value('a','spu'),'000080071992547409931235');
  assert.equal(await cell('b','sku').evaluate(el=>el===document.activeElement),true);
  await cell('a','price').fill('1100.25');
  await cell('a','price').press('Enter');
- assert.equal(await value('a','price'),'1100.25');
- await page.locator('#pp-shop-settings').click();
+ // 非焦点按确认稿显示整数，重新编辑必须恢复完整分角精度。
+ await cell('a','price').focus();assert.equal(await value('a','price'),'1100.25');await cell('a','price').press('Tab');
+ await menu('pp-shop-settings');
  await page.locator('#shop-price-taxRate').fill('10');
  await page.locator('#shop-price-taxFixed').fill('20');
  await page.locator('#shop-price-fee6').fill('4.5');
  await page.locator('#shop-price-save').click();
  assert.equal(await metric('b',10),'¥406.00');
- await page.locator('[data-pp-edit-link]').filter({hasText:'跟随店铺'}).first().click();
+ await dismissMenu();await page.locator('[data-pp-select-link]').filter({hasText:'合成链接甲'}).click();await page.locator('[data-pp-edit-link]').first().click();
  await page.locator('#product-pricing-mode').selectOption('custom');
  await page.locator('#product-price-taxRate').fill('3');
  await page.locator('#product-apply').click();
@@ -118,9 +134,9 @@ try{
  await erpAlert.check();
  await page.locator('#pp-alert-erp-target').fill('1');
  await page.locator('#pp-alert-apply').click();
- await page.locator('[data-pp-filter="target"]').click();
- assert.equal(await page.locator('[data-pp-row]').count(),0);
- assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：0 套配置');
+ // 新确认稿不再显示“低于目标”筛选，阈值仍须通过真实设置保存，并按实际文档校验判定。
+ assert.equal(await page.locator('[data-pp-filter="target"]').count(),0);
+ assert.equal(await targetCount(),0);
  await page.locator('#pp-alert').click();
  assert.equal(await erpAlert.isChecked(),true);
  assert.equal(await taxAlert.isChecked(),false);
@@ -135,34 +151,30 @@ try{
  await page.locator('#pp-alert-apply').click();
  assert.equal(await page.locator('[data-pp-row]').count(),3);
  assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：3 套配置');
- await page.locator('#pp-basis').selectOption('tax');
+ assert.equal(await targetCount(),3);
+ assert.equal(await page.locator('[data-pp-sort="taxProfitAfter"]').isVisible(),true);
+ assert.equal(await page.locator('[data-pp-sort="erpProfitAfter"]').isVisible(),true);
  assert.equal(await page.locator('[data-pp-row]').count(),3);
  assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：3 套配置');
- // 状态筛选与行标签一致，多选取并集，清除后恢复可见集合。
- assert.equal(await page.locator('.pp-toolbar #pp-status-filter').count(),1);
- await page.locator('#pp-status-filter').click();
- await page.locator('[data-pp-status-choice="normal"]').check();
- await page.locator('#pp-status-apply').click();
- assert.equal(await page.locator('[data-pp-row]').count(),0);
- assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：0 套配置');
- await page.locator('#pp-status-filter').click();
- await page.locator('[data-pp-status-choice="tax-target"]').check();
- await page.locator('#pp-status-apply').click();
- assert.equal(await page.locator('[data-pp-row]').count(),3);
- assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：3 套配置');
- await page.locator('#pp-status-filter').click();
- await page.locator('#pp-status-clear').click();
- assert.equal(await page.locator('[data-pp-row]').count(),3);
- assert.equal(await page.locator('#pp-result-count').innerText(),'筛选结果：3 套配置');
+ // 当前状态筛选与实际标签一致，多选取并集；缺失成本与正常配置都实际呈现。
+ await page.locator('#pp-shop').selectOption('all');
+ await menu('pp-status-filter');await page.locator('[data-pp-status-choice="missing"]').check();await page.locator('#pp-status-apply').click();
+ assert.deepEqual(await page.locator('[data-pp-row]').evaluateAll(nodes=>nodes.map(node=>node.dataset.ppRow)),['d']);
+ await menu('pp-status-filter');await page.locator('[data-pp-status-choice="normal"]').check();await page.locator('#pp-status-apply').click();
+ assert.equal(await page.locator('[data-pp-row]').count(),4);
+ await menu('pp-status-filter');await page.locator('#pp-status-clear').click();assert.equal(await page.locator('[data-pp-row]').count(),4);
+ await page.locator('#pp-shop').selectOption('intel');await dismissMenu();
  await page.locator('[data-pp-pick="a"]').check();
  await page.locator('[data-pp-pick="b"]').check();
- await page.locator('#pp-batch').click();
+ await menu('pp-batch');
+ // 当前批量弹窗独立选择利润口径，不再依赖已移除的页面全局口径选择器。
+ await page.locator('#pp-batch-basis').selectOption('tax');
  await page.locator('#pp-batch-mode').selectOption('target');
  await page.locator('#pp-batch-value').fill('500');
  await page.locator('#pp-batch-apply').click();
  assert.equal(await metric('a',10),'¥500.17');
  assert.equal(await metric('b',10),'¥500.17');
- await page.locator('#pp-new-link').click();
+ await menu('pp-new-link');
  await page.locator('#product-name').fill('合成新链接');
  await page.locator('#product-installment').selectOption('6');
  await page.locator('#product-pricing-mode').selectOption('custom');
@@ -186,7 +198,7 @@ try{
  assert.equal(await value('b','spu'),'000080071992547409931235');
  // 跨店发起新建应使用目标店的 WPS 输出源，连一样的 ERP ID 也不能串店。
  await page.locator('#pp-shop').selectOption('jonsbo');
- await page.locator('#pp-new-link').click();
+ await menu('pp-new-link');
  await page.locator('#product-name').fill('跨店 WPS 合成链接');
  await page.locator('.wps-import > summary').click();
  await page.locator('[data-wps-text]').fill('99\t1\t合成 CPU');
@@ -197,7 +209,7 @@ try{
  const wps=(await state()).configs.find(c=>c.product==='跨店 WPS 合成链接');
  assert.equal(wps.shopId,'jonsbo');
  assert.equal(wps.parts[0].sourceId,'jonsbo-wps');
- await page.locator('#pp-back').click();
+ await menu('pp-back');
  assert.equal(await page.locator('#price-profit-page').isVisible(),false);
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({ok:true,isolatedRustStore:directory,verified:'真实页面、系统剪贴板、批量原子性、撤销重做、店铺和链接规则、预警、调价、新建、保存重开'}));

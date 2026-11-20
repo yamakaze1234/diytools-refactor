@@ -69,11 +69,64 @@ export function effectiveNasAddon(saved,row){
  next.items=copy(addonItems(next));
  return {addon:next,available:true};
 }
+/** 完整同步的组跟随来源全部默认选项；新增、移除方案后销售报价和工作台读取同一组规则。 */
+export function sourceAddonsForSync(row,{follow=false,keepEmpty=false}={}){
+ let options=selectedSourceAddons(row);
+ if(follow&&keepEmpty&&!options.length)options=[sourceAddon(row)];
+ return options.map(option=>({...copy(option),sourceId:row.sourceId,items:copy(addonItems(option)),followPolicy:follow?'follow':'snapshot',...(follow?{followAll:true}:{})}));
+}
+export function effectiveNasAddons(saved,byId,parts=[]){
+ const result=[],seen=new Set(),groups=new Set(saved.filter(a=>a.followPolicy==='follow'&&a.followAll===true).map(a=>a.sourceId));
+ for(const part of parts)if(part.sourceId&&part.sourceFollow?.upgrade?.mode==='follow'&&part.sourceFollow.upgrade.structured===true)groups.add(part.sourceId);
+ const addGroup=(id,fallback)=>{if(seen.has(id))return;seen.add(id);const row=byId.get(id);
+  if(!row||row.deletedAt){result.push({addon:copy(fallback??{sourceId:id,text:'',items:[],followPolicy:'follow',followAll:true}),available:false});return;}
+  result.push(...sourceAddonsForSync(row,{follow:true}).map(addon=>({addon,available:true})));
+ };
+ for(const addon of saved)if(addon.followPolicy==='follow'&&addon.followAll===true)addGroup(addon.sourceId,addon);else result.push(effectiveNasAddon(addon,byId.get(addon.sourceId)));
+ for(const id of groups)addGroup(id);
+ return result;
+}
+/** 用户移除或改为快照时退出整组跟随，保留剩余项，不让界面从来源偷偷重建已删除方案。 */
+export function detachAddonFollow(config,sourceId){
+ for(const addon of config.addons)if(addon.sourceId===sourceId&&addon.followAll===true){delete addon.followAll;addon.followPolicy='snapshot';}
+ const text=config.addons.filter(a=>a.sourceId===sourceId).map(a=>a.text?.trim()).filter(Boolean).join('');
+ for(const part of config.parts)if(part.sourceId===sourceId&&part.sourceFollow?.upgrade?.structured===true){
+  part.upgrade=text;part.sourceFollow.upgrade={mode:'manual',value:text};
+ }
+}
+// 表单补齐空备注、默认数量等不属于业务修改，不能因此解除自动跟随。
+const comparableAddon=addon=>{
+ const value={...addon,note:addon.note||'',goodsId:addon.goodsId||'',qty:addon.qty??1,originalQty:addon.originalQty??1,priceCents:addon.priceCents??null,items:addonItems(addon)};
+ if(value.choices)value.choices=value.choices.map(c=>({...c,customText:c.customText===true,qty:c.qty??1,originalQty:c.originalQty??1,priceCents:c.priceCents??null}));
+ const ordered=value=>Array.isArray(value)?value.map(ordered):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,ordered(value[key])])):value;
+ return JSON.stringify(ordered(value));
+};
 export function addonKey(a){if(a.choices!==undefined)return JSON.stringify(['choices',a.sourceId,a.choices]);const product=a.items?.length?'items:'+JSON.stringify(a.items.map(i=>[i.goodsId,i.qty]).sort()):a.goodsId?'goods:'+a.goodsId:a.sourceId?'source:'+a.sourceId:'manual';return JSON.stringify([product,a.variantId||'',a.text,a.note||'']);}
 export function addonGroups(configs){const groups=new Map();for(const c of configs.filter(c=>!c.deletedAt))for(const a of c.addons||[]){const key=addonKey(a);if(!groups.has(key))groups.set(key,{key,example:copy(a),configIds:new Set(),count:0});const g=groups.get(key);g.configIds.add(c.id);g.count++;}return [...groups.values()].map(g=>({...g,configIds:[...g.configIds]}));}
 /** 只生成目标加购的变更计划，是否联动定价由 updatePricing 明确指定。 */
 export function addonBatchPlan(configs,key,patch,{updatePricing=false,costs=[]}={}){
- const changes=[];for(const c of configs.filter(c=>!c.deletedAt)){const after=copy(c);for(const a of after.addons||[])if(addonKey(a)===key){if(a.choices!==undefined&&patch.choices!==undefined){a.choices=patch.choices.map(c=>{const old=a.choices.find(v=>v.id===c.id);if(!updatePricing){if(!old)throw Error('增加加购商品时请勾选同时更新商品和价格');return {...old,label:c.label,enabled:c.enabled,customText:c.customText===true};}return copy(c);});a.text=choiceDescription(a.choices);}else a.text=patch.text;a.note=patch.note||'';if(updatePricing)Object.assign(a,{goodsId:patch.goodsId,priceCents:patch.priceCents,qty:patch.qty,...(patch.items!==undefined?{items:copy(patch.items)}:{}),...(patch.originalQty!==undefined?{originalQty:patch.originalQty}:{})});validateAddon(a,{required:true,costs});}if(JSON.stringify(c)!==JSON.stringify(after))changes.push({id:c.id,name:c.name,product:c.product,before:copy(c),after});}return {changes};
+ const changes=[];
+ for(const c of configs.filter(c=>!c.deletedAt)){
+  const after=copy(c);
+  for(const a of after.addons||[])if(addonKey(a)===key){
+   if(a.choices!==undefined&&patch.choices!==undefined){
+    a.choices=patch.choices.map(choice=>{const old=a.choices.find(v=>v.id===choice.id);
+     if(!updatePricing){if(!old)throw Error('增加加购商品时请勾选同时更新商品和价格');return {...old,label:choice.label,enabled:choice.enabled,customText:choice.customText===true};}
+     return copy(choice);
+    });a.text=choiceDescription(a.choices);
+   }else a.text=patch.text;
+   a.note=patch.note||'';
+   if(updatePricing)Object.assign(a,{goodsId:patch.goodsId,priceCents:patch.priceCents,qty:patch.qty,...(patch.items!==undefined?{items:copy(patch.items)}:{}),...(patch.originalQty!==undefined?{originalQty:patch.originalQty}:{})});
+   validateAddon(a,{required:true,costs});
+  }
+  const detached=new Set();
+  for(const [i,old] of (c.addons||[]).entries())if(old.followAll===true){
+   if(comparableAddon(old)===comparableAddon(after.addons[i]))after.addons[i]=copy(old);else detached.add(old.sourceId);
+  }
+  for(const owner of detached)detachAddonFollow(after,owner);
+  if(JSON.stringify(c)!==JSON.stringify(after))changes.push({id:c.id,name:c.name,product:c.product,before:copy(c),after});
+ }
+ return {changes};
 }
 /** 将已确认的加购计划应用到配置列表。 */
 export function applyAddonBatch(plan,configs){const targets=plan.changes.map(d=>{const c=configs.find(c=>c.id===d.id);if(!c||JSON.stringify(c)!==JSON.stringify(d.before))throw Error('配置已变化，请重新预览加购修改');return c;});targets.forEach((c,i)=>Object.assign(c,copy(plan.changes[i].after)));return targets.map(c=>c.id);}

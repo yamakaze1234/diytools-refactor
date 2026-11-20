@@ -46,7 +46,7 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto(base+'/workbench/overview-price-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p1"]').click();await page.locator('[data-id="c0"]').click();
+ await page.locator('[data-product-toggle="p1"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
  const card=id=>page.locator('[data-continuous-config="'+id+'"]');
  const count=page.locator('.overview-tax-count');
  const waitCount=amount=>page.waitForFunction(amount=>document.querySelector('.overview-tax-count')?.textContent===amount+' 套配置核算价有差异',amount);
@@ -57,11 +57,12 @@ try{
  assert.equal(await page.locator('.maintenance-tools').evaluate(el=>el.open),true);
  await card('c0').locator('.ov-columns').waitFor();
  if(screenshots)await page.screenshot({path:join(screenshots,'workbench-overview.png')});
- assert.deepEqual(await page.locator('.tabs button:visible').allTextContents(),['配置总表','图片样式']);
+ // 加购福利作为独立入口显示，原有总表与图片样式顺序继续保持。
+ assert.deepEqual(await page.locator('.tabs button:visible').allTextContents(),['配置总表','加购选配和福利','图片样式']);
  assert.deepEqual(await card('c0').locator('.ov-columns th').allTextContents(),['ERP 单价','含税单价','GoodID','库存','数量','配件','实际配件','展示明细']);
  assert.equal(await card('c0').locator('.ov-sum-labels th').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(211, 232, 196)');
  assert.equal(await card('c0').locator('.ov-sum-labels .ov-dark').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(24, 26, 24)');
- assert.ok(await card('c0').locator('.ov-columns th').evaluateAll(cells=>cells.slice(0,5).reduce((width,cell)=>width+cell.getBoundingClientRect().width,0))<=350);
+ assert.ok(await card('c0').locator('.ov-columns th').evaluateAll(cells=>cells.every(cell=>cell.getBoundingClientRect().width>0))); // 新表头按固定金额位数留宽。
  assert.equal(await card('c0').locator('.ov-sum-values .ov-fee').textContent(),'1,213');
  await page.locator('[data-ov-preview="square"]').click();
  await page.waitForFunction(()=>{const canvas=document.querySelector('#poster');return canvas.width>0&&canvas.width===canvas.height;});

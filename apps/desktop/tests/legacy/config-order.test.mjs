@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {restoreConfigOrder,planConfigRenumber} from '../../public/workbench/config-order.js';
+import {restoreConfigOrder,planConfigRenumber,configAfterRemoval} from '../../public/workbench/config-order.js';
 test('按明确顺序还原，随机ID和配置10不影响顺序',()=>{
  const configs=Array.from({length:20},(_,i)=>({id:String(20-i).padStart(2,'0'),shopId:'intel',productId:'p',name:'配置'+(i+1),price:0,parts:[],wpsImport:{lineStart:i*19+1}}));
  const state={configs,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{}};
@@ -13,4 +13,13 @@ test('重新编号保留后缀、跳过特殊名称和已删除项，且不修�
  assert.deepEqual(plan.map(r=>r.after),['配置1','颜值升级包','配置2：16G / 1T','配置3 · 32G','16G','配置套餐']);
  assert.deepEqual(rows,before);
  assert.deepEqual(planConfigRenumber(plan.map(r=>({id:r.id,name:r.after}))).filter(r=>r.before!==r.after),[]);
+});
+
+test('删除后优先本链接下一套、上一套，整链删除才切邻链，全部删除返回空',()=>{
+ const rows=['a','b','c','d'].map((id,i)=>({id,shopId:'intel',productId:i<3?'p':'q'}));
+ assert.equal(configAfterRemoval(rows,'b',['b']),'c');
+ assert.equal(configAfterRemoval(rows,'c',['c']),'b');
+ assert.equal(configAfterRemoval(rows,'b',['a']),'b');
+ assert.equal(configAfterRemoval(rows,'a',['a','b','c']),'d');
+ assert.equal(configAfterRemoval(rows,'b',rows.map(r=>r.id)),null);
 });

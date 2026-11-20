@@ -5,16 +5,29 @@ import {sourcePart} from './source.js';
 
 export const continuousSlots=Object.freeze(slots.slice(0,14));
 const clone=value=>structuredClone(value);
-const occupied=part=>part&&Boolean(part.sourceId||part.goodsId||String(part.name||part.displayName||'').trim());
+const occupied=part=>part&&Boolean(part.sourceId||part.goodsId||String(part.name||part.displayName||part.upgrade||'').trim()||Number(part.qty)>1);
 const accessoryNumber=slot=>/^配件[1-9]\d*$/.test(slot)?Number(slot.slice(2)):0;
 const blank=slot=>({slot,name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''});
 
 /** 默认14栏，后续编号配件按序展示；空行也保留，便于保存后继续编辑。 */
+// 11-19：配件1–5 固定行可以「减少」：超出 overviewAccessoryLimit 且没有内容的空行不显示。
+const fixedAccessoryVisible=(config,slot)=>{
+ const n=accessoryNumber(slot),limit=Number.isInteger(config.overviewAccessoryLimit)?config.overviewAccessoryLimit:0;
+ if(!n||n>5||!Number.isInteger(limit)||n<=limit)return true;
+ return [...(config.parts||[]),...actualParts(config)].some(p=>p.slot===slot&&occupied(p));
+};
 export function continuousSlotsFor(config){
  const extras=new Set([...(config.parts||[]),...actualParts(config)].map(p=>p.slot).filter(slot=>Number.isSafeInteger(accessoryNumber(slot))&&accessoryNumber(slot)>5));
- return [...continuousSlots,...[...extras].sort((a,b)=>accessoryNumber(a)-accessoryNumber(b))];
+ return [...continuousSlots.filter(slot=>fixedAccessoryVisible(config,slot)),...[...extras].sort((a,b)=>accessoryNumber(a)-accessoryNumber(b))];
 }
 export function appendAccessoryRow(config){
+ // 固定的配件1–5 有被隐藏的，先恢复显示下一行。
+ const shown=new Set(continuousSlotsFor(config).map(accessoryNumber));
+ const hidden=[1,2,3,4,5].find(n=>!shown.has(n));
+ if(hidden){
+  config.overviewAccessoryLimit=Math.max(config.overviewAccessoryLimit??0,hidden);
+  return `配件${config.overviewAccessoryLimit}`;
+ }
  const next=Math.max(5,...continuousSlotsFor(config).map(accessoryNumber))+1;
  if(!Number.isSafeInteger(next))throw Error('配件编号超出有效范围');
  const slot=`配件${next}`;
@@ -23,6 +36,17 @@ export function appendAccessoryRow(config){
  config.parts.push(blank(slot));config.actualParts.push(blank(slot));return slot;
 }
 
+/** 11-19：减少配件——去掉最后一个空的配件行；有内容时不动，避免误删。 */
+export function removeLastAccessoryRow(config){
+ const slots=continuousSlotsFor(config).filter(slot=>accessoryNumber(slot)>0);
+ const slot=slots.at(-1);if(!slot)throw Error('没有可减少的配件行');
+ const filled=[...(config.parts||[]),...actualParts(config)].some(p=>p.slot===slot&&occupied(p));
+ if(filled)throw Error(slot+' 还有内容，请先清空再减少');
+ const n=accessoryNumber(slot);
+ if(n>5){const after=planRemoveRow(config,slot);Object.assign(config,after);}
+ else config.overviewAccessoryLimit=n-1;
+ return slot;
+}
 /** 删除展示和实际的当前行；共用输出源的加购仍保留，固定栏位回到空白占位。 */
 export function planRemoveRow(config,slot){
  const row=projectedRows(config).find(row=>row.slot===slot);

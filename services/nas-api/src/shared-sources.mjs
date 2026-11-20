@@ -41,7 +41,7 @@ function validateFields(fields, special, scope) {
 export function validateSharedSourceEdit(id,document,create) {
  const special=sharedSpecialKey(id);
  valid(sourceGoodsId(id) || special,'document.id');
- valid(document.id===id && Object.keys(document).every(key=>['id','edits','erpName'].includes(key)),'document');
+ valid(document.id===id && Object.keys(document).every(key=>['id','edits','erpName','alias_edits','addon_sync'].includes(key)),'document');
  valid(!Object.hasOwn(document,'erpName') || create && !special && typeof document.erpName==='string' &&
   document.erpName.length<=512 && !excludedComponent({erpName:document.erpName}),'document.erpName');
  const {edits} = document;
@@ -54,7 +54,26 @@ export function validateSharedSourceEdit(id,document,create) {
    (scope!=='shared' || restore.length===0) && (Object.keys(values).length>0 || restore.length>0),scope);
   validateFields(values,special,scope);
  }
- if (create) valid(Object.keys(edits).length===1 && !!edits.shared?.values?.name,'document.name');
+ // 新建仍要求共用名称；已有数据库事务同时验证权限并保存各店差异，避免拆成两次提交。
+ if (create) valid(!!edits.shared?.values?.name,'document.name');
+ // 完整三店同步只改加购公共值并解除各店该字段覆盖，禁止顺带改名称、成本等资料。
+ if(Object.hasOwn(document,'addon_sync')){
+  valid(document.addon_sync===true&&!create&&!Object.hasOwn(document,'alias_edits')&&Object.keys(edits).length===4,'document.addon_sync');
+  valid(Object.keys(edits.shared?.values??{}).join(',')==='addon'&&edits.shared.restore.length===0,'document.addon_sync.shared');
+  for(const shop of scopes.slice(1))valid(edits[shop]&&Object.keys(edits[shop].values).length===0&&JSON.stringify(edits[shop].restore)==='["addon"]','document.addon_sync.'+shop);
+  try{validateAddon(sourceAddon(edits.shared.values.addon),{required:!!sourceAddon(edits.shared.values.addon).text});}catch{valid(false,'document.addon_sync.addon');}
+ }
+ // 全局文案修改按每条来源保留商品、数量和选配规则，不把同店第一条来源覆盖给其它别名。
+ if (Object.hasOwn(document,'alias_edits')) {
+  valid(!create && plain(document.alias_edits) && !!edits.shared,'document.alias_edits');
+  for(const [shop,aliases] of Object.entries(document.alias_edits)) {
+   valid(scopes.includes(shop)&&shop!=='shared'&&plain(aliases),'document.alias_edits.shop');
+   for(const [sourceId,fields] of Object.entries(aliases)) {
+    valid(sourceId.length>0&&sourceId.length<=256&&plain(fields)&&Object.keys(fields).length===1&&plain(fields.addon),'document.alias_edits.source');
+    validateFields(fields,false,shop);
+   }
+  }
+ }
 }
 
 export async function listSharedSources(db,member,shop,id) {
@@ -66,13 +85,30 @@ export async function listSharedSources(db,member,shop,id) {
 
 export async function writeSharedSource(db,member,shop,id,expected,document) {
  try {
-  const {rows:[row]} = await db.query('SELECT workbench_sources.save($1,$2,$3,$4,$5,$6,$7) AS version',
-   [shop,member.workspaceId,member.uid,id,expected,JSON.stringify(document.edits),document.erpName??null]);
+  const aliasEdit=Object.hasOwn(document,'alias_edits');
+  if(aliasEdit||document.addon_sync){
+   // 021 是两种全局加购事务的共同前置，写入前检查并给出明确的未安装错误。
+   const {rows:[installed]}=await db.query("SELECT to_regprocedure('workbench_sources.source_versions(text,text,text,text)') IS NOT NULL AS versions, to_regprocedure('workbench_sources.save_aliases(text,text,text,text,bigint,jsonb,jsonb)') IS NOT NULL AS aliases");
+   if(!installed?.versions||aliasEdit&&!installed.aliases)throw new Fault('NAS_GLOBAL_UPGRADE_NOT_INSTALLED',503);
+  }
+  const {rows:[row]} = await db.query(aliasEdit?
+   'SELECT workbench_sources.save_aliases($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) AS version':
+   'SELECT workbench_sources.save($1,$2,$3,$4,$5,$6,$7) AS version',
+   [shop,member.workspaceId,member.uid,id,expected,JSON.stringify(document.edits),aliasEdit?JSON.stringify(document.alias_edits):document.erpName??null]);
   return row.version;
  } catch (err) {
+  if (err.code==='42883'&&Object.hasOwn(document,'alias_edits')) throw new Fault('NAS_GLOBAL_UPGRADE_NOT_INSTALLED',503);
   if (err.code!=='P0001') throw err;
   if (err.message==='FORBIDDEN') throw new Fault('FORBIDDEN',403);
   if (['CATALOG_EXISTS','VERSION_CONFLICT','SHARED_SOURCE_VALUE_REQUIRED'].includes(err.message)) throw new Fault(err.message,409);
   throw err;
  }
+}
+
+/** 与来源提交同事务回读的版本，供后续配置只接续这次保存，不能吞掉其他人稍后的修改。 */
+export async function sharedSourceVersions(db,member,shop,id){
+ try{
+  const {rows:[row]}=await db.query('SELECT workbench_sources.source_versions($1,$2,$3,$4) AS versions',[shop,member.workspaceId,member.uid,id]);
+  return row.versions;
+ }catch(error){if(error.code==='42883')throw new Fault('NAS_GLOBAL_UPGRADE_NOT_INSTALLED',503);throw error;}
 }

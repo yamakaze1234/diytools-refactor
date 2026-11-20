@@ -57,12 +57,13 @@ try{
   await route.fulfill({json:value});
  });
  if(process.env.REUI_IFRAME==='1'){
-  await topPage.route('**/workbench/reui-host',r=>r.fulfill({contentType:'text/html',body:`<!doctype html><script src="/workbench/endfield-init.js"></script><link rel="stylesheet" href="/workbench/endfield/endfield.css"><link rel="stylesheet" href="/workbench/endfield-workbench.css"><script type="module" src="/workbench/endfield-theme.js"></script><style>body{margin:0}html,body,#root{height:100%;margin:0}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const React=(await import('/node_modules/.vite/deps/react.js')).default;const {createRoot}=(await import('/node_modules/.vite/deps/react-dom_client.js')).default;window.isTauri=true;window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(command)=>command==='cloud_native_json_request'?{status:200,body:JSON.stringify({configured:false})}:1};const {default:App}=await import('/src/App.tsx');window.installWorkbenchBridge=async()=>{};const host=document.createElement('div');host.id='root';document.body.append(host);createRoot(host).render(React.createElement(App));</script>`}));
+  await topPage.route('**/workbench/reui-host',r=>r.fulfill({contentType:'text/html',body:`<!doctype html><script src="/workbench/endfield-init.js"></script><link rel="stylesheet" href="/workbench/endfield/endfield.css"><link rel="stylesheet" href="/workbench/endfield-workbench.css"><script type="module" src="/workbench/endfield-theme.js"></script><style>body{margin:0}html,body,#root{height:100%;margin:0}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const React=(await import('/node_modules/.vite/deps/react.js')).default;const {createRoot}=(await import('/node_modules/.vite/deps/react-dom_client.js')).default;/* 宿主先核对启动模式，隔离桩明确使用本机模式。 */window.isTauri=true;window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(command)=>command==='nas_native_request'?{status:200,body:JSON.stringify({main_editor:false})}:command==='cloud_native_json_request'?{status:200,body:JSON.stringify({configured:false})}:1};const {default:App}=await import('/src/App.tsx');window.installWorkbenchBridge=async()=>{};const host=document.createElement('div');host.id='root';document.body.append(host);createRoot(host).render(React.createElement(App));</script>`}));
   await topPage.goto(base+'/workbench/reui-host');await topPage.locator('iframe').waitFor();page=await topPage.locator('iframe').elementHandle().then(h=>h.contentFrame());
  }else await page.goto(base+'/workbench/renumber-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
  await page.locator('[data-continuous-config="c3"]').waitFor();
- assert.equal(await page.locator('[data-row-slot]').count(),56);
+ // 默认仅显示九个基础槽位；空白扩展配件由「新增配件」显式添加。
+ assert.equal(await page.locator('[data-row-slot]').count(),36);
 
 
 
@@ -71,7 +72,7 @@ try{
   await page.evaluate(t=>window.dispatchEvent(new CustomEvent('workbench-ui-theme-change',{detail:t})),theme);
   await topPage.setViewportSize({width:1280,height:900});
   for(const [name,button] of [['upgrade','#link-upgrades'],['display-name','#link-display-names'],['appearance','#batch-style'],['ids','#ids'],['global','#global-batch-open']]){
-   console.log('checking',theme,name);if(await page.locator('[data-continuous-config="c0"] [role=checkbox]').getAttribute('aria-checked')!=='true')await page.locator('[data-continuous-config="c0"] [role=checkbox]').click();await page.waitForFunction(()=>document.querySelector('[data-continuous-config="c0"] [role=checkbox]')?.getAttribute('aria-checked')==='true');
+   console.log('checking',theme,name);if(!await page.getByRole('checkbox',{name:'选择配置1',exact:true}).isChecked())await page.getByRole('checkbox',{name:'选择配置1',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="选择配置1"]')?.checked===true);
    await page.locator(button).evaluate(n=>n.click());await page.locator('#dialog[open]').waitFor();
    if(name==='upgrade')await page.locator('#upgrade-batch-candidates [data-upgrade-part]').first().check();
    if(name==='display-name'){await page.locator('#upgrade-batch-query').fill('验收CPU');await page.locator('#upgrade-batch-candidates [data-upgrade-part]').first().click();assert.match(await page.locator('#upgrade-batch-hint').innerText(),/展示名称/);}

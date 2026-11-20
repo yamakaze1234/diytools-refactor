@@ -24,6 +24,14 @@ pwsh -NoProfile -File packages/agent-cli/build-local.ps1
 
 按改动范围运行必要测试。集成服务、原生窗口与实际数据流程需要各自验收，不能由构建成功代替。可分发程序按[发布流程](PUBLIC-RELEASE.md)打包。
 
+价格浏览器用例使用隔离的真实 Rust 存储，运行前先构建验收宿主：
+
+```powershell
+cargo build --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --bin workbench-review-host --features review-host
+```
+
+用例沿用 `CARGO_TARGET_DIR` 查找该宿主，也可通过 `WORKBENCH_REVIEW_HOST` 指定完整路径。缺失宿主会立即报错；不要连接现用程序或用户数据库代替。连续总表用例的截图与回执目录可通过 `CONTINUOUS_REGRESSION_OUTPUT` 或 `WORKBENCH_SCREENSHOTS` 指定，默认写入源码 `sandbox`。
+
 ## 目录
 
 | 路径 | 内容 |

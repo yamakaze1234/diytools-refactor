@@ -5,6 +5,7 @@ import {isSpecialComponent} from './special-components.js';
 import {componentStockView} from './component-stock-view.js';
 import {doubleMemoryUpgrade,displayUpgrade} from './memory-upgrade.js';
 import {addonCheck,addonChecks,addonItems} from './addon-data.js';
+import {posterExtraRows} from './config-extras.js';
 import {hasConfigCost} from './config-cost.js';
 import {erpUnitCost} from './core.js';
 import {profitTone} from './profit-tone.js';
@@ -18,6 +19,7 @@ export function addonStatusModel(a,costs,originals=[]){
 }
 export function editorModel(tab,c,{parts=c.parts,catalog=[],costs=[],copiedPart,palette,fonts,selectedModule,t,p,money}={}){
  const model={tab,config:c,selectedModule,hardwareIssues:configHardwareIssues(c)};
+ if(tab==='perks')return {...model,sections:['addons','benefits'].map(kind=>({kind,module:c.modules.find(module=>module.type===kind),rows:posterExtraRows(c,kind)}))};
  if(tab==='parts'||tab==='actual')return {...model,canPaste:copiedPart?.shopId===c.shopId,parts:parts.map(part=>({...part,special:isSpecialComponent(part),searchName:tab==='actual'?part.name:catalog.find(row=>row.sourceId===part.sourceId&&row.goodsId===part.goodsId)?.name||part.name,stock:tab==='actual'?componentStockView(part,costs):undefined}))};
  if(tab==='addons')return {...model,parts:c.parts.map(part=>({...part,displayUpgrade:displayUpgrade(part,c),hardwareHidden:partHardwareWarning(part,c),hardwareSelected:hardwareUpgradeSelected(part,c),doubleMemoryUpgrade:doubleMemoryUpgrade(part)})),rows:c.addons.map(a=>({...a,hardwareHidden:addonHardwareWarning(a,c),hardwareSelected:hardwareUpgradeSelected(a,c),status:addonStatusModel(a,costs,c.parts),owner:a.sourceId?'随配件切换：'+(c.parts.find(x=>x.sourceId===a.sourceId)?.name||'原关联配件'):'独立加购'}))};
  if(tab==='modules')return {...model,palette,fonts,config:{...c,resolvedFont:posterFontFamily(c.fontFamily),modules:c.modules.map(m=>({...m,resolvedFont:m.fontFamily?posterFontFamily(m.fontFamily):''}))}};

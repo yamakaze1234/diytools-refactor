@@ -6,7 +6,7 @@ import {allConfigParts} from './actual-parts.js';
 import {isSpecialComponent,normalizeSpecialComponent} from './special-components.js';
 import {excludedComponent} from './component-policy.js';
 import {clone} from './core.js';
-import {selectedSourceAddons} from './addon-data.js';
+import {selectedSourceAddons,sourceAddonsForSync} from './addon-data.js';
 import {createSourceIndex} from './component-index.js';
 
 // 输出源绑定与展示字段同步的纯规则入口；此模块不持有缓存，不执行保存或网络请求。
@@ -42,10 +42,17 @@ export function sourceUpgradeDescription(row,previous=[]){
 }
 /** 在指定配件位置应用新来源，并处理加购及升级描述关联。 */
 export function replaceSourcePart(config,index,row){
- const description=sourceUpgradeDescription(row,config.addons?.filter(a=>a.sourceId===row.sourceId)||[]);
+ const previous=config.parts[index].sourceId;
+ const description=sourceUpgradeDescription(row,row.sharedSourceId?[]:config.addons?.filter(a=>a.sourceId===row.sourceId)||[]);
  delete config.parts[index].displayName;
  Object.assign(config.parts[index],sourcePart(row),{upgrade:description});
  config.parts[index].sourceFollow.upgrade={mode:'follow',value:description,sourceValue:description};
+ // NAS 共用来源的新选择同时建立真实加购组，避免新配置只有文案而销售读不到商品和金额。
+ if(row.sharedSourceId&&Array.isArray(config.addons)){
+  config.addons=config.addons.filter(addon=>addon.sourceId!==row.sourceId&&!(previous&&addon.sourceId===previous&&!config.parts.some(part=>part.sourceId===previous)));
+  config.addons.push(...sourceAddonsForSync(row,{follow:true,keepEmpty:true}));
+  config.parts[index].sourceFollow.upgrade.structured=true;
+ }
 }
 const hasDescriptionSetting=row=>row.addonChoices!==undefined||row.addonShowTogether!==undefined||(row.addonVariants||[]).some(v=>v.showTogether!==undefined);
 const descriptionFields=fields=>[...new Set(fields.map(field=>field==='addon'?'upgrade':field))];

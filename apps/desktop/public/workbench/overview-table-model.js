@@ -18,7 +18,8 @@ export function overviewTableTotals(config,raw,quote,overrides={}){
  const fee=tax==null?null:tax+chargeCents(tax,rate)+10000;
  const interest=price==null||quote.term==null?null:chargeCents(price,quote.term===24?10:quote.percent||0);
  const taxProfit=price==null||fee==null||interest==null?null:price-fee-interest;
- const erpProfit=price==null||erp==null||interest==null?null:price-chargeCents(price,2)-erp-interest;
+ // 11-19：ERP 利润与 ERP 财审口径一致，不扣分期手续费；分期只在核算利润里扣。
+ const erpProfit=price==null||erp==null?null:price-chargeCents(price,2)-erp;
  return {rate,erp:raw.erp,tax:raw.tax,fee:fee==null?null:fee/100,interest:interest==null?null:interest/100,
   taxProfit:taxProfit==null?null:taxProfit/100,erpProfit:erpProfit==null?null:erpProfit/100};
 }

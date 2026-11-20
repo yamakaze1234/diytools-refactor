@@ -13,9 +13,9 @@ import {mountSourceSync} from './source-sync-ui.js';
 import {mountShopAddons} from './shop-addon-ui.js';
 import {excludedComponent} from './component-policy.js';
 import {clone,erpUnitCost} from './core.js';
-import {sourceAddon,sourceAddonFields,validateAddon} from './addon-data.js';
+import {sourceAddon,sourceAddonFields,selectedSourceAddons,validateAddon} from './addon-data.js';
 import {mountAddonAudit} from './addon-audit.js';
-import {mountSharedAddons,mountSharedScope,sharedScopeRow,sourceFieldPatch} from './shared-source-editor.js';
+import {mountSharedAddons,mountSharedScope,sharedScopeRow,newSharedScopeRow,sourceFieldPatch,applySharedTaxEdit} from './shared-source-editor.js';
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={name:'显示名称',tax:'含税核算单价',addon:'加购文案'};
 
@@ -29,19 +29,31 @@ export function openSourceEditor(liveApi){
  const api={...liveApi,getRows:()=>overlay(liveApi.getRows()).filter(r=>r.shopId===liveApi.shopId()),getAllRows:()=>overlay(liveApi.getAllRows())};
  let selectionBaseline=new Map(),productLookup,formBaseline=null,managed=null;
  const shared=api.sharedSources;
- const title=shared?'输出源维护':'本店输出源维护';
+ const title=api.quickEdit?'修改输出源':shared?'输出源维护':'本店输出源维护';
 
  let selectedId=null,page=0,draft=null,preview=null,busy=false,showDeleted=false,specialOnly=false,addonFields,sourceSync;
- api.openDialog(title,`<section id="source-cost-overrides"></section><div class="source-batch-bar"><strong id="source-pending">暂无待保存修改</strong><button id="source-save-all" class="primary">保存全部更改</button><button id="source-discard-all">放弃全部更改</button><p class="hint">切换商品会保留修改；全部编辑完成后统一保存到本机。</p></div><div class="source-change-entry"><button type="button" id="source-open-changes">本次变动 <span data-source-change-count>0</span></button><button type="button" id="source-open-pending">待确认差异</button></div><p class="hint">显示名称属于当前店铺；加购集中展示三店，勾选要修改的店铺；含税核算单价按 ERP ID 与三店共用。核算价格为单件价，加购文案不计入整机成本。</p><div class="source-toolbar"><input id="source-search" type="search" placeholder="搜索显示名称、ERP ID 或加购文案" aria-label="搜索输出源"><button id="source-export" title="导出本店全部在用输出源，不受搜索或分页限制，包含当前未保存内容">导出本店表格</button><button id="source-addon-check">一键检查加购差价</button><button id="source-deleted">已删除</button><button id="source-special-list">特殊配件</button><button id="source-new">＋ 新增配件</button></div><div id="source-addon-report"></div><div class="source-workspace"><div class="source-list-panel"><div id="source-count" class="hint"></div><div id="source-list"></div><div class="source-pagination"><button id="source-prev">上一页</button><span id="source-page"></span><button id="source-next">下一页</button></div></div><div id="source-detail"><p class="hint">从左侧选择需要维护的配件。</p></div></div><div id="source-message" role="status" class="hint"></div>`);
+ api.openDialog(title,`
+ <section id="source-cost-overrides"></section>
+ <div class="source-window-intro"><details><summary>维护说明</summary><p class="hint">名称和加购可按店维护，核算单价三店共用。切换配件保留草稿，底部统一保存。加购不计入整机成本。</p></details><span id="source-context"></span></div>
+ <div class="source-change-entry"><button type="button" id="source-open-changes">本次变动 <span data-source-change-count>0</span></button><button type="button" id="source-open-pending">待确认差异</button></div>
+ <div class="source-toolbar"><input id="source-search" type="search" placeholder="搜索名称、ERP ID 或加购文案" aria-label="搜索输出源"><button type="button" id="source-export" title="导出本店全部在用输出源，包含当前未保存内容">导出本店表格</button><button type="button" id="source-addon-check">检查加购差价</button><button type="button" id="source-new" class="primary">＋ 新增配件</button></div>
+ <div id="source-addon-report"></div>
+ <div class="source-workspace"><div class="source-list-panel"><div class="source-list-heading"><div id="source-count" class="hint"></div><div class="source-list-filters"><button type="button" id="source-special-list">特殊配件</button><button type="button" id="source-deleted">已删除</button></div></div><div id="source-list"></div><div class="source-pagination"><button type="button" id="source-prev">上一页</button><span id="source-page"></span><button type="button" id="source-next">下一页</button></div></div><div id="source-detail"><p class="hint">从左侧选择需要维护的配件。</p></div></div>
+ <div id="source-quick-preview" class="source-quick-preview"><span>合并展示预览</span><p></p></div>
+ <footer class="source-batch-bar"><div class="source-footer-status"><strong id="source-pending">暂无待保存修改</strong><p class="hint">切换商品会保留修改；全部编辑完成后统一保存到本机。</p></div><button type="button" id="source-discard-all">放弃全部更改</button><button type="button" id="source-save-all" class="primary">保存全部更改</button></footer>
+ <div id="source-message" role="status" class="hint"></div>`);
  // The shared dialog can be replaced by a save-conflict panel. Keep this
  // editor's inputs together so retries/quit save the original draft, never the
  // replacement panel or a different editor with the same field IDs.
  const dialog=document.querySelector('#dialog'),body=document.querySelector('#dialog-body');
  const root=document.createElement('div');root.className='source-editor-root';
  root.append(...body.childNodes);body.append(root);
- api.render?.(root,{nas:api.nas,shared:!!shared,preview:!!shared?.preview});
+ api.render?.(root,{nas:api.nas,shared:!!shared,preview:!!shared?.preview,quickEdit:!!api.quickEdit});
  const $=s=>root.querySelector(s),$$=s=>[...root.querySelectorAll(s)];
  dialog.classList.add('source-dialog');
+ dialog.classList.toggle('source-quick-dialog',!!api.quickEdit);
+ // 两种窗口共用原保存入口，快速编辑只改变按钮文字和只读预览。
+ if(api.quickEdit){$('#source-save-all').textContent='保存输出源';$('#source-discard-all').textContent='放弃修改';}
  const message=text=>$('#source-message').textContent=text;
  $('#source-cost-overrides').onclick=async event=>{
   const button=event.target.closest('[data-update-link-cost]');if(!button||busy)return;
@@ -68,8 +80,14 @@ export function openSourceEditor(liveApi){
   return showDeleted||!shared?rows:shared.dedupe(rows);
  };
  function list(){$('#source-cost-overrides').innerHTML=configCostLinksHtml(api.getConfigs(),api.shopId());const rows=filtered(),pages=Math.max(1,Math.ceil(rows.length/24));page=Math.min(page,pages-1);$('#source-count').textContent=`共 ${api.getRows().filter(r=>!r.deletedAt).length} 条在用，匹配 ${rows.length} 条`;$('#source-list').innerHTML=rows.slice(page*24,page*24+24).map(r=>`<button class="source-item ${r.sourceId===selectedId?'active':''}" data-source-id="${esc(r.sourceId)}"><strong>${esc(r.name)}${pending.has(r.sourceId)?' · 待保存':''}</strong><small>${isSpecialComponent(r)?'特殊配件 · 无 goodsId':'ID '+esc(r.goodsId)} · 核算 ${r.tax==null?'待填':'¥'+Number(r.tax).toFixed(2)}</small>${componentStockHtml(r,api.getCosts())}</button>`).join('')||'<p class="hint">没有匹配项。</p>';$('#source-page').textContent=`${page+1} / ${pages}`;$('#source-prev').disabled=page===0;$('#source-next').disabled=page===pages-1;$$('[data-source-id]').forEach(b=>b.onclick=()=>{if(busy)return;if(!stageCurrent())return;select(api.getRows().find(r=>r.sourceId===b.dataset.sourceId));});}
- function isEdited(){try{return draft&&!draft.deletedAt&&($('#source-new-shops')&&pending.has(draft.sourceId)&&JSON.stringify($$('[data-source-new-shop]:checked').map(input=>input.dataset.sourceNewShop))!==JSON.stringify(pending.get(draft.sourceId).targetShopIds)||addonFields.isDirty()||JSON.stringify(read(false))!==(formBaseline??JSON.stringify(draft)));}catch{return true;}}
- function updatePending(){const n=pending.size+(draft&&isEdited()&&!pending.has(draft.sourceId)?1:0);$('#source-pending').textContent=n?`待保存 ${n} 条输出源（含勾选店铺）`:'暂无待保存修改';}
+ function isEdited(){try{return draft&&!draft.deletedAt&&(managed?.taxEdited||$('#source-new-shops')&&pending.has(draft.sourceId)&&JSON.stringify($$('[data-source-new-shop]:checked').map(input=>input.dataset.sourceNewShop))!==JSON.stringify(pending.get(draft.sourceId).targetShopIds)||addonFields.isDirty()||JSON.stringify(read(false))!==(formBaseline??JSON.stringify(draft)));}catch{return true;}}
+ function updatePending(){
+  const n=pending.size+(draft&&isEdited()&&!pending.has(draft.sourceId)?1:0);
+  $('#source-pending').textContent=n?`待保存 ${n} 条输出源（含勾选店铺）`:'暂无待保存修改';
+  root.classList.toggle('has-source-pending',n>0);
+  const target=$('#source-quick-preview p');
+  if(target&&addonFields){try{target.textContent=selectedSourceAddons(sourceAddonFields(addonFields.read(false))).map(addon=>addon.text?.trim()).filter(Boolean).join(' ')||'暂不展示加购';}catch(error){target.textContent=error.message;}}
+ }
  function invalidate(){preview=null;sourceSync?.invalidate();if(draft&&addonFields)updatePending();}
  function stageCurrent(){
   if(productLookup?.isPending()){message('正在读取 ERP 名称和单价，请查询完成后再保存或切换。');return false;}
@@ -94,6 +112,9 @@ export function openSourceEditor(liveApi){
   const {base,entry,scope}=managed;
   const previous=pending.get(base.sourceId)?.managed;
   const edits=clone(previous?.edits||{});
+  // 新建共用资料与店铺差异一起暂存，切换范围不把当前店内容当成新的共用基线。
+  const creationBase=!entry?{...clone(base),shopId:base.shopId||api.shopId(),goodsId:value.goodsId,specialComponent:isSpecialComponent(value),...(value.erpName?{erpName:value.erpName}:{})}:null;
+  if(creationBase&&!edits.shared)edits.shared={values:sourceFieldPatch(null,creationBase),restore:[]};
   const change=edits[scope]??={values:{},restore:[]};
   const patch=sourceFieldPatch(formBaseline?JSON.parse(formBaseline):null,value);
   const put=(key,value,restore=false)=>{
@@ -102,20 +123,26 @@ export function openSourceEditor(liveApi){
    else change.values[key]=value;
   };
   for(const [key,content] of Object.entries(patch))put(key,content);
+  // 店铺原价覆盖不能遮住本次明确设置的共用核算价；名称、加购和配置独立价不受影响。
+  if(entry&&scope==='shared'&&(Object.hasOwn(patch,'tax')||managed.taxEdited))applySharedTaxEdit(edits,value.tax);
   if(fieldChange)put(...fieldChange);
   const raw=selectionBaseline.get(base.sourceId);
-  if(!entry&&!raw)Object.assign(change.values,sourceFieldPatch(null,value));
   if(!Object.keys(change.values).length&&!change.restore.length)delete edits[scope];
+  if(creationBase&&isSpecialComponent(value))for(const [scope,edit]of Object.entries(edits)){
+   edit.values=Object.fromEntries(Object.entries(edit.values).filter(([key])=>key==='name'));edit.restore=edit.restore.filter(key=>key==='name');
+   if(!Object.keys(edit.values).length&&!edit.restore.length)delete edits[scope];
+  }
   if(!Object.keys(edits).length)return;
-  const effective=entry?sharedScopeRow(base,entry,api.shopId(),edits):value;
+  const effective=entry?sharedScopeRow(base,entry,api.shopId(),edits):newSharedScopeRow(creationBase,api.shopId(),edits);
   const id=entry?.id??(isSpecialComponent(value)?'special:'+base.sourceId:value.goodsId);
-  pending.set(base.sourceId,{before:raw||null,row:effective,managed:{id,version:entry?.version??null,edits,
+  pending.set(base.sourceId,{before:raw||null,row:effective,...(creationBase?{creationBase}:{}),managed:{id,version:entry?.version??null,edits,
    ...(!entry&&value.erpName?{erpName:value.erpName}:{})}});
  }
  async function saveAll(){
   if(busy)throw Error('正在保存，请完成后再关闭。');
   if(!stageCurrent())throw Error('当前商品尚未通过校验');
   if(!pending.size){message('没有待保存修改。');return;}
+  for(const {managed}of pending.values())if(managed&&!managed.version&&!managed.edits.shared?.values?.name){message('新配件请先填写三店共用的产品显示名称；各店输入仍保留。');throw Error('缺少新配件共用名称');}
   busy=true;$('#source-save-all').disabled=true;const detail=$('#source-detail');detail.inert=true;
   message(`正在保存 ${pending.size} 条输出源及加购修改，请稍候…`);
   try{
@@ -140,17 +167,28 @@ export function openSourceEditor(liveApi){
   if(!row.deletedAt){try{formBaseline=JSON.stringify(read(false));}catch{formBaseline=null;}}
   updatePending();
  }finally{finish();}}
- function renderSelection(row,scope){api.release?.($('#source-detail'));productLookup?.dispose();productLookup=null;addonFields=null;selectionBaseline=new Map([...liveApi.getAllRows(),...liveApi.getRows()].map(r=>[r.sourceId,clone(r)]));selectedId=api.getRows().some(r=>r.sourceId===row.sourceId)?row.sourceId:null;
- const base=row,entry=shared?.record(row),isNew=!selectionBaseline.has(row.sourceId),edits=pending.get(row.sourceId)?.managed?.edits||{};
+ function renderSelection(row,scope){api.release?.($('#source-detail'));productLookup?.dispose();productLookup=null;addonFields=null;selectionBaseline=new Map([...liveApi.getAllRows(),...liveApi.getRows()].map(r=>[r.sourceId,clone(r)]));selectedId=selectionBaseline.has(row.sourceId)?row.sourceId:null;
+ const context=$('#source-context'),unitLabel=value=>value==null?'待核对':'¥'+Number(value).toFixed(2);
+ if(context)context.textContent=api.quickEdit?`原配件核算 ${unitLabel(row.tax)} · ERP ${unitLabel(erpUnitCost(row).cents===null?null:erpUnitCost(row).cents/100)}`:shops.find(shop=>shop.id===api.shopId())?.name||'当前店铺';
+ const entry=shared?.record(row),isNew=!selectionBaseline.has(row.sourceId),edits=pending.get(row.sourceId)?.managed?.edits||{};
+ const base=shared&&!entry&&isNew?{...clone(pending.get(row.sourceId)?.creationBase||row),goodsId:row.goodsId,specialComponent:isSpecialComponent(row)}:row;
  managed=shared&&(entry||isNew)&&!row.deletedAt?{base,entry,scope}:null;
  if(entry&&managed)row=sharedScopeRow(row,entry,scope,edits);
+ else if(managed)row=newSharedScopeRow(base,scope,edits);
  draft=normalizeSpecialComponent({...clone(row),goodsId:row.goodsId||'',name:row.name||'',tax:row.tax??null,upgrade:row.upgrade||'',specialComponent:isSpecialComponent(row),...sourceAddonFields(sourceAddon(row))});invalidate();if(row.deletedAt){$('#source-detail').innerHTML=`<h3>${esc(row.name)}</h3><p class="hint">此输出源已删除。已有配置和成本源保留，恢复后可重新选用。</p><button id="source-restore" class="primary">恢复输出源</button>`;api.renderDetail?.($('#source-detail'),{row});$('#source-restore').onclick=()=>toggleDeleted(row,false);list();return;}const targetShops=pending.get(row.sourceId)?.targetShopIds||shops.map(shop=>shop.id);const references=api.getConfigs().filter(c=>!c.deletedAt&&c.parts.some(p=>p.sourceId===row.sourceId)).length,unit=erpUnitCost(row);
- $('#source-detail').innerHTML=`<div class="source-detail-heading"><h3>${selectedId?'编辑配件资料':'新增输出源配件'}</h3><span>${references} 套本店配置引用</span></div>${managed?'<div id="source-shared-scope"></div>':''}${isNew&&!managed?`<fieldset id="source-new-shops" class="source-new-shops"><legend>新增到店铺</legend>${shops.map(shop=>`<label><input type="checkbox" data-source-new-shop="${shop.id}" ${targetShops.includes(shop.id)?'checked':''} ${shop.id===api.shopId()?'disabled':''}>${esc(shop.shortName)}${shop.id===api.shopId()?'（当前）':''}</label>`).join('')}<small>默认新增到三店；已有相同 ERP ID 的店铺保留原资料。</small></fieldset>`:''}<label class="field"><span><input id="source-special" type="checkbox" ${isSpecialComponent(row)?'checked':''} ${selectedId?'disabled':''}>特殊配件（无 goodsId，成本及维护表导出为 0）</span></label><div class="inline-grid"><label class="field">ERP ID<input id="source-id" value="${esc(row.goodsId)}" ${selectedId||isSpecialComponent(row)?'readonly':''} inputmode="numeric"></label><label class="field">ERP 单价（只读）<input id="source-erp-price" readonly value="${unit.cents===null?'暂无':(unit.cents/100).toFixed(2)}"></label></div><div class="hint" id="source-erp-status" role="status">当前为已同步价格</div><button type="button" id="source-erp-refresh">刷新 ERP 名称与单价</button><div id="source-stock">${componentStockHtml(row,api.getCosts())}</div><label class="field">本店产品显示名称<textarea id="source-name" rows="2">${esc(row.name)}</textarea></label><label class="field">三店共用含税核算单价<input id="source-tax" ${isSpecialComponent(row)?'readonly':''} type="number" min="0" step=".01" value="${row.tax??''}" placeholder="留空表示待核算"></label>${managed?'<details id="source-maintenance-fields" '+(isSpecialComponent(row)?'hidden':'')+'><summary>容量、硬件简称维护</summary>':''}${capacityFieldsHtml(row)}${hardwareFieldsHtml(row)}${managed?'</details>':''}<section class="source-addon-editor" ${isSpecialComponent(row)?'hidden':''}><h4>${managed?'多选加购':'三店加购'}</h4><div id="source-addon-fields"></div></section>${managed?'<section id="source-shared-preview"></section>':''}<small class="hint">更新时间：${row.updatedAt?new Date(row.updatedAt).toLocaleString():'尚未人工维护'}</small><div class="source-save-actions"><button id="source-reset">重置修改</button><button id="source-save" class="primary">保存全部更改</button></div><div class="source-bottom-actions"><button id="source-delete" class="danger" ${selectedId?'':'disabled'}>删除输出源</button></div>`;
- api.renderDetail?.($('#source-detail'),{row,selectedId,isNew,targetShops,shared:!!managed,shops:api.nas?shops.filter(s=>s.id===api.shopId()):shops,nas:api.nas,shopId:api.shopId(),references,special:isSpecialComponent(row),erpPrice:unit.cents===null?'暂无':(unit.cents/100).toFixed(2),stockHtml:componentStockHtml(row,api.getCosts()),capacityHtml:capacityFieldsHtml(row)+hardwareFieldsHtml(row)});
+ $('#source-detail').innerHTML=`<div class="source-detail-heading"><h3>${selectedId?'编辑配件资料':'新增输出源配件'}</h3><span>${references} 套本店配置引用</span></div>${managed?'<div id="source-shared-scope"></div>':''}${isNew&&!managed?`<fieldset id="source-new-shops" class="source-new-shops"><legend>新增到店铺</legend>${shops.map(shop=>`<label><input type="checkbox" data-source-new-shop="${shop.id}" ${targetShops.includes(shop.id)?'checked':''} ${shop.id===api.shopId()?'disabled':''}>${esc(shop.shortName)}${shop.id===api.shopId()?'（当前）':''}</label>`).join('')}<small>默认新增到三店；已有相同 ERP ID 的店铺保留原资料。</small></fieldset>`:''}<label class="field source-special-field"><span><input id="source-special" type="checkbox" ${isSpecialComponent(row)?'checked':''} ${selectedId?'disabled':''}>特殊配件（无 goodsId，成本及维护表导出为 0）</span></label><section class="source-erp-block"><div class="source-erp-query"><label class="field">ERP ID<input id="source-id" value="${esc(row.goodsId)}" ${selectedId||isSpecialComponent(row)?'readonly':''} inputmode="numeric"></label><button type="button" id="source-erp-refresh">查询 ERP</button></div><div class="source-erp-reference"><label class="field">ERP 单价（只读）<input id="source-erp-price" readonly value="${unit.cents===null?'暂无':(unit.cents/100).toFixed(2)}"></label><div id="source-stock">${componentStockHtml(row,api.getCosts())}</div><div class="hint" id="source-erp-status" role="status">当前为已同步价格</div></div></section><label class="field">本店产品显示名称<textarea id="source-name" rows="1">${esc(row.name)}</textarea></label><label class="field">三店共用含税核算单价<input id="source-tax" ${isSpecialComponent(row)?'readonly':''} type="number" min="0" step=".01" value="${row.tax??''}" placeholder="留空表示待核算"></label>${managed?'<details id="source-maintenance-fields" '+(isSpecialComponent(row)?'hidden':'')+'><summary>容量、硬件简称维护</summary>':''}${capacityFieldsHtml(row)}${hardwareFieldsHtml(row)}${managed?'</details>':''}<section class="source-addon-editor" ${isSpecialComponent(row)?'hidden':''}><h4>${managed?'多选加购':'三店加购'}</h4><div id="source-addon-fields"></div></section>${managed?'<section id="source-shared-preview"></section>':''}<small class="hint">更新时间：${row.updatedAt?new Date(row.updatedAt).toLocaleString():'尚未人工维护'}</small><div class="source-save-actions"><button id="source-reset">重置修改</button><button id="source-save" class="primary">保存全部更改</button></div><div class="source-bottom-actions"><button id="source-delete" class="danger" ${selectedId?'':'disabled'}>删除输出源</button></div>`;
+ api.renderDetail?.($('#source-detail'),{row,selectedId,isNew,targetShops,quickEdit:api.quickEdit,shared:!!managed,shops:api.nas?shops.filter(s=>s.id===api.shopId()):shops,nas:api.nas,shopId:api.shopId(),references,special:isSpecialComponent(row),erpPrice:unit.cents===null?'暂无':(unit.cents/100).toFixed(2),stockHtml:componentStockHtml(row,api.getCosts()),capacityHtml:capacityFieldsHtml(row)+hardwareFieldsHtml(row)});
  const getOriginal=()=>({...draft,goodsId:$('#source-id').value.trim(),tax:$('#source-tax').value===''?null:Number($('#source-tax').value)});
  addonFields=isSpecialComponent(row)?{read:()=>sourceAddon(draft),isDirty:()=>false,changes:()=>[],refresh:()=>{}}:managed?mountSharedAddons($('#source-addon-fields'),{row:draft,getCosts:api.getCosts,getOriginal,onChange:invalidate}):mountShopAddons($('#source-addon-fields'),{original:{...draft,shopId:draft.shopId||api.shopId()},getRows:api.getAllRows,getCosts:api.getCosts,getOriginal:()=>({...draft,goodsId:$('#source-id').value.trim(),tax:$('#source-tax').value===''?null:Number($('#source-tax').value)}),onChange:invalidate,...(api.nas?{availableShops:shops.filter(s=>s.id===api.shopId())}:{})});
  if(managed)mountSharedScope($('#source-detail'),{row,entry,scope,scopes:shared.scopes,edits,
-  onScope:target=>{if(!busy&&stageCurrent())select(base,target);},
+  onScope:target=>{
+   if(busy)return;
+   // 新建时可以先选范围再填写身份，只有保存或离开配件时才进行完整校验。
+   if(!entry){
+    if(productLookup?.isPending()){message('正在读取 ERP 名称和单价，请查询完成后再切换范围。');return;}
+    try{if(isEdited())stageManaged(read(false));select(pending.get(base.sourceId)?.creationBase||base,target);}catch(error){message(error.message);}
+   }else if(stageCurrent())select(base,target);
+  },
   onField:(key,value,restore)=>{
    if(busy||!stageCurrent())return;
    stageManaged(read(false),[key,value,restore]);select(base,scope);
@@ -161,13 +199,16 @@ export function openSourceEditor(liveApi){
  if(!api.setDeleted)$('#source-delete').hidden=true;
  $('#source-delete').onclick=()=>{if(confirm(`删除“${row.name}”？已有配置和成本源保留，可以从“已删除”中恢复。`))return toggleDeleted(row,true);};
  $('#source-save').onclick=()=>saveAll().catch(()=>{});
- $('#source-reset').onclick=()=>{select(selectedId?api.getRows().find(r=>r.sourceId===selectedId):{sourceId:crypto.randomUUID(),goodsId:'',name:'',specialComponent:specialOnly,erp:specialOnly?0:null,tax:specialOnly?0:null,upgrade:'',addonText:'',addonNote:''});message('已重置未保存的修改');};
+ $('#source-name').closest('label').classList.add('source-field-name');
+ $('#source-reset').onclick=()=>{if(api.quickEdit)pending.clear();select(selectedId?api.getRows().find(r=>r.sourceId===selectedId):{sourceId:crypto.randomUUID(),goodsId:'',name:'',specialComponent:specialOnly,erp:specialOnly?0:null,tax:specialOnly?0:null,upgrade:'',addonText:'',addonNote:''});message(api.quickEdit?'已放弃未保存的修改':'已重置未保存的修改');};
+ if(api.quickEdit){$('#source-reset').textContent='放弃修改';$('#source-save').textContent='保存输出源';}
  const editable=!api.canEdit||api.canEdit(row);
- const refreshFields=()=>{
+ const refreshFields=event=>{
+  if(event?.target?.id==='source-tax'&&managed?.scope==='shared')managed.taxEdited=true;
   invalidate();
   const visible={...draft,name:$('#source-name').value,goodsId:$('#source-id').value.trim()};
   updateCapacityHints(root,visible.name);updateHardwareHints(root,visible);
-  updateMaintenanceVisibility(root,visible,api.getConfigs(),api.getCosts());addonFields.refresh();
+  updateMaintenanceVisibility(root,visible,api.getConfigs(),api.getCosts(),{isNew});addonFields.refresh();
  };
  $$('#source-detail input[id^="source-"],#source-detail textarea[id^="source-"],#source-detail select[id^="source-"]').forEach(el=>el.oninput=refreshFields);
  if(!isSpecialComponent(row)){
@@ -181,7 +222,10 @@ export function openSourceEditor(liveApi){
    const note=document.createElement('p');note.className='hint';note.textContent='此共享资料未授予当前账号维护权限。';$('#source-detail').prepend(note);
   }
  }
- updateCapacityHints(root,$('#source-name').value);updateHardwareHints(root,{...draft,name:$('#source-name').value});updateMaintenanceVisibility(root,{...draft,name:$('#source-name').value,goodsId:$('#source-id').value.trim()},api.getConfigs(),api.getCosts());list();updatePending();}
+ updateCapacityHints(root,$('#source-name').value);updateHardwareHints(root,{...draft,name:$('#source-name').value});updateMaintenanceVisibility(root,{...draft,name:$('#source-name').value,goodsId:$('#source-id').value.trim()},api.getConfigs(),api.getCosts(),{isNew});
+ // 新建直接展开维护区；已有配件继续保留折叠阅读方式。
+ if(isNew&&$('#source-maintenance-fields'))$('#source-maintenance-fields').open=!isSpecialComponent(row);
+ list();updatePending();}
  async function toggleDeleted(row,deleted){if(busy)return;if(pending.size||isEdited()){message('请先保存全部更改或放弃全部更改，再删除或恢复输出源。');return;}busy=true;try{await api.setDeleted(row.sourceId,deleted);if(!$('#source-detail'))return;draft=null;selectedId=null;showDeleted=false;$('#source-deleted').textContent='已删除';const first=filtered()[0];if(first)select(first);else{api.release?.($('#source-detail'));$('#source-detail').innerHTML='<p class="hint">暂无输出源，可新增或从“已删除”恢复。</p>';list();}message(deleted?'输出源已删除，已有配置保留。':'输出源已恢复。');}catch(e){if($('#source-message'))message(e.message);}finally{busy=false;}}
  $('#source-export').onclick=()=>{
   if(busy)return;
@@ -213,13 +257,13 @@ export function openSourceEditor(liveApi){
  $('#source-special-list').onclick=()=>{if(busy)return;if(!stageCurrent())return;specialOnly=!specialOnly;$('#source-special-list').textContent=specialOnly?'全部配件':'特殊配件';$('#source-search').value='';page=0;draft=null;selectedId=null;const first=filtered()[0];if(first)select(first);else{api.release?.($('#source-detail'));$('#source-detail').innerHTML='<p class="hint">点击新增配件，创建特殊配件。</p>';list();}};
  $('#source-search').oninput=()=>{page=0;list();};$('#source-prev').onclick=()=>{page--;list();};$('#source-next').onclick=()=>{page++;list();};$('#source-new').onclick=()=>{if(busy)return;if(!stageCurrent())return;showDeleted=false;$('#source-deleted').textContent='已删除';select({sourceId:crypto.randomUUID(),goodsId:'',name:'',specialComponent:specialOnly,erp:specialOnly?0:null,tax:specialOnly?0:null,upgrade:'',addonText:'',addonNote:''});};
  $('#source-save-all').onclick=()=>saveAll().catch(()=>{});
- $('#source-discard-all').onclick=()=>{if(busy)return;if((pending.size||draft&&isEdited())&&!confirm('放弃本次所有尚未保存的输出源和加购修改？'))return;pending.clear();draft=null;selectedId=null;addonFields=null;const first=filtered()[0];if(first)select(first);else{api.release?.($('#source-detail'));$('#source-detail').innerHTML='<p class="hint">从左侧选择配件。</p>';list();updatePending();}message('已放弃本次未保存修改。');};
+ $('#source-discard-all').onclick=()=>{if(busy)return;if(api.quickEdit){$('#source-reset')?.onclick();return;}if((pending.size||draft&&isEdited())&&!confirm('放弃本次所有尚未保存的输出源和加购修改？'))return;pending.clear();draft=null;selectedId=null;addonFields=null;const first=filtered()[0];if(first)select(first);else{api.release?.($('#source-detail'));$('#source-detail').innerHTML='<p class="hint">从左侧选择配件。</p>';list();updatePending();}message('已放弃本次未保存修改。');};
  const controller=new AbortController(),options={signal:controller.signal};
  const hasPending=()=>busy||pending.size>0||!!draft&&isEdited();
- const guard=e=>{if(root.isConnected&&(busy||hasPending())){e.preventDefault();message(busy?'正在保存，请稍候。':'还有未保存修改，请先“保存全部更改”，或选择“放弃全部更改”。');}};
+ const guard=e=>{if(root.isConnected&&(busy||hasPending())){e.preventDefault();message(busy?'正在保存，请稍候。':api.quickEdit?'还有未保存修改，请先保存输出源，或点击“放弃修改”。':'还有未保存修改，请先“保存全部更改”，或选择“放弃全部更改”。');}};
  dialog.addEventListener('cancel',guard,options);dialog.querySelector('form').addEventListener('submit',guard,options);
  const dispose=()=>{productLookup?.dispose();sourceSync?.dispose?.();controller.abort();api.release?.(root);root.remove();if(window.workbenchSourceEditor===editor)delete window.workbenchSourceEditor;};
- const restore=()=>{root.remove();api.openDialog(title,'');document.querySelector('#dialog-body').append(root);dialog.classList.add('source-dialog');};
+ const restore=()=>{root.remove();api.openDialog(title,'');document.querySelector('#dialog-body').append(root);dialog.classList.add('source-dialog');dialog.classList.toggle('source-quick-dialog',!!api.quickEdit);};
  // 替换共享弹窗前先移走有草稿的独立根，防止宿主释放 React 节点后丢失原输入。
  const detachForDialog=()=>{if(hasPending())root.remove();else dispose();};
  const editor={hasPending,save:saveAll,restore,dispose,detachForDialog};window.workbenchSourceEditor=editor;
@@ -239,5 +283,8 @@ export function openSourceEditor(liveApi){
   if(!api.canManage||shared&&!shared.canCreate)$('#source-new').hidden=true;
 
  }
- list();if(filtered().length)select(filtered()[0]);
+ // 指定配件必须精确定位到原来源，不能被共用目录去重后跳到另一条别名。
+ list();const first=api.focusSourceId?api.getRows().find(row=>row.sourceId===api.focusSourceId&&!row.deletedAt):filtered()[0];
+ if(first)select(first,api.quickEdit?api.shopId():undefined);
+ else if(api.focusSourceId)message('对应输出源不存在或已删除，请重新选择配件。');
 }

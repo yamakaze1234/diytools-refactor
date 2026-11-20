@@ -53,3 +53,49 @@ test('原生提交携带每个客户端各自的预期成员，失败不自动�
  assert.deepEqual(JSON.parse(decodeURIComponent(sent[0].opts.headers['x-workbench-nas-owner'])),['w','A']);
  assert(!Object.hasOwn(sent[0].opts.headers,'authorization'));
 });
+
+test('确认的自动编号保留价格草稿和手工名称，不接续过期版本或未知提交',async()=>{
+ const f=fixture(),a=f.create();await a.open('c');a.edit({...doc,price:123});
+ const row={configuration_id:'c',before:doc.name,name:'配置1',previous_version:'1',version:'2'};
+ assert.equal(a.acceptRenumber(row),true);
+ assert.equal(a.read().document.price,123);assert.equal(a.read().document.name,'配置1');assert.equal(a.read().version,'2');
+ assert.equal(a.acceptRenumber(row),false);
+ a.edit({...a.read().document,name:'手工套餐'});
+ assert.equal(a.acceptRenumber({...row,before:'配置1',name:'配置2',previous_version:'2',version:'3'}),true);
+ assert.equal(a.read().base.name,'配置2');assert.equal(a.read().document.name,'手工套餐');
+ f.setSave(()=>{throw new NasApiError('SAVE_STATUS_UNKNOWN');});await assert.rejects(a.save(),{code:'SAVE_STATUS_UNKNOWN'});
+ const pending=a.read();assert.equal(a.acceptRenumber({...row,before:'配置2',previous_version:'3',version:'4'}),false);assert.deepEqual(a.read(),pending);
+});
+test('完整来源同步只接续明确确认的依赖，保留价格草稿和其它来源/成本版本',async()=>{
+ const f=fixture();f.client.detail=async()=>({...baseline,dependencies:{sources:{s:'1',other:'4'},costs:{a:'7'}}});
+ const a=f.create();await a.open('c');a.edit({...doc,price:123});
+ assert.equal(a.acceptSourceVersions({s:'2'}),true);
+ assert.deepEqual(a.read().dependencies,{sources:{s:'2',other:'4'},costs:{a:'7'}});assert.equal(a.read().document.price,123);assert.equal(a.read().version,'1');
+ f.setSave(()=>{throw new NasApiError('SAVE_STATUS_UNKNOWN');});await assert.rejects(a.save(),{code:'SAVE_STATUS_UNKNOWN'});
+ const pending=a.read();assert.equal(a.acceptSourceVersions({s:'3'}),false);assert.deepEqual(a.read(),pending);
+});
+
+test('来源自保存后接续已读依赖只用于干净配置，不吞掉草稿或未知提交',async()=>{
+ const f=fixture();f.client.detail=async()=>({...baseline,dependencies:{sources:{s:'1',other:'4'},costs:{a:'7',untouched:'8'}}});
+ const a=f.create();await a.open('c');
+ assert.equal(a.acceptObservedDependencies({sources:{s:'2',unrelated:'9'},costs:{a:'9'}}),true);
+ assert.deepEqual(a.read().dependencies,{sources:{s:'2',other:'4'},costs:{a:'9',untouched:'8'}});assert.equal(f.map.size,0);assert.equal(a.read().version,'1');
+ // 同配置的另一个窗口持有草稿时，当前干净窗口接续来源不得删除共享存储键。
+ const other=f.create();await other.open('c');other.edit({...doc,price:200});
+ const stored=[...f.map.entries()];assert.equal(stored.length,1);
+ assert.equal(a.acceptObservedDependencies({sources:{s:'3'}}),true);assert.deepEqual([...f.map.entries()],stored);
+ a.edit({...doc,name:'用户草稿'});const dirty=a.read();assert.equal(a.acceptObservedDependencies({sources:{s:'3'},costs:{a:'10'}}),false);assert.deepEqual(a.read(),dirty);
+ f.setSave(()=>{throw new NasApiError('SAVE_STATUS_UNKNOWN');});await assert.rejects(a.save(),{code:'SAVE_STATUS_UNKNOWN'});
+ const pending=a.read();assert.equal(a.acceptObservedDependencies({sources:{s:'3'},costs:{a:'10'}}),false);assert.deepEqual(a.read(),pending);
+});
+
+test('编号与显式来源版本接续不清除另一窗口的草稿或未知请求',async()=>{
+ const f=fixture();f.client.detail=async()=>({...baseline,dependencies:{sources:{s:'1'},costs:{}}});
+ const a=f.create(),b=f.create();await a.open('c');await b.open('c');b.edit({...doc,price:200});
+ const before=[...f.map.entries()];assert.equal(before.length,1);
+ assert.equal(a.acceptRenumber({configuration_id:'c',before:doc.name,name:'配置1',previous_version:'1',version:'2'}),true);
+ assert.deepEqual([...f.map.entries()],before);assert.equal(a.read().version,'2');
+ assert.equal(a.acceptSourceVersions({s:'2'}),true);assert.deepEqual([...f.map.entries()],before);
+ f.setSave(()=>{throw new NasApiError('SAVE_STATUS_UNKNOWN');});await assert.rejects(b.save(),{code:'SAVE_STATUS_UNKNOWN'});
+ const unknown=[...f.map.entries()];assert.equal(a.acceptSourceVersions({s:'3'}),true);assert.deepEqual([...f.map.entries()],unknown);
+});

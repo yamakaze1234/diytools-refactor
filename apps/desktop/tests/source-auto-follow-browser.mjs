@@ -4,7 +4,7 @@ import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)(path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
-const root=path.resolve('apps/desktop/public/workbench'),out=path.resolve('sandbox/source-auto-follow-20261017');await fs.mkdir(out,{recursive:true});
+const root=path.resolve('apps/desktop/public/workbench'),out=path.resolve(process.env.WORKBENCH_SCREENSHOTS||'sandbox/source-auto-follow-20261017');await fs.mkdir(out,{recursive:true});
 const html=await fs.readFile(path.join(root,'index.html'),'utf8'),shell=html.match(/<dialog id="dialog">[\s\S]*?<\/dialog>/)[0],styles=html.match(/<link rel="stylesheet"[^>]*>/g).join('');
 const server=http.createServer(async(req,res)=>{try{const pathname=new URL(req.url,'http://localhost').pathname;if(pathname==='/'){res.setHeader('Content-Type','text/html');res.end('<!doctype html><html lang="zh-CN"><meta charset="utf-8">'+styles+shell+'</html>');return;}const file=path.resolve(root,'.'+pathname);if(!file.startsWith(root+path.sep))throw Error('path');res.setHeader('Content-Type',pathname.endsWith('.js')?'text/javascript':pathname.endsWith('.css')?'text/css':'application/octet-stream');res.end(await fs.readFile(file));}catch{res.statusCode=404;res.end();}});await new Promise(r=>server.listen(0,'127.0.0.1',r));let browser;
 try{
@@ -27,5 +27,17 @@ try{
  const width=await automatic.evaluate(el=>({client:el.clientWidth,scroll:el.scrollWidth}));assert.ok(width.scroll<=width.client+1,JSON.stringify(width));
  const result=await page.evaluate(()=>({saves:fixture.saves,automatic:fixture.state.configs[0].parts[0].upgrade,manual:fixture.state.configs[1].parts[0].upgrade}));assert.equal(result.saves,1);assert.match(result.automatic,/599元/);assert.equal(result.manual,'手动文案');assert.deepEqual(errors,[]);
  await autoDialog.getByRole('button',{name:'关闭',exact:true}).click();assert.equal(await page.locator('#source-save-all').isVisible(),true);await page.locator('#source-open-changes').click();assert.match(await automatic.textContent(),/599元/);
- await fs.writeFile(path.join(out,'browser-result.json'),JSON.stringify({ok:true,result,errors,width,checks:['edit price in real source editor','save through sourceBatch','automatic old/new visible','manual differences retained','changed configurations selected for export only','category filter','refresh retains receipt','wide/narrow layout']},null,2));console.log(JSON.stringify({ok:true,out,result}));
+ // 回归标题遮挡：两种主题、宽窄窗口都使用真实命中与点击，不能用强制点击绕过标题层。
+ const pointerChecks=[];
+ for(const theme of ['light','dark'])for(const width of [1440,600]){
+  if(await autoDialog.isVisible())await autoDialog.getByRole('button',{name:'关闭',exact:true}).click();
+  await page.setViewportSize({width,height:1000});await page.evaluate(theme=>{document.documentElement.classList.toggle('dark',theme==='dark');document.documentElement.dataset.workbenchTheme=theme;},theme);
+  for(const selector of ['#source-open-changes','#source-open-pending','#dialog>form [aria-label="关闭"]']){
+   const hit=await page.locator(selector).evaluate(node=>{const box=node.getBoundingClientRect(),top=document.elementFromPoint(box.x+box.width/2,box.y+box.height/2);return !!top&&node.contains(top);});
+   assert.equal(hit,true,theme+' '+width+' '+selector);pointerChecks.push({theme,width,selector,hit});
+  }
+  await page.locator('#source-open-changes').click();await automatic.waitFor({state:'visible'});await autoDialog.getByRole('button',{name:'关闭',exact:true}).click();
+  await page.locator('#source-open-pending').click();await pendingDialog.locator('#source-check').waitFor();await pendingDialog.getByRole('button',{name:'关闭',exact:true}).click();
+ }
+ await fs.writeFile(path.join(out,'browser-result.json'),JSON.stringify({ok:true,result,errors,width,pointerChecks,checks:['edit price in real source editor','save through sourceBatch','automatic old/new visible','manual differences retained','changed configurations selected for export only','category filter','refresh retains receipt','wide/narrow layout']},null,2));console.log(JSON.stringify({ok:true,out,result}));
 }finally{await browser?.close();await new Promise(r=>server.close(r));}

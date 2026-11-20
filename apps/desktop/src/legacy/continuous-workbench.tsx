@@ -1,4 +1,4 @@
-import {memo,useCallback,useLayoutEffect,useMemo,useRef,useState,type ClipboardEvent,type KeyboardEvent,type ReactNode} from 'react';
+import {memo,useCallback,useEffect,useLayoutEffect,useMemo,useRef,useState,type ClipboardEvent,type KeyboardEvent,type ReactNode} from 'react';
 import {useVirtualizer,defaultRangeExtractor} from '@tanstack/react-virtual';
 import {Autocomplete,AutocompleteContent,AutocompleteEmpty,AutocompleteInput,AutocompleteItem,AutocompleteList} from '@/components/reui/autocomplete';
 import type {Row} from './editor-controls';
@@ -10,6 +10,7 @@ const amount=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)?in
 const normalize=(value:string)=>value.normalize('NFKC').replace(/[,，\s]/g,'');
 type Draft={field:'price'|'rate'|'tax';index?:number;value:number}|null;
 type Position={row:number;col:0|1};
+type RowSelection={slots:string[];anchor:string|null};
 
 /** 编辑以回车或失焦提交，取消或无效输入恢复最后一次已确认的值。 */
 function CommitInput({value,label,className='',fallback='',numeric=false,onCommit,onDraft}:
@@ -78,6 +79,7 @@ function DisplayPart({row,c,model,addons}:{row:Row;c:Row;model:Row;addons:boolea
  if(hidden)return <div className="ov-display-line"><span className="ov-missing">展示明细已隐藏</span><button onClick={()=>model.partField(c.id,slot,false,'posterVisible',true)}>恢复展示</button></div>;
  // 空描述有独立的添加入口，原有描述仍可隐藏或显示。
  const hasAddon=Boolean(String(part?.upgrade??'').trim());
+ const bracketed=/^【[\s\S]*】$/.test(String(part?.upgrade??'').trim());
  const addonVisible=addons&&(hasAddon?!part.overviewAddonHidden:showEmpty);
  return <><div className="ov-display-line">
   <div className="ov-display-name"><EditableText value={name} placeholder="填写展示明细" label={slot+'展示明细'} onCommit={value=>model.partField(c.id,slot,false,'displayName',value)}/>
@@ -85,8 +87,12 @@ function DisplayPart({row,c,model,addons}:{row:Row;c:Row;model:Row;addons:boolea
   {(name||part?.upgrade)&&<button onClick={()=>model.partField(c.id,slot,false,'posterVisible',false)}>隐藏展示配件</button>}
  </div>
  {addons&&<div className="ov-addon-line">
-  {addonVisible&&<div className="ov-addon" ref={editor}><EditableText value={hasAddon?part.upgrade:''} label={slot+'加购'} placeholder="填写加购描述"
-    onCommit={value=>{setShowEmpty(false);model.partField(c.id,slot,false,'upgrade',value);}}/></div>}
+  {addonVisible&&<div className="ov-addon ov-addon-bracket" ref={editor}>{!bracketed&&<span className="ov-bracket">【</span>}<EditableText value={hasAddon?part.upgrade:''} label={slot+'加购'} placeholder="填写加购描述"
+    onCommit={value=>{setShowEmpty(false);model.partField(c.id,slot,false,'upgrade',value);}}/>{!bracketed&&<span className="ov-bracket">】</span>}</div>}
+  <span className="ov-addon-apply">
+   {(part?.sourceId||part?.goodsId||part?.name||row.actual?.sourceId)&&<button className="ov-edit-source" onClick={()=>model.editSource(c.id,slot)}>修改输出源</button>}
+   {addonVisible&&hasAddon&&<><button onClick={()=>model.upgradeScope(c.id,slot,'link')}>本链接</button><button className="ov-addon-apply-all" onClick={()=>model.upgradeScope(c.id,slot,'all')}>全局</button></>}
+  </span>
   <button onClick={()=>{if(!hasAddon)setShowEmpty(v=>!v);else model.partField(c.id,slot,false,'overviewAddonHidden',addonVisible);}}>
     {hasAddon?(addonVisible?'隐藏加购':'显示加购'):(showEmpty?'收起输入框':'添加加购')}</button>
  </div>}</>;
@@ -109,11 +115,12 @@ function HeadLine({c,model,draft,onDraft,actual,mobile=false}:{c:Row;model:Row;d
      {!c.version&&<option value="">未设置</option>}{versions.map(version=><option key={version}>{version}</option>)}
     </select></div><h2>{c.shortName||c.name}</h2>
    </div>;
- const priceLabel='到手价'+(terms?' · 分期':'');
- const price=<CommitInput numeric value={c.price} label={c.name+'到手价'} onCommit={value=>model.field(c.id,'price',value)}
-  onDraft={value=>onDraft(value==null?null:{field:'price',value})}/>;
+ const priceLabel=<>到手价<span className="ov-price-tags">{terms?' · 分期':''}{c.overviewPrice99?' · 99':''}</span></>;
+ const profit=(label:unknown,value:unknown)=>label==='核算利润'||label==='ERP利润'?<CommitInput numeric className="ov-profit-input" value={value} label={c.name+label} onCommit={text=>model.targetProfit(c.id,label==='核算利润'?'tax':'erp',text)}/>:amount(value);
+ const price=<span className="ov-price-box"><CommitInput numeric value={c.price} label={c.name+'到手价'} onCommit={value=>model.field(c.id,'price',value)}
+  onDraft={value=>onDraft(value==null?null:{field:'price',value})}/><span className="ov-price-step"><button aria-label={c.name+'到手价增加100'} onClick={()=>model.priceStep(c.id,100)}>▲</button><button aria-label={c.name+'到手价减少100'} onClick={()=>model.priceStep(c.id,-100)}>▼</button></span></span>;
  if(mobile)return <div className="ov-mobile-head">{titleBar}{controls}<dl className="ov-mobile-sums">
-  {summaries.map(([label,value,type])=><div key={String(label)} className={styles(label,value,type)}><dt>{label}</dt><dd>{amount(value)}</dd></div>)}
+  {summaries.map(([label,value,type])=><div key={String(label)} className={styles(label,value,type)}><dt>{label}</dt><dd>{profit(label,value)}</dd></div>)}
   <div className="ov-sum ov-price"><dt>{priceLabel}</dt><dd>{price}</dd></div>
  </dl></div>;
  return <thead>
@@ -121,22 +128,38 @@ function HeadLine({c,model,draft,onDraft,actual,mobile=false}:{c:Row;model:Row;d
   <th className="ov-sum ov-price">{priceLabel}</th>
   {actual&&<th rowSpan={2} className="ov-dark">{controls}</th>}
   <th rowSpan={2} className="ov-dark ov-title">{titleBar}</th></tr>
-  <tr className="ov-sum-values">{summaries.map(([label,value,type])=><td key={String(label)} className={styles(label,value,type)}>{amount(value)}</td>)}
+  <tr className="ov-sum-values">{summaries.map(([label,value,type])=><td key={String(label)} className={styles(label,value,type)}>{profit(label,value)}</td>)}
    <td className="ov-sum ov-price">{price}</td></tr>
   <tr className="ov-columns"><th>ERP 单价</th><th>含税单价</th><th>GoodID</th><th>库存</th><th>数量</th><th>配件</th>
    {actual&&<th className="ov-name-column">实际配件</th>}<th className="ov-name-column ov-display-head">展示明细</th></tr>
  </thead>;
 }
 
-const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model:Row;actual:boolean;addons:boolean}){
- const [selected,setSelected]=useState<number[]>([]),rowAnchor=useRef(0);
+const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{c:Row;model:Row;actual:boolean;addons:boolean;selections:Map<string,RowSelection>}){
+ // 仅保留槽位身份，不保留配置文档或DOM；离屏卸载后仍可恢复行选区。
+ const cached=selections.get(c.id);
+ const [selectedSlots,setSelectedSlots]=useState<string[]>(()=>cached?.slots||[]);
+ const selected=c.rows.filter((row:Row)=>selectedSlots.includes(row.slot)).map((row:Row)=>row.index) as number[];
+ const rowAnchor=useRef<string|null>(cached?.anchor??c.rows[0]?.slot??null);
+ const setSelected=(update:number[]|((old:number[])=>number[]))=>{
+  const indexes=typeof update==='function'?update(selected):update;
+  const slots=c.rows.filter((row:Row)=>indexes.includes(row.index)).map((row:Row)=>row.slot) as string[];
+  selections.set(c.id,{slots,anchor:selections.get(c.id)?.anchor||null});setSelectedSlots(slots);
+ };
  const [draft,setDraft]=useState<Draft>(null);
  const [range,setRange]=useState<{anchor:Position;end:Position}|null>(null);
+ const [copied,setCopied]=useState<{top:number;bottom:number;left:number;right:number}|null>(null);
  const [picker,setPicker]=useState<{row:number;input:string}|null>(null);
  const dragging=useRef(false),table=useRef<HTMLTableElement>(null);
  const position=(target:HTMLElement)=>{const td=target.closest<HTMLElement>('[data-ov-cell]');return td?{row:Number(td.dataset.ovRow),col:Number(td.dataset.ovCell) as 0|1}:null;};
  const bounds=range&&{top:Math.min(range.anchor.row,range.end.row),bottom:Math.max(range.anchor.row,range.end.row),left:Math.min(range.anchor.col,range.end.col),right:Math.max(range.anchor.col,range.end.col)};
- const chosen=(row:number,col:number)=>bounds&&row>=bounds.top&&row<=bounds.bottom&&col>=bounds.left&&col<=bounds.right;
+
+ // 复制框随来源选区保留；别处复制或 Escape 时清除，支持连续粘贴。
+ useEffect(()=>{
+  const clear=(event:Event)=>{if(event.type==='keydown'&&(event as globalThis.KeyboardEvent).key!=='Escape')return;if(event.type!=='copy'||!table.current?.contains(event.target as Node)||!event.defaultPrevented)setCopied(null);};
+  document.addEventListener('copy',clear);document.addEventListener('keydown',clear);
+  return()=>{document.removeEventListener('copy',clear);document.removeEventListener('keydown',clear);};
+ },[]);
  function focusCell(pos:Position){
   table.current?.querySelector<HTMLElement>('[data-ov-row="'+pos.row+'"][data-ov-cell="'+pos.col+'"]')?.focus({preventScroll:true});
  }
@@ -164,6 +187,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model
   if(target.matches('input,textarea,select'))return;
   const row=target.closest<HTMLElement>('[data-row-slot]');
   if(row){
+   setCopied(null);
    const payload=model.copy(c.id,selected.length?selected:[Number(row.dataset.rowSlot)]);
    if(!payload)return;
    e.preventDefault();e.clipboardData.setData('application/x-diy-workbench-rows',JSON.stringify(payload));
@@ -172,19 +196,30 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model
    e.preventDefault();
    const data=c.rows.slice(bounds.top,bounds.bottom+1).map((item:Row)=>[item.actual?.name||'',item.actual?.qty??1].slice(bounds.left,bounds.right+1).join('\t'));
    e.clipboardData.setData('text/plain',data.join('\r\n'));
+   const sourceData=c.rows.slice(bounds.top,bounds.bottom+1).map((item:Row)=>[item.actual?.sourceId||item.actual?.name||'',item.actual?.qty??1].slice(bounds.left,bounds.right+1).join('\t'));
+   e.clipboardData.setData('application/x-diy-workbench-cells',JSON.stringify({text:data.join('\r\n'),sourceText:sourceData.join('\r\n')}));
+   setCopied({...bounds});
   }
  }
  function paste(e:ClipboardEvent){
   const target=e.target as HTMLElement;
   if(target.matches('input,textarea,select'))return;
   const pos=position(target),row=target.closest<HTMLElement>('[data-row-slot]');
-  if(pos){e.preventDefault();model.pasteActual(c.id,pos.row,pos.col,e.clipboardData.getData('text/plain'));}
+  if(pos){e.preventDefault();let text=e.clipboardData.getData('text/plain');try{const cells=JSON.parse(e.clipboardData.getData('application/x-diy-workbench-cells'));if(cells.text===text&&typeof cells.sourceText==='string')text=cells.sourceText;}catch{}model.pasteActual(c.id,pos.row,pos.col,text);}
   else if(row){
    const raw=e.clipboardData.getData('application/x-diy-workbench-rows');
    if(raw){e.preventDefault();try{model.paste(c.id,Number(row.dataset.rowSlot),JSON.parse(raw));}catch{model.notice('剪贴板配件数据无效');}}
   }
  }
- const gridProps=(row:number,col:0|1)=>({'data-ov-cell':col,'data-ov-row':row,tabIndex:0,'data-ov-selected':chosen(row,col)||undefined});
+ // 逻辑列顺序为型号、数量，画面顺序相反；配件标题属于两者之间的连续选区。
+ const selectionProps=(row:number,col:number)=>{
+  const inside=(box:typeof copied)=>box&&row>=box.top&&row<=box.bottom&&(col===2?box.left===0&&box.right===1:col>=box.left&&col<=box.right);
+  const selectedCell=inside(bounds),copiedCell=inside(copied);
+  const edge=(box:NonNullable<typeof copied>,side:string)=>side==='t'?row===box.top:side==='b'?row===box.bottom:side==='l'?col===box.right:col===box.left;
+  return {'data-ov-selected':selectedCell||undefined,...Object.fromEntries(['t','b','l','r'].map(side=>['data-sel-'+side,selectedCell&&edge(bounds!,side)||undefined])),
+   'data-cp':copiedCell||undefined,...Object.fromEntries(['t','b','l','r'].map(side=>['data-cp-'+side,copiedCell&&edge(copied!,side)||undefined]))};
+ };
+ const gridProps=(row:number,col:0|1)=>({'data-ov-cell':col,'data-ov-row':row,tabIndex:0,...selectionProps(row,col)});
  return <section className="ov-config" data-continuous-config={c.id} data-active={model.active===c.id||undefined}
   onFocusCapture={()=>model.activate(c.id)} onCopy={copy} onPaste={paste}>
   <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual} mobile/>
@@ -207,24 +242,26 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model
    <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual}/>
    <tbody>{c.rows.map((row:Row,index:number)=>{
     const part=row.actual,stock=part?.name||part?.goodsId||part?.specialComponent?model.stock(part):null;
-    const changed=part&&model.different(part),base=changed?model.baseTax(part):null,baseline=base??part?.tax;
+    const changed=part&&model.different(part),global=part&&model.globalTax(part),base=changed?model.baseTax(part):null,baseline=base??part?.tax;
     const taxDraft=draft?.field==='tax'&&draft.index===index?draft.value:undefined;
     const taxDifferent=taxDraft===undefined?changed:taxDraft!==(base??part?.tax);
     const label=c.name+' '+row.slot;
     return <tr key={row.slot} className={row.slot==='风扇'?'ov-divider':''}>
      <td className="ov-number" data-metric="ERP 单价">{amount(part?.erp)}</td>
-     <td className={'ov-number ov-tax'+(taxDifferent?' ov-tax-changed':'')} data-metric="含税单价" title={taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
+     <td className={'ov-number ov-tax'+(taxDifferent||global?' ov-tax-changed':'')+(global?' ov-tax-global-changed':'')} data-metric="含税单价" title={global?'全局改价：原价 '+amount(global.base)+' → '+amount(global.value)+' · '+new Date(global.at).toLocaleString('zh-CN'):taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
       {part?.goodsId&&stock?.status!=='special'?<CommitInput className="ov-tax-input" value={part.tax} label={label+'含税单价'} numeric
        onCommit={value=>model.tax(c.id,row.slot,value)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.tax)}
+      {(taxDifferent||global)&&<div className="ov-tax-actions">{taxDifferent&&<><button className="ov-tax-global" onClick={()=>model.taxGlobal(c.id,row.slot)}>全局</button><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxReset(c.id,row.slot)}>恢复</button></>}{global&&<><span className="ov-tax-global-tag">全局</span><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxGlobalRestore(c.id,row.slot)}>全局恢复</button></>}</div>}
      </td>
      <td className="ov-number" data-metric="GoodID">{part?.goodsId||'—'}</td>
      <td className={'ov-number'+(stock?.status==='out'?' ov-stock-out':'')} data-metric="库存" title={stock?.detail}>{stock?.status==='special'?'—':stock?.value==null?(stock?'未知':'—'):amount(stock.value)}</td>
      <td className="ov-number ov-quantity" data-metric="数量" {...gridProps(index,1)}>
       <CommitInput value={part?.qty??1} label={label+'实际数量'} numeric onCommit={value=>model.partField(c.id,row.slot,true,'qty',value)}/>
      </td>
-     <th scope="row"><button type="button" data-row-slot={row.index} aria-pressed={selected.includes(row.index)} onClick={e=>{
-      setSelected(old=>e.shiftKey?c.rows.filter((item:Row)=>item.index>=Math.min(rowAnchor.current,row.index)&&item.index<=Math.max(rowAnchor.current,row.index)).map((item:Row)=>item.index):e.ctrlKey||e.metaKey?old.includes(row.index)?old.filter(i=>i!==row.index):[...old,row.index]:[row.index]);
-      if(!e.shiftKey)rowAnchor.current=row.index;
+     <th scope="row" {...selectionProps(index,2)}><button type="button" data-row-slot={row.index} aria-pressed={selected.includes(row.index)} onClick={e=>{
+      const anchor=c.rows.find((item:Row)=>item.slot===rowAnchor.current)?.index??row.index;
+      setSelected(old=>e.shiftKey?c.rows.filter((item:Row)=>item.index>=Math.min(anchor,row.index)&&item.index<=Math.max(anchor,row.index)).map((item:Row)=>item.index):e.ctrlKey||e.metaKey?old.includes(row.index)?old.filter(i=>i!==row.index):[...old,row.index]:[row.index]);
+      if(!e.shiftKey){rowAnchor.current=row.slot;const saved=selections.get(c.id);if(saved)saved.anchor=row.slot;}
      }}>{row.slot}</button></th>
      {actual&&<td className="ov-actual" aria-label={label+' 实际配件'} {...gridProps(index,0)}>
       {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>setPicker(null)}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}>{part?.name||'—'}</span>}
@@ -233,7 +270,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model
     </tr>;
    })}</tbody>
   </table>
-  <button className="ov-add-row" aria-label={c.name+' 新增配件'} onClick={()=>model.addRow(c.id)}>＋ 新增配件</button>
+  <div className="ov-row-tools"><button className="ov-add-row" aria-label={c.name+' 新增配件'} onClick={()=>model.addRow(c.id)}>＋ 增加配件</button><button onClick={()=>model.removeLastRow(c.id)}>－ 减少配件</button><span className="ov-row-tools-gap"/><button onClick={()=>model.duplicate(c.id)}>复制当前配置</button><button onClick={()=>model.insertBlank(c.id)}>＋ 插入空白配置</button><button className="ov-delete-config" onClick={()=>model.remove(c.id)}>删除当前配置</button></div>
   {!!(c.extras.parts.length+c.extras.actualParts.length)&&<p className="ov-notice">含额外或重复槽位，原配置数据保留。</p>}
   {c.hardwareIssues?.map((issue:Row,index:number)=><p key={index} className="ov-notice">{issue.label}：{issue.message}</p>)}
  </section>;
@@ -241,6 +278,9 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons}:{c:Row;model
 
 export function ContinuousWorkbench({model}:{model:Row}){
  const sheet=useRef<HTMLDivElement>(null);
+ const selections=useRef(new Map<string,RowSelection>());
+ // 切换链接或删除配置时清理轻量选择记录，避免长期保留已离开的配置身份。
+ useEffect(()=>{const ids=new Set(model.configs.map((c:Row)=>c.id));for(const id of selections.current.keys())if(!ids.has(id))selections.current.delete(id);},[model.configs]);
  const [focusedId,setFocusedId]=useState<string|null>(null);
  const [actual,setActual]=useState(true),[addons,setAddons]=useState(true),[query,setQuery]=useState(''),[locateId,setLocateId]=useState<string|null>(null);
  const list=useMemo(()=>{const text=query.trim().toLowerCase();return text?model.configs.filter((c:Row)=>(c.name+' '+(c.shortName||'')+' '+(c.version||'')+' '+JSON.stringify(c.rows||[])).toLowerCase().includes(text)):model.configs;},[model.configs,query]);
@@ -260,7 +300,7 @@ export function ContinuousWorkbench({model}:{model:Row}){
   const target=[...node.querySelectorAll<HTMLElement>('[data-continuous-config]')].find(item=>item.dataset.continuousConfig===locateId);
   if(target){node.scrollTo({top:node.scrollTop+target.getBoundingClientRect().top-node.getBoundingClientRect().top-2,left:0});setLocateId(null);}
  },[locateId,list,virtual,virtualizer]);
- const renderConfig=(c:Row):ReactNode=>c.loading?<p role="status">正在加载 {c.name}</p>:<ConfigTable c={c} model={model} actual={actual} addons={addons}/>;
+ const renderConfig=(c:Row):ReactNode=>c.loading?<p role="status">正在加载 {c.name}</p>:<ConfigTable c={c} model={model} actual={actual} addons={addons} selections={selections.current}/>;
  return <div className="reui-continuous" onKeyDown={event=>{
   // 表内快捷键复用配置撤销，输入框和可编辑文字保留浏览器自己的撤销。
   const target=event.target;
@@ -278,6 +318,7 @@ export function ContinuousWorkbench({model}:{model:Row}){
    <label><input type="checkbox" checked={actual} onChange={e=>setActual(e.currentTarget.checked)}/>实际配件</label>
    <label><input type="checkbox" checked={addons} onChange={e=>setAddons(e.currentTarget.checked)}/>显示加购</label>
    <label title={model.term===null?'当前链接分期设置不一致':'整链开启按 24 期、到手价 10% 计算'}><input type="checkbox" disabled={model.loading} checked={model.term>0} onChange={e=>model.installment(e.currentTarget.checked)}/>整链分期（10%）</label>
+   <label className="ov-price99"><input type="checkbox" disabled={model.loading} checked={model.price99On} onChange={e=>model.price99(e.currentTarget.checked)}/>整链取 99</label>
   </div>
   <p className="ov-hint">实际配件和数量可双击或键入编辑，删空型号即清除。用 <kbd>Shift</kbd> 选区，两列粘贴从实际配件格开始，顺序为型号、数量。</p>
   {model.error&&<p role="alert">{model.error} <button onClick={()=>model.retry()}>重试加载</button></p>}

@@ -42,3 +42,13 @@ export function planConfigRenumber(configs){
   return {id:c.id,before,after,skipped:!match};
  });
 }
+
+/** 删除后接续本链接下一套或上一套；整链移除时才转到相邻链接。 */
+export function configAfterRemoval(configs,activeId,removedIds){
+ const removed=new Set(removedIds),rows=configs.filter(c=>!c.deletedAt),active=rows.find(c=>c.id===activeId);
+ if(active&&!removed.has(activeId))return activeId;
+ if(!active)return rows.find(c=>!removed.has(c.id))?.id??null;
+ const siblings=rows.filter(c=>c.shopId===active.shopId&&c.productId===active.productId),index=siblings.indexOf(active);
+ return siblings.slice(index+1).find(c=>!removed.has(c.id))?.id??siblings.slice(0,index).reverse().find(c=>!removed.has(c.id))?.id??
+  rows.slice(rows.indexOf(active)+1).find(c=>!removed.has(c.id))?.id??rows.slice(0,rows.indexOf(active)).reverse().find(c=>!removed.has(c.id))?.id??null;
+}

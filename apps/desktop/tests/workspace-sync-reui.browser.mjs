@@ -27,7 +27,8 @@ try{
    requests.push({path,method:route.request().method()});let value;
    if(path==='/api/native-cloud/status')value={configured:mode!=='local',session:{configured:mode!=='local',authenticated:mode==='authenticated',member:mode==='authenticated'?{name:'隔离成员',uid:'test',workspaceId:'isolated'}:null},checkpoint:{initialized:true,uid:'test',workspaceId:'isolated',conflicts}};
    else if(['/api/native-cloud/resume','/api/native-cloud/logout'].includes(path))value={};
-   else if(path==='/api/cache/maintain')value={skipped:true};
+   // 维护调度已同时检查本机历史；两者都只返回隔离桩，禁止穿透真实服务。
+   else if(['/api/cache/maintain','/api/versions/maintain'].includes(path))value={skipped:true};
    else if(path==='/api/cache/preview')value={count:0,categories:[]};
    else if(path==='/api/versions')value={versions:[]};
    else if(path==='/api/versions/status')value={count:0,bytes:0};

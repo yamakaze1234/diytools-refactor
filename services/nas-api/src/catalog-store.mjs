@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {Fault,requireValue} from './config.mjs';
 import {shopLock} from './shop-scope.mjs';
 import {foreignGalleryPrefix,lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
-import {listSharedSources,validateSharedSourceEdit,writeSharedSource} from './shared-sources.mjs';
+import {listSharedSources,validateSharedSourceEdit,writeSharedSource,sharedSourceVersions} from './shared-sources.mjs';
 import {sourceGoodsId} from '../../../apps/desktop/public/workbench/shared-source-fields.js';
 import {sourceAddon,validateAddon} from '../../../apps/desktop/public/workbench/addon-data.js';
 
@@ -213,7 +213,7 @@ export class CatalogStore {
    if(sharedEdit){
     previous=body.expected_version??null;
     version=await writeSharedSource(db,member,shop,id,previous,body.document);
-    document={id};
+    document={id,...(body.document.alias_edits||body.document.addon_sync?{source_versions:await sharedSourceVersions(db,member,shop,id)}:{})};
    }else if(writeImage){
     requireValue(this.writeImage,'IMAGE_UPLOAD_DISABLED',405);
     await (this.sharedGallery?lockGalleryAsset(db,id):shopLock(db,shop,814519,'asset:'+id));

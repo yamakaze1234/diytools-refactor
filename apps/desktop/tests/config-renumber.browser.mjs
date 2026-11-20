@@ -36,8 +36,9 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto(base+'/workbench/renumber-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
- await page.locator('.maintenance-tools summary').click();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
+ // 重新编号沿用标题栏的「更多操作」入口，不属于批量维护折叠区。
+ await page.locator('.heading-actions .action-menu > summary').click();
  await page.locator('#search').fill('配置1');
  await page.locator('#renumber').click();await page.locator('#renumber-apply').waitFor();
  assert.match(await page.locator('#dialog-body').innerText(),/配置2：16G \/ 1T/);
@@ -51,10 +52,10 @@ try{
  assert.deepEqual(state.configs.map(c=>c.name),original.configs.map(c=>c.name));
  await page.evaluate(()=>window.memoryProbe.redo());await page.evaluate(()=>window.memoryProbe.save());
  assert.equal(state.configs[2].name,'配置2：16G / 1T');
- await page.locator('#renumber').click();assert.equal(await page.locator('#renumber-apply').isDisabled(),true);
+ if(!await page.locator('.heading-actions .action-menu').evaluate(n=>n.open))await page.locator('.heading-actions .action-menu > summary').click();await page.locator('#renumber').click();assert.equal(await page.locator('#renumber-apply').isDisabled(),true);
  await page.evaluate(()=>window.memoryProbe.close());
  await page.reload();await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c2"]').click();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c2"]').click();
  await page.waitForFunction(()=>document.querySelector('[data-config="name"]')?.value==='配置2：16G / 1T');
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({status:'passed',filteredWholeLink:true,suffixPreserved:true,specialSkipped:true,otherLinksUnchanged:true,orderPreserved:true,saveUndoRedoReload:true,noOpDisabled:true,errors}));

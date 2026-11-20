@@ -39,7 +39,8 @@ try{
  });
  await page.goto((process.env.REACT_TEST_URL||'http://127.0.0.1:5194')+'/workbench/receive-fixture');await page.waitForFunction(()=>window.workbenchReady&&window.receiveProbe);
  await page.waitForFunction(()=>document.querySelector('#workspace-sync-status').textContent==='自动同步已开启');
- await page.locator('[data-product-toggle="receive-product"]').click();await page.locator('[data-id="receive-config"]').click();await page.locator('[data-config="version"]').waitFor();
+ // 新版默认折叠链接，并在总表提供版本选择；旧身份输入仅保留为内部状态镜像。
+ await page.locator('[data-product-toggle="receive-product"] .link-arrow').click();await page.locator('[data-id="receive-config"]').click();await page.locator('select[aria-label="初始名称版本"]:visible').waitFor();
  const baseline=await page.evaluate(()=>window.receiveProbe());assert.equal(baseline.baseVersion,'初始版本');
  syncChange={name:'A不同字段名称',version:'B不同字段版本'};
  await page.locator('#workspace-sync').click();await page.locator('#cloud-sync-now').click();
@@ -48,9 +49,9 @@ try{
  const afterSync=await page.evaluate(()=>({...window.receiveProbe(),dialogOpen:document.querySelector('#dialog').open,fieldVersion:document.querySelector('[data-config="version"]').value}));
  // 同步完成即已接收界面基线；关闭之后马上输入不与后台回读竞赛。
  assert.equal(afterSync.dialogOpen,true);assert.equal(afterSync.version,'B不同字段版本');assert.equal(afterSync.baseVersion,'B不同字段版本');assert.equal(afterSync.fieldVersion,'B不同字段版本');
- await page.locator('#cloud-close').click();await page.locator('[data-config="version"]').fill('A下一次本地修改');await page.locator('#save').click();
+ await page.locator('#cloud-close').click();await page.locator('select[aria-label="A不同字段名称版本"]:visible').selectOption('豪华版');await page.locator('#save').click();
  await page.waitForFunction(()=>!window.workbenchHasPendingChanges());
- assert.equal(state.configs[0].name,'A不同字段名称');assert.equal(state.configs[0].version,'A下一次本地修改');
+ assert.equal(state.configs[0].name,'A不同字段名称');assert.equal(state.configs[0].version,'豪华版');
  const final=await page.evaluate(()=>window.receiveProbe());assert.equal(final.conflict,false);assert.equal(saves.at(-1).changes[0].base.version,'B不同字段版本');
  // 全量模式使用同一同步完成边界，普通编辑弹窗仍不得被云回读覆盖。
  await page.evaluate(()=>window.receiveFull());assert.equal((await page.evaluate(()=>window.receiveProbe())).fullWorkspace,true);

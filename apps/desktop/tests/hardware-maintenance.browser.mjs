@@ -71,7 +71,8 @@ try {
  const c=blankConfig(null,{id:'p',name:'隔离搭配',shopId:'intel',configs:[]});c.caseImage='';c.addedImages=[];
  c.parts=[{slot:'主板',goodsId:'1',name:'B760M',qty:1,upgrade:'【+100元升级ATX大板】【+50元升级B760M】'},{slot:'机箱',goodsId:'2',name:'机箱 M-ATX',qty:1}];c.actualParts=structuredClone(c.parts);
  c.addons=[{text:'【+100元升级ATX大板】',hardwareFacts:{boardType:'ATX'},note:'不应留下备注'}];
- const checks=[];for(const layout of ['long','square']){c.layout=layout;c.skuMode='dedicated';const r=await renderPoster(c,700,{interactive:true});const values=r.textRegions.map(x=>x.value).join(' ');checks.push({layout,hidden:!values.includes('ATX大板')&&!values.includes('不应留下备注'),kept:values.includes('升级B760M')});}
+ // 使用当前显式SKU导出选择；旧skuMode默认值不再代表人工选择专用方图。
+ const checks=[];for(const layout of ['long','square']){c.layout=layout;c.skuExportMode='dedicated';const r=await renderPoster(c,700,{interactive:true});const values=r.textRegions.map(x=>x.value).join(' ');checks.push({layout,hidden:!values.includes('ATX大板')&&!values.includes('不应留下备注'),kept:values.includes('升级B760M')});}
  return checks;});assert.ok(poster.every(p=>p.hidden&&p.kept),JSON.stringify(poster));
  assert.deepEqual(errors,[]);assert.deepEqual(blockedRequests,[]);
  await fs.writeFile(new URL('hardware-ui-result.json',out),JSON.stringify({passed:true,checks:['six component types show only matching fields','hidden existing values preserved','CPU save','board select persist reopen','case multi-select persist','clear restores auto','no console errors'],errors},null,2));

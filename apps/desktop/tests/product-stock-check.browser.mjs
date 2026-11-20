@@ -40,7 +40,7 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto(base+'/workbench/product-stock-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
 
  const baseline=structuredClone(state);
  const check=async(selector,summary)=>{
@@ -63,7 +63,7 @@ try{
  await check('#inventory-check-open',/检查 2 个链接、4 套配置/);
  assert.equal(await page.locator('#dialog-title').innerText(),'检查链接库存');
  await page.evaluate(()=>window.memoryProbe.close());
- await page.locator('[data-product-toggle="p1"]').click();await page.locator('[data-id="c2"]').click();
+ await page.locator('[data-product-toggle="p1"] .link-arrow').click();await page.locator('[data-id="c2"]').click();
  await check('#product-stock-check',/检查 1 个链接、2 套配置/);
  assert.match(await page.locator('#dialog-body > .hint').first().innerText(),/当前链接：隔离链接1/);
  assert.deepEqual(await page.locator('[data-stock-locate]').evaluateAll(nodes=>nodes.map(n=>n.dataset.stockLocate)),['c2','c3']);

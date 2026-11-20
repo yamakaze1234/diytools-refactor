@@ -7,9 +7,11 @@ import {liveScopes,shopLock} from './shop-scope.mjs';
 import {lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
 import {runNasProfit} from './profit-store.mjs';
 import {priceHistoryAction,priceHistorySnapshot,priceHistoryCurrent} from './price-history.mjs';
-import {addonItems,choiceAddon,effectiveNasAddon} from '../../../apps/desktop/public/workbench/addon-data.js';
+import {validateGlobalTax,applyGlobalTax} from './global-tax.mjs';
+import {addonItems,choiceAddon,effectiveNasAddons} from '../../../apps/desktop/public/workbench/addon-data.js';
 import {DEFAULT_PRICING_RULE,normalizePricingRule,normalizeProfitAlert,normalizeProfitAlerts} from '../../../apps/desktop/public/workbench/pricing.js';
 import {applyNameFormatPlan,nameFormatPlan} from '../../../apps/desktop/public/workbench/name-format-batch.js';
+import {planConfigRenumber} from '../../../apps/desktop/public/workbench/config-order.js';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const plain=o=>o!==null&&typeof o==='object'&&!Array.isArray(o);
@@ -58,6 +60,9 @@ function validateDocument(document,{id,shop}){
  failure(typeof document.workspaceOrder==='number'&&Number.isFinite(document.workspaceOrder)&&Math.abs(document.workspaceOrder)<=Number.MAX_SAFE_INTEGER,'document.workspaceOrder');
  failure(document.price===null||price(document.price),'document.price');
  if(own(document,'pricingRule'))failure(pricingRuleOk(document.pricingRule),'document.pricingRule');
+ // 导航分区、整链价格偏好和空配件可见数属于正式配置文档，显式 false 也必须保留。
+ for(const key of ['productDraft','overviewPrice99'])if(own(document,key))failure(typeof document[key]==='boolean','document.'+key);
+ if(own(document,'overviewAccessoryLimit'))failure(Number.isInteger(document.overviewAccessoryLimit)&&document.overviewAccessoryLimit>=0&&document.overviewAccessoryLimit<=5,'document.overviewAccessoryLimit');
  for(const key of ['parts','actualParts']){
   failure(Array.isArray(document[key])&&document[key].length<=500,'document.'+key);
   const ids=new Set();
@@ -71,6 +76,7 @@ function validateDocument(document,{id,shop}){
  const validateAddon=(a,f,top=false)=>{
   failure(plain(a)&&(!top&&!own(a,'items')||Array.isArray(a.items)&&a.items.length<=500),f);
   if(own(a,'followPolicy'))failure(['snapshot','follow'].includes(a.followPolicy)&&(a.followPolicy!=='follow'||identity(a.sourceId)),f+'.followPolicy');
+  if(own(a,'followAll'))failure(a.followAll===true&&a.followPolicy==='follow'&&identity(a.sourceId),f+'.followAll');
   if(own(a,'priceCents'))failure(a.priceCents===null||(Number.isSafeInteger(a.priceCents)&&a.priceCents>=0),f+'.priceCents');
   if(own(a,'goodsId'))failure(goodText(a.goodsId),f+'.goodsId');
   for(const k of ['qty','originalQty'])if(own(a,k))failure(quantity(a[k]),f+'.'+k);
@@ -128,7 +134,7 @@ const dependencies=async(db,shop,parts,{lock=false,addons=[],overrides=false}={}
  if(lock)for(const key of sources)await shopLock(db,shop,814519,'source:'+key);
  const sourceRows=(await db.query("SELECT source_id, version::text, attrs->>'deletedAt' AS deleted_at,owner_shop,shared,attrs||jsonb_build_object('sourceId',source_id,'goodsId',goodsid,'name',name) AS document FROM intel_live.sources WHERE source_id=ANY($1::text[]) AND (owner_shop=$2 OR owner_shop='shared' OR shared) ORDER BY source_id",[sources,shop])).rows;
  const byId=new Map(sourceRows.map(row=>[row.source_id,row.document]));
- const effective=addons.map(a=>effectiveNasAddon(a,byId.get(a.sourceId)));
+ const effective=effectiveNasAddons(addons,byId);
  const costs=costIds([...parts,...withAddonCosts({parts:[],actualParts:[],addons:effective.filter(x=>x.available).map(x=>x.addon)})]);
  if(lock)for(const key of costs)await shopLock(db,shop,814519,'cost:'+key);
  const costRows=await effectiveCosts(db,shop,costs,overrides);
@@ -334,6 +340,7 @@ export class LiveStore extends Store{
     'product',c.fields->'product','productCategory',c.fields->'productCategory','productUrl',c.fields->'productUrl',
     'productCardColor',c.design->'productCardColor','version',c.fields->'version','shortName',c.fields->'shortName',
     'installment',c.fields->'installment','pricingRule',c.fields->'pricingRule','emptyLinkDraft',c.fields->'emptyLinkDraft',
+    'productDraft',c.fields->'productDraft','overviewPrice99',c.fields->'overviewPrice99','overviewAccessoryLimit',c.fields->'overviewAccessoryLimit',
     'parts',coalesce((SELECT jsonb_agg(jsonb_build_object('slot',p.slot,'name',p.name,'qty',p.qty,'goodsId',p.goodsid) ORDER BY p.position)
       FROM intel_live.parts p WHERE p.configuration_id=c.configuration_id AND p.part_kind='display'),'[]'::jsonb)
    ) AS summary FROM intel_live.configurations c WHERE shop_id=$1 AND archived_at IS NULL ORDER BY workspace_order,configuration_id`,[shop]);
@@ -450,12 +457,12 @@ export class LiveStore extends Store{
    return receipt.result;
   });
  }
- async workspaceOperation(member,shop,kind,body,requestId,apply){
+ async workspaceOperation(member,shop,kind,body,requestId,apply,{shared=false}={}){
   requireValue(this.workspaceWritable,'WRITES_DISABLED',405);
   failure(shop===this.shopId&&plain(body)&&operationId(body.operation_id),'operation_id');
   const op=body.operation_id.toLowerCase(),actor=[member.workspaceId,member.uid,op];
   const hash=sha(canonical({shop,kind,...body,operation_id:op}));
-  return this.tx(true,async db=>{
+  return this.tx(shared?'shared':true,async db=>{
    await this.catalog.bind(db,member);
    await shopLock(db,shop,814517,JSON.stringify(actor));
    const prior=await this.workspaceReceiptRow(db,actor);
@@ -472,6 +479,9 @@ export class LiveStore extends Store{
    for(const [index,row] of changes.entries())
     await db.query('INSERT INTO intel_live.workspace_audit(workspace_id,actor_uid,operation_id,position,resource_id,action,previous_version,next_version,request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
      [...actor,index+1,row.id,row.action,row.previousVersion,row.result.version,requestId]);
+   // 自动编号也属于同一操作，在父回执写入之后登记审计，保留外键与事务边界。
+   const reordered=changes.flatMap(row=>row.result.reordered??[]);
+   for(const [index,row] of reordered.entries())await db.query('INSERT INTO intel_live.workspace_audit(workspace_id,actor_uid,operation_id,position,resource_id,action,previous_version,next_version,request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[...actor,changes.length+index+1,row.configuration_id,'replace',row.previous_version,row.version,requestId]);
    return result;
   });
  }
@@ -499,10 +509,26 @@ export class LiveStore extends Store{
      throw new Fault('PRODUCT_MEMBERS_CHANGED',409);
    }
    const ordered=[...items].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0),byId=new Map();
+   // 删除、恢复及编号同事务完成；不压缩持久排序值，恢复仍回到原位置。
+   const products=new Set();
+   for(const item of items.filter(row=>['archive','restore'].includes(row.action))){
+    const {rows:[row]}=await db.query('SELECT product_id FROM intel_live.configurations WHERE shop_id=$1 AND configuration_id=$2',[shop,item.id]);
+    if(row)products.add(row.product_id);
+   }
    for(const {id,action,doc} of ordered){
     try{byId.set(id,{id,action,...await this.configurationChange(db,shop,id,action,doc,op)});}
     catch(error){if(error instanceof Fault)error.details={...error.details,configuration_id:id};throw error;}
    }
+   const reordered=[];
+   for(const productId of [...products].sort()){
+    const {rows}=await db.query('SELECT configuration_id AS id,name,version::text FROM intel_live.configurations WHERE shop_id=$1 AND product_id=$2 AND archived_at IS NULL ORDER BY workspace_order,configuration_id FOR UPDATE',[shop,productId]);
+    for(const row of planConfigRenumber(rows).filter(row=>row.before!==row.after)){
+     const previous=rows.find(r=>r.id===row.id),{rows:[saved]}=await db.query('UPDATE intel_live.configurations SET name=$3,version=version+1 WHERE shop_id=$1 AND configuration_id=$2 RETURNING version::text',[shop,row.id,row.after]);
+     reordered.push({configuration_id:row.id,before:row.before,name:row.after,previous_version:previous.version,version:saved.version});
+     if(byId.has(row.id))byId.get(row.id).result.version=saved.version;
+    }
+   }
+   if(reordered.length)byId.get(items[0].id).result.reordered=reordered;
    return items.map(item=>byId.get(item.id));
   });
  }
@@ -620,6 +646,16 @@ export class LiveStore extends Store{
    body.changes.length>0&&body.changes.length<=100&&body.changes.every(row=>plain(row)&&identity(row.id)&&
     expectedVersion(row.expected_version))&&new Set(body.changes.map(row=>row.id)).size===body.changes.length,'changes');
   const entries=body.changes;
+  // 全局改价是单项原子操作，仍使用 costs 队列和原回执，不能与单店动作混发。
+  if(kind==='costs'&&entries.some(row=>row.action==='global_tax')){
+   failure(entries.length===1,'changes.global_tax');
+   const row=entries[0];validateGlobalTax(row,shop);
+   requireValue(this.sharedSources,'NAS_GLOBAL_TAX_NOT_INSTALLED',503);
+   const op=body.operation_id?.toLowerCase();
+   const hash=sha(canonical({shop,kind,...body,operation_id:op}));
+   return this.workspaceOperation(member,shop,kind,body,requestId,async(db,operationId)=>
+    [await applyGlobalTax(db,{member,shop,row,operationId,requestId,hash})],{shared:true});
+  }
   const validated=(row,keys)=>failure(Object.keys(row).every(k=>['id','action','expected_version',...keys].includes(k)),'changes');
   const cents=c=>typeof c==='string'&&/^(?:0|[1-9]\d{0,14})$/.test(c);
   for(const row of entries){
@@ -663,6 +699,8 @@ export class LiveStore extends Store{
      previousVersion=old?.version??null;
      if(previousVersion!==row.expected_version)throw new Fault('VERSION_CONFLICT',409,{goods_id:id,current_version:previousVersion});
      const document={...old?.document,...fields,goodsId:id};
+     // 普通维护和 ERP 读取会替代全局改价基线，禁止沿用旧恢复标记。
+     delete document.globalTax;
      if(action==='erp_snapshot'){document.erpMissing=false;document.erpUnknown=fields.erp===null;document.stockMissing=false;document.nasErpOverride=true;}
      else document.nasTaxOverride=true;
      if(document.tax!==old?.document.tax||document.erp!==old?.document.erp||document.erpUnknown!==old?.document.erpUnknown||document.erpMissing!==old?.document.erpMissing)

@@ -28,6 +28,8 @@ function ConfigField({field,value,attributes,inlineStyle,checkpoint,edit}: Field
 function ConfigList({markup,document}: {markup: string; document: Document}) {
  const template=document.createElement('template');template.innerHTML=markup;
  return <>{Array.from(template.content.children).map((group,index)=> {
+  // 分区标题也是列表正式节点，保留业务控制器绑定的选择和折叠入口。
+  if(group.matches('[data-zone-toggle]'))return <button key={'zone-'+group.getAttribute('data-zone-toggle')} type="button" className={group.className} data-zone-toggle={group.getAttribute('data-zone-toggle')} aria-expanded={group.getAttribute('aria-expanded')==='true'} dangerouslySetInnerHTML={{__html:group.innerHTML}}/>;
   if(!group.matches('[data-list-product]')) return <p key={`empty-${index}`} className="hint">{group.textContent}</p>;
   const expanded=group.classList.contains('expanded');
   // 折叠即释放配置行及其 React 节点；勾选、当前项由业务状态在展开时重建。

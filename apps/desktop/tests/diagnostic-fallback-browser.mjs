@@ -3,6 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {shops} from '../public/workbench/shops.js';
 const {chromium}=createRequire(import.meta.url)(path.join(process.env.USERPROFILE,'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
 const root=path.resolve('apps/desktop/public/workbench'),out=path.resolve('sandbox/save-timeout-diagnostics-20261017');
 await fs.mkdir(out,{recursive:true});
@@ -15,7 +16,8 @@ try{
  browser=await chromium.launch({channel:'msedge',headless:true});
  const page=await browser.newPage({viewport:{width:1280,height:960}}),errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.goto(`http://127.0.0.1:${server.address().port}`);
- await page.evaluate(async source=>{
+ // 诊断场景仍隔离云控制器，但沿用真实店铺常量，保持与当前模块依赖一致。
+ await page.evaluate(async ({source,shops})=>{
   const view={session:{configured:true,authenticated:true,member:{name:'测试成员'}},checkpoint:{initialized:true,conflicts:0},summary:{pending:1},running:true,automatic:true,error:null};
   const controller={status:()=>view,start:async()=>{},refresh:async()=>{},tick:async()=>{}};
   const createCloudController=()=>controller,createCloudWorker=()=>({}),bindVersionHistory=()=>({}),bindLegacyHistory=()=>({});
@@ -25,7 +27,8 @@ try{
   const openDialog=(title,body)=>{document.querySelector('#dialog-title').textContent=title;document.querySelector('#dialog-body').innerHTML=body;if(!document.querySelector('#dialog').open)document.querySelector('#dialog').showModal();};
   const flush=async()=>{throw Error('诊断不应触发保存');};
   await eval(source+';bindWorkspaceSync({flush,receive:async()=>true,esc:String,toast:()=>{},openDialog}).then(ui=>ui.open())');
- },source);
+ },{source,shops});
+ await page.locator('.cloud-tools > summary').click();
  await page.locator('#cloud-diagnostics').click();assert.equal(await page.locator('#cloud-diagnostics').isDisabled(),true);
  await page.locator('#cloud-diagnostic-text').click();
  assert.match(await page.locator('#diagnostic-text').inputValue(),/local-save-wait/);

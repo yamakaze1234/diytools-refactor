@@ -1,5 +1,6 @@
 /** 价格通知隔离浏览器验收：一次提示、不补弹，弹窗重绘及关闭后主编辑页签仍正常。 */
 import assert from 'node:assert/strict';
+import {clickWorkbenchControl,openWorkbenchEditor} from './review-frontend-visible-ui.mjs';
 import fs from 'node:fs/promises';
 import {createRequire} from 'node:module';
 import {blankConfig} from '../public/workbench/core.js';
@@ -37,21 +38,23 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto(base+'/workbench/memory-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
- await page.locator('[data-config="name"]').waitFor();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
+ await page.locator('[data-continuous-config="c0"]').waitFor();
  const mainTabs=page.locator('.main > [role="tablist"] [data-tab]');
  const checkEditorTabs=async()=>{
-  for(const name of ['actual','addons','modules','costs','parts']){
+  // 新的三个主入口与完整编辑菜单都必须在通知弹窗前后保持可操作。
+  for(const name of ['display','actual','addons','perks','modules','costs','parts']){
    const button=page.locator(`.main > [role="tablist"] [data-tab="${name}"]`);
-   await button.click();
+   await openWorkbenchEditor(page,name);
    assert.equal(await button.getAttribute('aria-selected'),'true',`主编辑页签 ${name} 应能切换`);
    assert.equal(await mainTabs.evaluateAll(nodes=>nodes.filter(n=>n.classList.contains('active')).length),1);
-   assert.equal(await page.locator('#editor [data-react-editor]').getAttribute('data-react-editor'),name);
+   if(name==='parts'){assert.ok(await page.locator('#continuous-workbench:visible [data-continuous-config]').count());continue;}
+   assert.equal(await page.locator('#editor [data-react-editor]').getAttribute('data-react-editor'),name==='display'?'parts':name);
    assert.ok((await page.locator('#editor').textContent()).trim(),`主编辑页签 ${name} 应有内容`);
   }
  };
  await checkEditorTabs();
- await page.locator('.maintenance-tools > summary').click();
+
  // 存在历史未读，等待真实计时器并操作其他按钮也不会扫描价格记录。
  await page.waitForTimeout(2700);await page.evaluate(()=>window.memoryProbe.check());
  assert.equal(requests.filter(r=>r.path==='/api/price-changes/list').length,0);
@@ -85,8 +88,8 @@ try{
  await page.evaluate(()=>window.memoryProbe.close());releaseList();waitForList=null;
  await page.evaluate(()=>window.pendingErp);await page.waitForTimeout(2700);
  assert.equal(await page.locator('#dialog').evaluate(n=>n.open),false);
- // 隐藏菜单里的既有手动按钮仍可调用。
- await page.locator('#price-changes-open').evaluate(n=>n.click());await page.waitForFunction(()=>document.querySelector('#dialog-title').textContent==='检查价格变化');
+ // 通过可见的「库存 → 检查价格变化」入口验证手动查看。
+ await clickWorkbenchControl(page,'#price-changes-open');await page.waitForFunction(()=>document.querySelector('#dialog-title').textContent==='检查价格变化');
  await page.locator('#dialog-body [data-tab="links"]').click();
  await page.locator('#dialog-body [data-tab="parts"]').click();
  await page.locator('#pc-close').click();await page.evaluate(()=>window.memoryProbe.check());assert.equal(await page.locator('#dialog').evaluate(n=>n.open),false);

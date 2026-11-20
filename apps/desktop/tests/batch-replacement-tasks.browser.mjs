@@ -41,7 +41,7 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto(base+'/workbench/upgrade-tasks-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
 
 
 

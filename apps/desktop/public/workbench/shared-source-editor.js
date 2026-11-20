@@ -1,7 +1,7 @@
 /** 共用来源表单复用原工作台编辑器，按范围保存改变的字段。 */
 import {mountAddonChoices} from './addon-choices-ui.js';
 import {initialChoices} from './shop-addon-ui.js';
-import {addonStatusHtml} from './addon-ui.js';
+import {addonChoiceStatusHtml} from './addon-ui.js';
 import {choiceDescription,sourceAddon} from './addon-data.js';
 import {sameNasDocument as equal} from './nas-main-workspace.js';
 import {sourceFields,withSourceFields,sharedSourceLabels,sharedSourceKeys} from './shared-source-fields.js';
@@ -20,6 +20,17 @@ const controls = {
  'hardwareOverrides.caseBoards':'.hardware-case',
 };
 const unique = values => values.filter((value,index)=>values.findIndex(other=>equal(other,value))===index);
+/** 明确修改三店共用核算价时，只解除该字段的店铺覆盖，使当前来源和核算使用新价。 */
+export function applySharedTaxEdit(edits,value){
+ const common=edits.shared??={values:{},restore:[]};
+ common.values.tax=value;common.restore=common.restore.filter(key=>key!=='tax');
+ for(const shop of ['intel','gigabyte','jonsbo']){
+  const change=edits[shop]??={values:{},restore:[]};
+  delete change.values.tax;
+  if(!change.restore.includes('tax'))change.restore.push('tax');
+ }
+ return edits;
+}
 const display = (name,value) => {
  if (name==='tax') return value==null?'待核算':'¥'+Number(value).toFixed(2);
  if (name==='addon') return value?.addonChoices ? choiceDescription(value.addonChoices)||'无展示项' : value?.addonText||'无加购';
@@ -52,6 +63,11 @@ export function sharedScopeRow(row,entry,scope,edits) {
  return withSourceFields(row,fields);
 }
 
+/** 新配件先用空白共用基线投影各店草稿；身份字段始终由同一个配件保存。 */
+export function newSharedScopeRow(row,scope,edits={}) {
+ return sharedScopeRow(row,{common:sourceFields(row),stores:{}},scope,edits);
+}
+
 export function sourceFieldPatch(before,after) {
  const current = sourceFields(after);
  if (!before) return after.specialComponent?{name:current.name}:current;
@@ -62,12 +78,16 @@ export function sourceFieldPatch(before,after) {
 export function mountSharedScope(root,{row,entry,scope,scopes,edits,onScope,onField}) {
  const scopeHost = root.querySelector('#source-shared-scope');
  if (!scopeHost) return;
- const enabledScopes = entry?scopes:['shared'];
+ const enabledScopes = scopes;
  scopeHost.innerHTML = `<label class="field">修改范围<select id="source-edit-scope">${enabledScopes.map(id=>
   `<option value="${id}" ${id===scope?'selected':''}>${esc(scopeName(id))}</option>`).join('')}</select></label>`;
  const input = scopeHost.querySelector('select');
  input.onchange=()=>{const target=input.value;input.value=scope;onScope(target);};
- if (!entry) {input.disabled=true;return;}
+ if (!entry) {
+  const hint=document.createElement('small');hint.className='hint';
+  hint.textContent='新配件先填写三店共用名称，再按店铺维护差异；切换范围保留输入，保存时一次提交。';
+  scopeHost.append(hint);return;
+ }
  const details = root.querySelector('#source-maintenance-fields');
  const fields = row.specialComponent?['name']:sharedSourceKeys;
  for (const key of fields) {
@@ -108,7 +128,7 @@ export function mountSharedAddons(root,{row,getCosts,getOriginal,onChange}) {
  let ready=false;
  const editor=mountAddonChoices(root.querySelector('[data-shared-choices]'),{
   initial:initialChoices(normalized),sourceId:row.sourceId,getCosts,
-  onChange:()=>{if(ready)onChange();}, renderCheck:choice=>addonStatusHtml(choice,getCosts(),[getOriginal()]),
+  onChange:()=>{if(ready)onChange();}, renderCheck:choice=>addonChoiceStatusHtml(choice,getCosts(),[getOriginal()]),
  });
  let baseline;
  try {baseline=editor.read(false);} catch {baseline=null;}

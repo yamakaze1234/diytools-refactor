@@ -50,6 +50,21 @@ test('cache evicts least-recent clean details to 16 and never removes pinned dir
  assert.equal(keep.size,16);assert(keep.has('c0'));assert(keep.has('c1'));assert(!keep.has('c2'));
  const dirty=f.rows.map(c=>c.id);await f.store.load(dirty);assert.equal(f.store.prune(dirty).size,25);
 });
+test('来源刷新清空请求缓存后，当前链接编辑文档仍保留；远端已移除的配置不保留',async()=>{
+ const f=fixture(4);f.rows[3].productId='other';await f.store.refresh();await f.store.load(f.rows.map(row=>row.id));await f.store.refresh();
+ assert.deepEqual(f.store.cachedIds(),[]);
+ const released=[],context={fullWorkspace:false,dirty:false,savePromise:null,batchPromise:null,ordinaryPending:null,batchPending:null,
+  active:'c0',pendingImages:new Set(),tab:'parts',continuousWorkbench:true,lazyWorkspace:f.store,nasMain:true,
+  state:{configs:structuredClone(f.rows)},acceptedState:{configs:structuredClone(f.rows)},displayBaseline:new Map(),
+  nasWorkspace:{release:id=>released.push(id)}};
+ context.available=()=>context.state.configs;context.current=()=>context.state.configs.find(row=>row.id===context.active);
+ const source=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8').match(/function pruneDetails\(\)\{[\s\S]*?\n\}/)[0];
+ vm.runInNewContext(source+';pruneDetails();',context);
+ assert.deepEqual(context.state.configs.map(row=>row.id),['c0','c1','c2']);assert.deepEqual(released,['c3']);
+ f.store.index().summaries=f.store.index().summaries.filter(row=>row.id!=='c2');
+ vm.runInNewContext(source+';pruneDetails();',context);
+ assert.deepEqual(context.state.configs.map(row=>row.id),['c0','c1']);
+});
 test('global hydration loads at most 64 per request, returns every row and does not expand the normal cache',async()=>{
  const f=fixture(130);await f.store.refresh();await f.store.load(['c4']);const full=await f.store.full();
  assert.equal(full.configs.length,130);assert.deepEqual(f.store.cachedIds(),['c4']);
@@ -107,7 +122,7 @@ test('collapsed link groups create no hidden config DOM; searching renders only 
  const rows=Array.from({length:3000},(_,i)=>({...config('c'+i),product:'链接',name:'配置'+i,version:'',parts:[{slot:'CPU',name:'CPU'}]}));
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',classList:{toggle(){}},querySelectorAll:()=>[]});return nodes.get(id);};
  // 测试使用真实兼容桥接收列表标记，React 节点稳定性另由浏览器专项覆盖。
- const context=vm.createContext({configurationSummaryHtml,reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){}});
+ const context=vm.createContext({configurationSummaryHtml,reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){},collapsedZones:new Set(),paintZones(){}});
  vm.runInContext('var nasMain=false;\n'+implementation,context);context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert.match(node('#config-list').innerHTML,/<header>链接<\/header>/);
  node('#search').value='配置2999';context.renderList();assert.equal((node('#config-list').innerHTML.match(/class="config-item/g)||[]).length,1);assert.match(node('#config-list').innerHTML,/data-id="c2999"/);
  assert(context.collapsedProducts.has('link'));

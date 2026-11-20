@@ -4,7 +4,7 @@ import {projectedRows,copyRows,planPasteRows,appendAccessoryRow,planRemoveRow} f
 
 const catalog=['cpu','gpu','extra','actual'].map((id,i)=>({sourceId:id,goodsId:`g-${id}`,shopId:'intel',name:id,erp:100+i,tax:120+i,stockAvailable:10}));
 const part=(id,slot,extra={})=>({...catalog.find(row=>row.sourceId===id),slot,qty:1,upgrade:'',...extra});
-const config=()=>({shopId:'intel',parts:[part('cpu','CPU'),part('gpu','显卡'),part('extra','配件6'),part('extra','CPU')],actualParts:[part('actual','CPU'),part('gpu','显卡'),part('extra','配件7')],addons:[{sourceId:'cpu',text:'cpu addon'},{sourceId:'actual',text:'actual addon'}]});
+const config=()=>({overviewAccessoryLimit:5,shopId:'intel',parts:[part('cpu','CPU'),part('gpu','显卡'),part('extra','配件6'),part('extra','CPU')],actualParts:[part('actual','CPU'),part('gpu','显卡'),part('extra','配件7')],addons:[{sourceId:'cpu',text:'cpu addon'},{sourceId:'actual',text:'actual addon'}]});
 
 test('projection includes numbered extra rows without filling storage or losing duplicates',()=>{
  const c=config(),snapshot=structuredClone(c),rows=projectedRows(c);
@@ -70,7 +70,7 @@ test('invalid row indexes and unrelated addon payload are rejected',()=>{
 });
 
 test('add accessories 6, 7 and 8, copy into them and clear without removing explicit rows',()=>{
- const c={shopId:'intel',parts:[part('cpu','CPU')]};
+ const c={overviewAccessoryLimit:5,shopId:'intel',parts:[part('cpu','CPU')]};
  assert.equal(projectedRows(c).length,14);
  for(const n of [6,7,8])assert.equal(appendAccessoryRow(c),`配件${n}`);
  assert.equal(projectedRows(c).length,17);assert.notEqual(c.parts[0],c.actualParts[0]);
@@ -82,14 +82,14 @@ test('add accessories 6, 7 and 8, copy into them and clear without removing expl
 });
 
 test('remove extra rows without renumbering, and keep source addons used by another row',()=>{
- const c={shopId:'intel',parts:[part('cpu','CPU'),part('gpu','配件6'),part('gpu','配件7'),part('extra','配件8')],actualParts:[part('actual','配件6')],addons:[{sourceId:'gpu'},{sourceId:'actual'},{sourceId:'extra'}]};
+ const c={overviewAccessoryLimit:5,shopId:'intel',parts:[part('cpu','CPU'),part('gpu','配件6'),part('gpu','配件7'),part('extra','配件8')],actualParts:[part('actual','配件6')],addons:[{sourceId:'gpu'},{sourceId:'actual'},{sourceId:'extra'}]};
  const before=structuredClone(c),after=planRemoveRow(c,'配件6');
  assert.deepEqual(c,before);assert.deepEqual(projectedRows(after).slice(14).map(r=>r.slot),['配件7','配件8']);
  assert.equal(after.actualParts.length,0);assert.deepEqual(after.addons.map(a=>a.sourceId),['gpu','extra']);
  assert.equal(appendAccessoryRow(after),'配件9');assert.throws(()=>planRemoveRow(after,'配件6'),/已变化/);
 });
 test('clear fixed row preserves placeholder and handles legacy actual fallback and duplicate rows',()=>{
- const c={parts:[part('cpu','CPU'),part('gpu','CPU')],addons:[{sourceId:'cpu'},{sourceId:'gpu'}]};
+ const c={overviewAccessoryLimit:5,parts:[part('cpu','CPU'),part('gpu','CPU')],addons:[{sourceId:'cpu'},{sourceId:'gpu'}]};
  const after=planRemoveRow(c,'CPU');assert.equal(after.parts[0].sourceId,'gpu');assert.equal(after.actualParts[0].sourceId,'gpu');
  const empty=planRemoveRow(after,'CPU');assert.equal(projectedRows(empty).length,14);assert.equal(projectedRows(empty)[0].part,null);assert.deepEqual(empty.addons,[]);
 });

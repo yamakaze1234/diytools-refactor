@@ -35,7 +35,7 @@ try{
   await route.fulfill({json:value});
  });
  await page.goto((process.env.REACT_TEST_URL||'http://127.0.0.1:5194')+'/workbench/conflict-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();await page.locator('[data-config="name"]').waitFor();
+ await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();/* 总表加载完成后再启动价格导入，隐藏身份镜像不参与可见性判断。 */await page.locator('[data-continuous-config="c0"]').waitFor();
  await page.evaluate(()=>window.priceConflictProbe.open());
  await page.locator('#price-import-text').fill(configs.map((c,i)=>`${c.shortName}\t有货\t${6000+i}`).join('\n'));
  await page.locator('#price-import-check').click();await page.locator('#price-import-apply').click();

@@ -17,6 +17,12 @@ export function maintenanceKind(row,configs=[],costs=[]){
  if(/内存|DDR[345]|海力士/i.test(name))return 'memoryGb';
  if(/CPU|处理器|酷睿|锐龙|\bRYZEN|\bULTRA\s*[3579]|\bI[3579][ -]?\d{4,5}|\b\d{4,5}(?:KF|K|F|X3D|X)\b|\b\d{3}K(?:F|\s*PLUS)?\b/i.test(name))return 'cpu';
  if(row.hardwareOverrides?.gpuName)return 'vramGb';
+ // 新建时允许直接维护简称；名称尚未能识别时，保存后仍能找到已填的维护项。
+ if(row.hardwareOverrides?.caseBoards?.length)return 'case';
+ if(row.hardwareOverrides?.boardType)return 'board';
+ if(row.hardwareOverrides?.cpuName)return 'cpu';
+ const capacities=Object.keys(row.capacityOverrides||{}).filter(key=>['vramGb','memoryGb','storageGb'].includes(key)&&row.capacityOverrides[key]>0);
+ if(capacities.length===1)return capacities[0];
  const facts=row.hardwareFacts||{};
  if(facts.caseBoards||facts.caseType)return 'case';if(facts.boardType)return 'board';if(facts.cpuName)return 'cpu';
  return 'other';
@@ -27,10 +33,12 @@ const hardwareCopy={
  board:['主板板型识别','默认自动识别。识别有误时选择实际板型；选择“自动识别”恢复自动。','人工板型会保留，价格同步不会覆盖。'],
  case:['机箱支持板型','默认读取已维护的机箱资料。识别有误时勾选支持的主板板型，可多选。','取消全部勾选恢复自动；人工设置会保留，价格同步不会覆盖。']
 };
-export function updateMaintenanceVisibility(root,row,configs=[],costs=[]){
+export function updateMaintenanceVisibility(root,row,configs=[],costs=[],{isNew=false}={}){
  const kind=maintenanceKind(row,configs,costs);
- for(const el of root.querySelectorAll('[data-maintenance-kind]'))el.hidden=el.dataset.maintenanceKind!==kind;
+ // 新建尚无完整 ERP 或名称，先展示全部可选维护项，不让自动识别将表单隐藏为空白。
+ const showAll=isNew&&!row.specialComponent;
+ for(const el of root.querySelectorAll('[data-maintenance-kind]'))el.hidden=!showAll&&el.dataset.maintenanceKind!==kind;
  const hardware=root.querySelector('#source-hardware'),capacity=root.querySelector('#source-capacity');
- if(hardware){const copy=hardwareCopy[kind];hardware.hidden=!copy;if(copy){hardware.querySelector('legend').textContent=copy[0];hardware.querySelector('.hardware-intro').textContent=copy[1];hardware.querySelector('.hardware-footnote').textContent=copy[2];}}
- if(capacity)capacity.hidden=!['vramGb','memoryGb','storageGb'].includes(kind);
+ if(hardware){const copy=showAll?['硬件简称与板型维护','只填写当前配件需要的项目；留空使用自动识别。','人工设置会保留，价格同步不会覆盖。']:hardwareCopy[kind];hardware.hidden=!copy;if(copy){hardware.querySelector('legend').textContent=copy[0];hardware.querySelector('.hardware-intro').textContent=copy[1];hardware.querySelector('.hardware-footnote').textContent=copy[2];}}
+ if(capacity)capacity.hidden=!showAll&&!['vramGb','memoryGb','storageGb'].includes(kind);
 }

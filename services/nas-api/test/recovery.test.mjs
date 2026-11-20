@@ -97,3 +97,20 @@ test('旧价格批次回执不吞掉提交未知后输入的新价格或未发�
   {id:'newer',expected_version:'5',fields:{price:99}},drafts[2],drafts[3],
  ]);
 });
+
+test('编号回执推进尚未发送的后续批次，未知提交重放正文保持一致',async()=>{
+ const plan=buildNasOperationPlan('configurations',Array.from({length:101},(_,i)=>({id:'c'+i,action:'archive',expected_version:'1'})));
+ let stored,online=false;const sent=[];
+ const storage={get:async()=>structuredClone(stored),put:async(_,value)=>{stored=structuredClone(value);}};
+ const client={workspaceReceipt:async()=>{throw missing();},workspaceWrite:async(kind,body)=>{
+  sent.push(structuredClone(body));if(!online)throw unknown();
+  if(body.changes[0].id==='c100')assert.equal(body.changes[0].expected_version,'2');
+  const changes=body.changes.map(change=>({configuration_id:change.id,version:'2',archived:true}));
+  if(changes.length===100)changes[0].reordered=[{configuration_id:'c100',before:'配置101',name:'配置1',previous_version:'1',version:'2'}];
+  return {shop_id:'intel',kind,operation_id:body.operation_id,changes};
+ }};
+ const queue=createNasOperationQueue({client,storage,key:'rename'});await queue.add(plan);
+ await assert.rejects(queue.submit(),{code:'SAVE_STATUS_UNKNOWN'});online=true;
+ await queue.retry();assert.deepEqual(sent[0],sent[1]);assert.equal(stored.batches[1].body.changes[0].expected_version,'2');
+ await queue.submit();assert.deepEqual(stored.batches.map(row=>row.status),['done','done']);
+});

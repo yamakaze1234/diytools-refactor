@@ -92,7 +92,7 @@ try {
  // New special component keeps three-shop choices and zero-cost rules from sourceBatch.
  await page.locator('#source-special-list').click();await page.locator('#source-new').click();assert.equal(await page.locator('#source-special').isChecked(),true);
  await page.locator('#source-name').fill('隔离特殊配件');assert.equal(await page.locator('[data-source-new-shop]:checked').count(),3);
- await page.locator('#source-save').click();await page.waitForFunction(()=>window.sourceProbe.writes.length===2);
+ await page.locator('#source-save-all').click();await page.waitForFunction(()=>window.sourceProbe.writes.length===2);
  state=await page.evaluate(()=>window.sourceProbe.state());const added=state.sourceCatalog.filter(r=>r.name==='隔离特殊配件');assert.equal(added.length,3);assert.ok(added.every(r=>r.specialComponent&&r.tax===0));checks.push('new-special-three-shop-domain-save');
  await page.evaluate(()=>{document.querySelector('#dialog').scrollTop=0;document.querySelector('#dialog-body').scrollTop=0;});
  await page.screenshot({path:fileURLToPath(new URL('source-editor-reui.png',out)),fullPage:true});
@@ -122,7 +122,7 @@ try {
  await page.waitForFunction(()=>!document.querySelector('#source-erp-refresh').disabled);
  assert.equal(await page.locator('#source-name').inputValue(),'本店新品名称');
  assert.equal(await page.evaluate(()=>window.sourceProbe.writes.length),2);
- await page.locator('#source-save').click();await page.waitForFunction(()=>window.sourceProbe.writes.length===3);
+ await page.locator('#source-save-all').click();await page.waitForFunction(()=>window.sourceProbe.writes.length===3);
  const [saved]=await page.evaluate(()=>window.sourceProbe.writes.at(-1));
  assert.equal(saved.row.erpName,'ERP 新品');
  assert.equal(saved.row.name,'本店新品名称');
