@@ -27,7 +27,7 @@ export function openSourceEditor(liveApi){
  const pending=new Map();
  const overlay=rows=>{const result=rows.map(r=>pending.has(r.sourceId)?clone(pending.get(r.sourceId).row):r);for(const {row} of pending.values())if(!result.some(r=>r.sourceId===row.sourceId)&&row.shopId===liveApi.shopId())result.push(clone(row));return result;};
  const api={...liveApi,getRows:()=>overlay(liveApi.getRows()).filter(r=>r.shopId===liveApi.shopId()),getAllRows:()=>overlay(liveApi.getAllRows())};
- let selectionBaseline=new Map(),productLookup,formBaseline=null,managed=null;
+ let selectionBaseline=new Map(),productLookup,formBaseline=null,managed=null,refreshSharedRestores;
  const shared=api.sharedSources;
  const title=api.quickEdit?'修改输出源':shared?'输出源维护':'本店输出源维护';
 
@@ -88,7 +88,15 @@ export function openSourceEditor(liveApi){
   const target=$('#source-quick-preview p');
   if(target&&addonFields){try{target.textContent=selectedSourceAddons(sourceAddonFields(addonFields.read(false))).map(addon=>addon.text?.trim()).filter(Boolean).join(' ')||'暂不展示加购';}catch(error){target.textContent=error.message;}}
  }
- function invalidate(){preview=null;sourceSync?.invalidate();if(draft&&addonFields)updatePending();}
+ function invalidate(){
+  preview=null;sourceSync?.invalidate();
+  if(draft&&addonFields)updatePending();
+  if(refreshSharedRestores&&formBaseline){
+   let patch;
+   try{patch=sourceFieldPatch(JSON.parse(formBaseline),read(false));}catch{patch={};}
+   refreshSharedRestores(patch);
+  }
+ }
  function stageCurrent(){
   if(productLookup?.isPending()){message('正在读取 ERP 名称和单价，请查询完成后再保存或切换。');return false;}
   if(!draft||!isEdited())return true;
@@ -115,19 +123,19 @@ export function openSourceEditor(liveApi){
   // 新建共用资料与店铺差异一起暂存，切换范围不把当前店内容当成新的共用基线。
   const creationBase=!entry?{...clone(base),shopId:base.shopId||api.shopId(),goodsId:value.goodsId,specialComponent:isSpecialComponent(value),...(value.erpName?{erpName:value.erpName}:{})}:null;
   if(creationBase&&!edits.shared)edits.shared={values:sourceFieldPatch(null,creationBase),restore:[]};
-  const change=edits[scope]??={values:{},restore:[]};
   const patch=sourceFieldPatch(formBaseline?JSON.parse(formBaseline):null,value);
-  const put=(key,value,restore=false)=>{
+  const put=(target,key,value,restore=false)=>{
+   const change=edits[target]??={values:{},restore:[]};
    change.restore=change.restore.filter(item=>item!==key);
    if(restore){delete change.values[key];change.restore.push(key);}
    else change.values[key]=value;
   };
-  for(const [key,content] of Object.entries(patch))put(key,content);
+  for(const [key,content] of Object.entries(patch))put(scope,key,content);
   // 店铺原价覆盖不能遮住本次明确设置的共用核算价；名称、加购和配置独立价不受影响。
   if(entry&&scope==='shared'&&(Object.hasOwn(patch,'tax')||managed.taxEdited))applySharedTaxEdit(edits,value.tax);
-  if(fieldChange)put(...fieldChange);
+  // 多店恢复沿用单店恢复字段，只加入当前草稿，统一保存。
+  if(fieldChange)for(const target of fieldChange.shops)put(target,fieldChange.key,fieldChange.value,fieldChange.restore);
   const raw=selectionBaseline.get(base.sourceId);
-  if(!Object.keys(change.values).length&&!change.restore.length)delete edits[scope];
   if(creationBase&&isSpecialComponent(value))for(const [scope,edit]of Object.entries(edits)){
    edit.values=Object.fromEntries(Object.entries(edit.values).filter(([key])=>key==='name'));edit.restore=edit.restore.filter(key=>key==='name');
    if(!Object.keys(edit.values).length&&!edit.restore.length)delete edits[scope];
@@ -167,7 +175,7 @@ export function openSourceEditor(liveApi){
   if(!row.deletedAt){try{formBaseline=JSON.stringify(read(false));}catch{formBaseline=null;}}
   updatePending();
  }finally{finish();}}
- function renderSelection(row,scope){api.release?.($('#source-detail'));productLookup?.dispose();productLookup=null;addonFields=null;selectionBaseline=new Map([...liveApi.getAllRows(),...liveApi.getRows()].map(r=>[r.sourceId,clone(r)]));selectedId=selectionBaseline.has(row.sourceId)?row.sourceId:null;
+ function renderSelection(row,scope){api.release?.($('#source-detail'));productLookup?.dispose();productLookup=null;addonFields=null;refreshSharedRestores=null;selectionBaseline=new Map([...liveApi.getAllRows(),...liveApi.getRows()].map(r=>[r.sourceId,clone(r)]));selectedId=selectionBaseline.has(row.sourceId)?row.sourceId:null;
  const context=$('#source-context'),unitLabel=value=>value==null?'待核对':'¥'+Number(value).toFixed(2);
  const shopName=shops.find(shop=>shop.id===api.shopId())?.name||'当前店铺';
  if(context)context.textContent=api.quickEdit?`${shopName} · 核算 ${unitLabel(row.tax)} · ERP ${unitLabel(erpUnitCost(row).cents===null?null:erpUnitCost(row).cents/100)}`:shopName;
@@ -181,7 +189,8 @@ export function openSourceEditor(liveApi){
  api.renderDetail?.($('#source-detail'),{row,selectedId,isNew,targetShops,quickEdit:api.quickEdit,shared:!!managed,shops:api.nas?shops.filter(s=>s.id===api.shopId()):shops,nas:api.nas,shopId:api.shopId(),references,special:isSpecialComponent(row),erpPrice:unit.cents===null?'暂无':(unit.cents/100).toFixed(2),stockHtml:componentStockHtml(row,api.getCosts()),capacityHtml:capacityFieldsHtml(row)+hardwareFieldsHtml(row)});
  const getOriginal=()=>({...draft,goodsId:$('#source-id').value.trim(),tax:$('#source-tax').value===''?null:Number($('#source-tax').value)});
  addonFields=isSpecialComponent(row)?{read:()=>sourceAddon(draft),isDirty:()=>false,changes:()=>[],refresh:()=>{}}:managed?mountSharedAddons($('#source-addon-fields'),{row:draft,getCosts:api.getCosts,getOriginal,onChange:invalidate}):mountShopAddons($('#source-addon-fields'),{original:{...draft,shopId:draft.shopId||api.shopId()},getRows:api.getAllRows,getCosts:api.getCosts,getOriginal:()=>({...draft,goodsId:$('#source-id').value.trim(),tax:$('#source-tax').value===''?null:Number($('#source-tax').value)}),onChange:invalidate,...(api.nas?{availableShops:shops.filter(s=>s.id===api.shopId())}:{})});
- if(managed)mountSharedScope($('#source-detail'),{row,entry,scope,scopes:shared.scopes,edits,
+ const editable=!api.canEdit||api.canEdit(row);
+ if(managed)refreshSharedRestores=mountSharedScope($('#source-detail'),{row,entry,scope,scopes:shared.scopes,edits,editable,
   onScope:target=>{
    if(busy)return;
    // 新建时可以先选范围再填写身份，只有保存或离开配件时才进行完整校验。
@@ -190,9 +199,9 @@ export function openSourceEditor(liveApi){
     try{if(isEdited())stageManaged(read(false));select(pending.get(base.sourceId)?.creationBase||base,target);}catch(error){message(error.message);}
    }else if(stageCurrent())select(base,target);
   },
-  onField:(key,value,restore)=>{
+  onField:(key,value,restore,shops=[scope])=>{
    if(busy||!stageCurrent())return;
-   stageManaged(read(false),[key,value,restore]);select(base,scope);
+   stageManaged(read(false),{key,value,restore,shops});select(base,scope);
    if(key.startsWith('capacityOverrides.')||key.startsWith('hardwareOverrides.'))$('#source-maintenance-fields').open=true;
   }});
  $$('[data-source-new-shop]').forEach(input=>input.onchange=invalidate);
@@ -203,7 +212,6 @@ export function openSourceEditor(liveApi){
  $('#source-name').closest('label').classList.add('source-field-name');
  $('#source-reset').onclick=()=>{if(api.quickEdit)pending.clear();select(selectedId?api.getRows().find(r=>r.sourceId===selectedId):{sourceId:crypto.randomUUID(),goodsId:'',name:'',specialComponent:specialOnly,erp:specialOnly?0:null,tax:specialOnly?0:null,upgrade:'',addonText:'',addonNote:''});message(api.quickEdit?'已放弃未保存的修改':'已重置未保存的修改');};
  if(api.quickEdit){$('#source-reset').textContent='放弃修改';$('#source-save').textContent='保存输出源';}
- const editable=!api.canEdit||api.canEdit(row);
  const refreshFields=event=>{
   if(event?.target?.id==='source-tax'&&managed?.scope==='shared')managed.taxEdited=true;
   invalidate();

@@ -221,6 +221,30 @@ try{
  // 分别验收两位和四位单价。两列的乘数要对齐，焦点态和单件价格仍可正常编辑。
  const cpuRow=card('c0').locator('tr').filter({has:page.getByRole('button',{name:'CPU',exact:true})});
  const taxUnit=tax('c0','CPU');
+ async function assertCenteredTotals(withActions=false){
+  const metrics=await cpuRow.evaluate(row=>{
+   const cells=[...row.querySelectorAll('td.ov-number')].slice(0,2);
+   const rect=element=>element.getBoundingClientRect();
+   const actions=row.querySelector('.ov-tax-actions');
+   return cells.map(cell=>{
+    const {top,bottom,height,left,right}=rect(cell);
+    const total=rect(cell.querySelector('.ov-line-total'));
+    const calc=rect(cell.querySelector('.ov-line-calc'));
+    const actionRect=actions&&rect(actions);
+    const buttons=actions?[...actions.querySelectorAll('button')].map(rect):[];
+    return {alignment:getComputedStyle(cell).verticalAlign,height,totalTop:total.top,calcTop:calc.top,
+     centerOffset:(total.top+(actionRect?.bottom??calc.bottom)-top-bottom)/2,
+     actionsFit:actionRect!==null && buttons.every(button=>button.top>=actionRect.top&&button.bottom<=actionRect.bottom&&
+      button.left>=actionRect.left&&button.right<=actionRect.right),
+     buttonCenter:buttons.length?(buttons[0].left+buttons.at(-1).right-left-right)/2:null,
+    };
+   });
+  });
+  const [erp,tax]=metrics;
+  assert.ok(metrics.every(cell=>cell.alignment==='middle'&&cell.height>=120&&Math.abs(cell.centerOffset)<1),JSON.stringify(metrics));
+  assert.ok(Math.abs(erp.totalTop-tax.totalTop)<1&&Math.abs(erp.calcTop-tax.calcTop)<1);
+  if(withActions)assert.ok(tax.actionsFit&&Math.abs(tax.buttonCenter)<1,JSON.stringify(metrics));
+ }
  async function pasteQuantity(goodsId,qty){
   await pasteModel(goodsId+'\t'+qty);
   await page.waitForFunction(({goodsId,qty})=>{
@@ -234,6 +258,9 @@ try{
   assert.equal(await taxUnit.inputValue(),formatted);
   assert.equal(await taxUnit.evaluate(input=>input.getBoundingClientRect().width<=input.closest('td').clientWidth),true);
   await pasteQuantity(goodsId,5);
+  // 模拟展示明细多行时的高行，避免只有最小行高而测不出顶对齐。
+  await cpuRow.locator('.ov-display').evaluate(cell=>{cell.style.height='120px';});
+  await assertCenteredTotals();
   const measure=()=>cpuRow.evaluate(row=>{
    const rect=el=>el.getBoundingClientRect();
    return [...row.querySelectorAll('.ov-line-calc')].map(line=>{
@@ -261,6 +288,16 @@ try{
   assert.ok((await measure()).every(line=>line.inside));
   await taxUnit.press('Escape');
   assert.equal(await taxUnit.inputValue(),formatted);
+  // 修改含税单价时，操作按钮居中，ERP 与含税的两行金额仍齐平。
+  await taxUnit.fill(String(unit+1));
+  const actions=cpuRow.locator('.ov-tax-actions');
+  await actions.getByRole('button',{name:'恢复',exact:true}).waitFor();
+  assert.deepEqual(await actions.getByRole('button').allTextContents(),['全局','恢复']);
+  await assertCenteredTotals(true);
+  await taxUnit.press('Escape');
+  await actions.waitFor({state:'detached'});
+  await assertCenteredTotals();
+  await cpuRow.locator('.ov-display').evaluate(cell=>{cell.style.removeProperty('height');});
   await page.locator('#undo').evaluate(button=>button.click());
   await waitQuantity(1);
   await page.locator('#undo').evaluate(button=>button.click());

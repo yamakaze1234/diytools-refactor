@@ -10,6 +10,8 @@ const fixture=resolve(process.argv[2]);
 const useLegacy=process.argv.includes('--legacy');
 const api=await startSourceAcceptance({fixture,sharedSources:!useLegacy,root:join(fixture,'workbench-browser-uploads'),
  authenticate:async()=>({uid:fixtureActor,workspaceId:fixtureWorkspace})});
+// 留出一个从未设置共用值的字段，与显式保存的自动识别（null）区分。
+if(!useLegacy)await api.db.query("UPDATE workbench_sources.entries SET fields=fields-'hardwareOverrides.color' WHERE id='9900011'");
 const root=resolve(import.meta.dirname,'../dist');
 const headers={'x-workbench-deployment':fixtureDeployment};
 const staticServer=createServer(async(req,res)=>{
@@ -117,10 +119,55 @@ try{
  await saveSource();
  assert.match(await projection('gigabyte','tax'),/250.*共用/);
  assert.match(await projection('intel','tax'),/250.*共用/);
+ if(!useLegacy){
+  const scope=el('#source-edit-scope'),name=el('#source-name');
+  const restore=el('[data-source-restore="name"]');
+  const hint=el('.source-field-name + .source-shared-field-state');
+  const listName=el('#source-list .source-item strong');
+  // 保存共用值时，两家店各自维护的名称继续生效。
+  await scope.selectOption('intel');await name.fill('英特尔单店名称');
+  await scope.selectOption('gigabyte');await name.fill('技嘉单店名称');
+  await scope.selectOption('shared');await name.fill('第一次共用名称');
+  await saveSource();
+  assert.match(await hint.innerText(),/共用 · 英特尔、技嘉有单店覆盖/);
+  assert.equal(await restore.innerText(),'全部恢复共用');
+  assert.equal(await listName.innerText(),'英特尔单店名称');
+  assert.match(await projection('intel','name'),/英特尔单店名称.*单店覆盖/);
+  assert.match(await projection('gigabyte','name'),/技嘉单店名称.*单店覆盖/);
+  assert.match(await projection('jonsbo','name'),/第一次共用名称.*共用/);
+
+  await name.fill('恢复后的共用名称');
+  await restore.click();
+  assert.equal(await restore.count(),0);
+  for(const store of ['intel','gigabyte'])assert.match(await projection(store,'name'),/恢复后的共用名称.*待恢复共用/);
+  assert.match(await listName.innerText(),/恢复后的共用名称 · 待保存/);
+  await saveSource();
+  assert.equal(await hint.innerText(),'共用');
+  assert.equal(await listName.innerText(),'恢复后的共用名称');
+  for(const store of ['intel','gigabyte','jonsbo'])assert.match(await projection(store,'name'),/^恢复后的共用名称 共用$/);
+
+  // 未设置共用颜色时，可以在同一草稿里设置共用值并清掉旧覆盖。
+  const color=el('#source-hardware-color');
+  const restoreColor=el('[data-source-restore="hardwareOverrides.color"]');
+  const colorPreview=store=>projection(store,'hardwareOverrides.color');
+  const maintenance=el('#source-maintenance-fields');
+  await scope.selectOption('intel');
+  await maintenance.locator('summary').click();
+  await color.selectOption('黑');
+  await scope.selectOption('shared');
+  await maintenance.locator('summary').click();
+  assert.match(await el('.source-shared-field-state[data-maintenance-kind="color"]').innerText(),/待设共用值 · 英特尔有单店覆盖/);
+  assert.equal(await restoreColor.isVisible(),false);
+  await color.selectOption('白');
+  await restoreColor.click();
+  assert.match(await colorPreview('intel'),/^白 待恢复共用$/);
+  await saveSource();
+  for(const store of ['intel','gigabyte','jonsbo'])assert.match(await colorPreview(store),/^白 共用$/);
+ }
  await close();
  await openSource('9900012');
  assert.equal(await el('[data-choice]').count(),2);
- assert.equal(await el('#source-maintenance-fields summary').innerText(),'容量、硬件简称维护');
+ assert.equal(await el('#source-maintenance-fields summary').innerText(),'容量、颜色与硬件资料');
  assert.equal(await el('#field-upgrade,#addon-structure').count(),0);
  await el('#source-edit-scope').selectOption('jonsbo');
  await el('[data-choice-label]').first().fill('单店加购测试');

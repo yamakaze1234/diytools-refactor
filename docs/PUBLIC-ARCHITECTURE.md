@@ -49,6 +49,7 @@ flowchart LR
 | 连接设置 | `nas_launch.rs` 在线程启动前读配置；`nas_connection.rs` 匿名 TLS 检查和原子落盘；重启切换 |
 | 身份与权限 | `cloud_transport.rs` 处理原生会话，`nas-api/src/local-auth.mjs` 验证 NAS 凭据，店铺作用域沿用原授权 |
 | 编辑与恢复 | `nas-main-workspace.js`、`nas-draft-controller.js`、`nas-operation-plan.js` 按端点、部署、成员隔离草稿和回执 |
+| 输出源维护 | `shared-source-editor.js` 投影各店生效字段，`source-editor.js` 暂存字段恢复并沿用原共用目录提交机制 |
 | PostgreSQL | `services/nas-api/src` 通过受限角色操作各店数据；SQL 与部署模板不带生产密码 |
 | 图片 | 预览分辨率受限，旧画布释放，原图缓存有数量和体积上限；导出生成高清图 |
 | 更新 | `workbench-updates` / `workbench-vX.Y.Z`，Ed25519 验签后检查长度和 SHA-256，保留 data |

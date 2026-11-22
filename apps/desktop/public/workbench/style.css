@@ -388,6 +388,8 @@ dialog.global-batch-dialog{width:min(1120px,96vw)}
 .source-shared-field-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px}
 .source-shared-field-state button{padding:3px 7px;font-size:12px}
 .source-shared-field-state select{max-width:100%}
+.source-shared-field-state .source-shared-override{color:#8b4a11;font-weight:700}
+html.dark .source-shared-field-state .source-shared-override{color:#ffc680}
 #source-maintenance-fields{border-top:1px solid var(--ef-rule,var(--line));padding-top:8px}
 #source-maintenance-fields summary{cursor:pointer;font-weight:600}
 #source-shared-preview{display:grid;grid-template-columns:repeat(auto-fit,minmax(142px,1fr));gap:8px}

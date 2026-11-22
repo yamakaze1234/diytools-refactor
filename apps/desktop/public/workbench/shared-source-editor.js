@@ -42,7 +42,15 @@ const display = (name,value) => {
 export function fieldState(entry,scope,field,preferredId,edits={}) {
  const common = {...entry?.common,...edits.shared?.values};
  const inherited = Object.hasOwn(common,field);
- if (scope==='shared') return {value:common[field], label:inherited?'共用':'待设共用值'};
+ if (scope==='shared') {
+  // 待恢复的店铺已按共用值预览，只有仍在生效的覆盖才出现在提示中。
+  const overrideShops = Object.entries(entry?.stores??{}).filter(([shop,aliases])=>{
+   const change=edits[shop];
+   if(Object.hasOwn(change?.values??{},field))return true;
+   return !change?.restore.includes(field)&&aliases.some(alias=>Object.hasOwn(alias.fields,field));
+  }).map(([shop])=>shop);
+  return {value:common[field], label:inherited?'共用':'待设共用值', inherited, overrideShops};
+ }
  const change = edits[scope];
  const aliases = entry?.stores[scope]??[];
  const ordered = [...aliases].sort((a,b)=>Number(b.sourceId===preferredId)-Number(a.sourceId===preferredId));
@@ -76,7 +84,7 @@ export function sourceFieldPatch(before,after) {
  return Object.fromEntries(Object.entries(current).filter(([key,value])=>!equal(value,baseline[key])));
 }
 
-export function mountSharedScope(root,{row,entry,scope,scopes,edits,onScope,onField}) {
+export function mountSharedScope(root,{row,entry,scope,scopes,edits,editable,onScope,onField}) {
  const scopeHost = root.querySelector('#source-shared-scope');
  if (!scopeHost) return;
  const enabledScopes = scopes;
@@ -91,6 +99,7 @@ export function mountSharedScope(root,{row,entry,scope,scopes,edits,onScope,onFi
  }
  const details = root.querySelector('#source-maintenance-fields');
  const fields = row.specialComponent?['name']:sharedSourceKeys;
+ const draftRestoreButtons = new Map();
  for (const key of fields) {
   const input = root.querySelector(controls[key]);
   if (!input) continue;
@@ -100,7 +109,12 @@ export function mountSharedScope(root,{row,entry,scope,scopes,edits,onScope,onFi
   actions.className = 'source-shared-field-state';
   // 颜色的范围提示与下拉项同步隐藏，硬盘不留恢复按钮。
   if(key==='hardwareOverrides.color')actions.dataset.maintenanceKind='color';
-  actions.innerHTML = `<small class="hint">${state.label}</small>${state.restore?
+  const stores = state.overrideShops??[];
+  const restoreAll = editable && stores.length>0 && stores.every(shop=>scopes.includes(shop));
+  const coverage = stores.length ? ` · ${stores.map(scopeName).join('、')}有单店覆盖` : '';
+  const hint = state.label+coverage+(coverage&&key!=='tax'?'（不会随共用值更新）':'');
+  actions.innerHTML = `<small class="hint${stores.length?' source-shared-override':''}">${esc(hint)}</small>${restoreAll?
+    '<button type="button">全部恢复共用</button>':state.restore?
     '<button type="button">恢复共用</button>':''}${state.alternatives?.length?
     `<select aria-label="${esc(sharedSourceLabels[key])}历史值"><option value="">选用一个历史值</option>${
      state.alternatives.map((value,index)=>`<option value="${index}">${esc(display(key,value))}</option>`).join('')}</select>`:''}`;
@@ -108,17 +122,32 @@ export function mountSharedScope(root,{row,entry,scope,scopes,edits,onScope,onFi
   else if (host.tagName==='LABEL') host.after(actions);
   else host.prepend(actions);
   const restore = actions.querySelector('button');
-  if (restore) {restore.dataset.sourceRestore=key;restore.onclick=()=>onField(key,null,true);}
+  if (restore) {
+   restore.dataset.sourceRestore=key;
+   restore.onclick=()=>onField(key,null,true,restoreAll?stores:[scope]);
+   if (restoreAll && !state.inherited) {
+    restore.hidden=true;
+    draftRestoreButtons.set(key,restore);
+   }
+  }
   const choices = actions.querySelector('select');
   if (choices) choices.onchange=()=>{if (choices.value!=='') onField(key,state.alternatives[Number(choices.value)],false);};
-  if (details?.contains(input) && (state.restore || state.alternatives?.length)) details.dataset.hasOverride='true';
+  if (details?.contains(input) && (stores.length || state.restore || state.alternatives?.length)) details.dataset.hasOverride='true';
  }
  const projection = root.querySelector('#source-shared-preview');
- projection.innerHTML = Object.keys(entry.stores).map(shop=>`<section data-source-projection="${shop}"><strong>${esc(scopeName(shop))}</strong>
-  <dl>${['name','tax','addon'].filter(key=>fields.includes(key)).map(key=>{
-   const state=fieldState(entry,shop,key,row.sourceId,edits);
+ // 容量和硬件资料有值或待恢复时，也在各店预览中展示。
+ const shopStates = Object.keys(entry.stores).map(shop=>[shop,
+  Object.fromEntries(fields.map(key=>[key,fieldState(entry,shop,key,row.sourceId,edits)]))]);
+ const previewFields = fields.filter(key=>['name','tax','addon'].includes(key)||shopStates.some(([,states])=>
+  states[key].value!=null||['待恢复共用','单店覆盖','保留店铺原值','多个店铺原值'].includes(states[key].label)));
+ projection.innerHTML = shopStates.map(([shop,states])=>`<section data-source-projection="${shop}"><strong>${esc(scopeName(shop))}</strong>
+  <dl>${previewFields.map(key=>{
+   const state=states[key];
    return `<dt>${esc(sharedSourceLabels[key])}</dt><dd data-field="${key}">${state.alternatives?.length?'多个历史值':esc(display(key,state.value))} <small class="hint">${state.label}</small></dd>`;
   }).join('')}</dl></section>`).join('');
+ if (draftRestoreButtons.size) return patch=>{
+  for (const [field,button] of draftRestoreButtons) button.hidden=!Object.hasOwn(patch,field);
+ };
 }
 
 /** 保留旧加购组合的原始结构，只有实际修改商品卡片时生成新的选项。 */

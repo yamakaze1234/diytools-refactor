@@ -225,7 +225,6 @@ body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer butto
 #continuous-workbench th.ov-title { height: 1px; }
 #continuous-workbench .ov-title-bar { height: 100%; }
 #continuous-workbench .ov-line-total { display:block; font-size:15px; font-weight:750; }
-#continuous-workbench .ov-multiple-qty > :nth-child(-n+2) { vertical-align:top; }
 /* 两列的单价和乘数采用同样的行高、字距和居中方式。 */
 #continuous-workbench .ov-line-calc { display:flex; justify-content:center; align-items:center; gap:.5ch; min-height:18px; line-height:18px; font-size:11px; color:#785030; white-space:nowrap; }
 #continuous-workbench .ov-line-calc > :first-child { padding-inline:2px; }
@@ -547,6 +546,13 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
 /* 11-19：含税单价「全局 / 恢复」两个按钮并排 */
 .ov-tax-actions{display:flex;gap:4px;justify-content:flex-end;margin-top:3px}
 .ov-tax-actions .ov-tax-global{display:inline-block;margin:0}
+/* 两列垂直居中。含税有操作时，ERP 列预留同样的高度，保持金额两行齐平。 */
+#continuous-workbench .ov-multiple-qty { --ov-tax-actions-height:24px; }
+#continuous-workbench .ov-multiple-qty .ov-tax-actions { block-size:var(--ov-tax-actions-height); align-items:center; justify-content:center; }
+#continuous-workbench .ov-multiple-qty .ov-tax-actions .ov-tax-global { min-height:0; height:100%; padding-block:0; }
+#continuous-workbench .ov-multiple-qty > .ov-number:first-child:has(+ .ov-tax > .ov-tax-actions)::after {
+ content:""; display:block; block-size:var(--ov-tax-actions-height); margin-top:3px;
+}
 .ov-tax-reset{border-color:#9aa0a6!important;background:#fff!important;color:#444!important}
 .ov-tax-reset:hover{background:#eef0f2!important}
 /* 11-19：全局改过的价格仍标黄，左侧加深色竖条 + 「全局」小标签，区分单独核算价 */

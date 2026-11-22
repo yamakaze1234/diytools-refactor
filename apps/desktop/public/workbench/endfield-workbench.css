@@ -513,7 +513,7 @@
    border-color: var(--ef-rule) !important; border-radius: 0 !important;
  }
  html[data-workbench-design] #dialog :is(.source-review .source-option-change span,#source-capacity legend,#source-hardware legend) { color: var(--ef-ink) !important; }
- html[data-workbench-design] #dialog :is(.source-review .hint,.source-review small,.source-review-pagination,.source-review .source-description-heading span,.source-review .source-option-change > b,.source-review-tabs button,.source-change-entry span,.source-auto-follow-panel h4 span,#source-capacity small,#source-hardware small,#source-hardware .hardware-intro) { color: var(--ef-ink-2) !important; }
+ html[data-workbench-design] #dialog :is(.source-review .hint,.source-review small,.source-review-pagination,.source-review .source-description-heading span,.source-review .source-option-change > b,.source-review-tabs button,.source-change-entry span,.source-auto-follow-panel h4 span,#source-capacity small:not(.source-shared-override),#source-hardware small:not(.source-shared-override),#source-hardware .hardware-intro) { color: var(--ef-ink-2) !important; }
  html[data-workbench-design] #dialog :is(.shop-addon-card.is-selected,.source-description-group.is-selected,.source-review-tabs button[aria-pressed=true]) { border-color: var(--ef-trace) !important; }
  html[data-workbench-design] #dialog .source-cost-override-warning { background: var(--ef-signal) !important; color: var(--ef-on-signal) !important; border-color: var(--ef-trace) !important; border-radius: 0 !important; }
 }
