@@ -11,6 +11,7 @@ export const sharedSourceLabels = {
  'capacityOverrides.memoryGb':'内存容量', 'capacityOverrides.vramGb':'显存容量', 'capacityOverrides.storageGb':'硬盘容量',
  'hardwareOverrides.cpuName':'CPU 简称', 'hardwareOverrides.gpuName':'显卡简称',
  'hardwareOverrides.boardType':'主板板型', 'hardwareOverrides.caseBoards':'机箱支持板型',
+ 'hardwareOverrides.color':'配件颜色',
 };
 export const sharedSourceKeys = Object.keys(sharedSourceLabels);
 export const sourceGoodsId = value => typeof value === 'string' && /^[1-9]\d{0,19}$/.test(value);

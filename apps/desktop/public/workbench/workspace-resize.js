@@ -20,7 +20,7 @@ export function mountWorkspaceResize(workspace){
   const right=Math.max(minimum.right,Math.min(value.right,width-minimum.main-left));
   return{left,right};
  }
- function apply(value){const widths=fit(value);workspace.style.gridTemplateColumns=`${widths.left}px minmax(${minimum.main}px,1fr) ${widths.right}px`;return widths;}
+ function apply(value){const widths=fit(value);workspace.style.setProperty('--sidebar-w',widths.left+'px');workspace.style.gridTemplateColumns=`${widths.left}px minmax(${minimum.main}px,1fr) ${widths.right}px`;return widths;}
  function measure(){return{left:sidebar.getBoundingClientRect().width,right:preview.getBoundingClientRect().width};}
  function flushMove(){
   if(!drag||pendingX===null)return;
@@ -29,8 +29,9 @@ export function mountWorkspaceResize(workspace){
  }
  function layout(){
   frame=null;flushMove();const active=enabled();handles.forEach(el=>el.hidden=!active);
-  if(!active){if(!drag)workspace.style.removeProperty('grid-template-columns');return;}
-  if(!drag){if(saved)apply(saved);else workspace.style.removeProperty('grid-template-columns');}
+  // 预览折叠时只恢复网格列定义，左栏仍使用保存的偏好宽度。
+  if(!active){if(!drag){workspace.style.removeProperty('grid-template-columns');if(saved)workspace.style.setProperty('--sidebar-w',fit(saved).left+'px');}return;}
+  if(!drag){if(saved)apply(saved);else{workspace.style.removeProperty('grid-template-columns');workspace.style.removeProperty('--sidebar-w');}}
   const bounds=workspace.getBoundingClientRect();
   for(const el of handles){const left=el.dataset.resizeColumn==='left',rect=(left?sidebar:preview).getBoundingClientRect();el.style.left=`${(left?rect.right:rect.left)-bounds.left}px`;el.setAttribute('aria-valuemin',String(left?minimum.left:minimum.right));el.setAttribute('aria-valuemax',String(workspace.clientWidth-minimum.main-(left?preview:sidebar).getBoundingClientRect().width));el.setAttribute('aria-valuenow',String(Math.round(rect.width)));}
  }

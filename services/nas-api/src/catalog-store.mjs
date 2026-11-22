@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {Fault,requireValue} from './config.mjs';
 import {shopLock} from './shop-scope.mjs';
 import {foreignGalleryPrefix,lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
-import {listSharedSources,validateSharedSourceEdit,writeSharedSource,sharedSourceVersions} from './shared-sources.mjs';
+import {adoptErpSource,listSharedSources,validateErpAdoption,validateSharedSourceEdit,writeSharedSource,sharedSourceVersions} from './shared-sources.mjs';
 import {sourceGoodsId} from '../../../apps/desktop/public/workbench/shared-source-fields.js';
 import {sourceAddon,validateAddon} from '../../../apps/desktop/public/workbench/addon-data.js';
 
@@ -176,6 +176,8 @@ export class CatalogStore {
   const op=body.operation_id.toLowerCase();
   const writeImage=image&&kind==='assets'&&action==='upload';
   const create=action==='create',copy=action==='copy',apply=action==='apply';
+  const adoption=sharedEdit&&create&&plain(body.document)&&own(body.document,'erpAdoption');
+  if(adoption)requireValue(this.workspaceWritable,'WRITES_DISABLED',405);
   const keys=['operation_id',...(create||writeImage?[]:['expected_version']),...(create||action==='replace'?['document']:[]),
    ...(copy?['target_id']:[]),...(apply?['target_product_id','target_configuration_id','expected_target_version','selection','name_format','replace_manual_names','archive_empty_target']:[])];
   validation(Object.keys(body).every(k=>keys.includes(k)),'operation');
@@ -193,7 +195,8 @@ export class CatalogStore {
    for(const field of ['owner_shop','ownerShop','shared','resource_version'])
     validation(!own(body.document,field),'document.'+field);
    validation(body.document.deletedAt==null,'document.deletedAt');
-   if(sharedEdit)validateSharedSourceEdit(id,body.document,create);
+   if(adoption)validateErpAdoption(id,body.document);
+   else if(sharedEdit)validateSharedSourceEdit(id,body.document,create);
   }
   const hash=sha(canonical({shop,kind,id,action,body:{...body,operation_id:op},asset:writeImage?{digest:image.digest,mime:image.mime}:null}));
   return this.tx(sharedEdit?'shared':true,async db=>{
@@ -210,7 +213,9 @@ export class CatalogStore {
    if(this.workspaceWritable&&(await db.query('SELECT 1 FROM intel_live.workspace_receipts WHERE workspace_id=$1 AND actor_uid=$2 AND operation_id=$3',actor)).rows.length)
     throw new Fault('OPERATION_REUSED',409);
    let resultId=id,version='1',previous=null,document=null;
-   if(sharedEdit){
+   if(adoption){
+    document=await adoptErpSource(db,member,shop,id,body.document);version=document.version;
+   }else if(sharedEdit){
     previous=body.expected_version??null;
     version=await writeSharedSource(db,member,shop,id,previous,body.document);
     document={id,...(body.document.alias_edits||body.document.addon_sync?{source_versions:await sharedSourceVersions(db,member,shop,id)}:{})};

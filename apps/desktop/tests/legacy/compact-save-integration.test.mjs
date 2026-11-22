@@ -129,7 +129,7 @@ test('repeated clicks while a new config loads share its request and detail prep
 
 test('navigation between loaded configs after a batch only renders the selected detail',async()=>{
  const rows=[{id:'one',shopId:'intel',productId:'link'},{id:'two',shopId:'intel',productId:'link'}],rendered=[];
- const c={expandOnOpen:()=>false,$:()=>({}),capturePanelTransition:()=>()=>{},activationGeneration:0,fullWorkspace:true,active:'one',selected:new Set(),collapsedProducts:new Set(['link']),posterEditor:{clear(){}},
+ const c={expandOnOpen:()=>false,$:()=>({}),capturePanelTransition:()=>()=>{},activationGeneration:0,fullWorkspace:true,hostTemplateView:null,active:'one',selected:new Set(),collapsedProducts:new Set(['link']),posterEditor:{clear(){}},
   current:()=>rows.find(row=>row.id===c.active),available:()=>rows,renderCompact:ids=>rendered.push(Array.from(ids)),renderAll(){throw Error('navigation must not normalize every configuration');},pruneDetails(){},toast(message){throw Error(message);}};
  vm.runInNewContext('var nasMain=false;\n'+extract('async function activate(','function renderShop('),c);
  await c.activate('two');assert.equal(c.current(),rows[1]);assert.deepEqual(rendered,[['two']]);

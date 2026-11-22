@@ -21,7 +21,8 @@ const configs=Array.from({length:2},(_,index)=>{
  if(index===0)c.parts=c.parts.filter(part=>part.slot!=='CPU');
  return c;
 });
-let state=normalizeWorkspaceState({revision:1,updatedAt:new Date().toISOString(),configs,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{intel:{coupon:0}},logs:[]},[]);
+const other=structuredClone(configs[1]);Object.assign(other,{id:'other',productId:'p2',product:'另一条链接',spu:'',skuId:''});
+let state=normalizeWorkspaceState({revision:1,updatedAt:new Date().toISOString(),configs:[...configs,other],templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{intel:{coupon:0}},logs:[]},[]);
 state.sourceCatalog=sources;
 state.costSource=sources;
 const html=(await fs.readFile(new URL('../public/workbench/index.html',import.meta.url),'utf8')).replace('<script type="module" src="./bootstrap.js"></script>',"<script type=module>import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const {createWorkbenchReactRenderer}=await import('/src/legacy/react-workbench.tsx');window.createWorkbenchReactRenderer=createWorkbenchReactRenderer;await import('/workbench/app.js');document.body.classList.remove('login-required');</script>");
@@ -110,7 +111,53 @@ try{
  await page.locator('#batch-profit-price').click();await page.locator('input[name="bpp-scope"][value="selected"]').check();await page.locator('#bpp-target').fill('100');await page.locator('#bpp-99').selectOption('on');
  assert.equal(await page.locator('#bpp-rows tr').count(),2);assert.match(await page.locator('#bpp-rows').textContent(),/整链设置/);await page.locator('#bpp-apply').click();
  assert.equal((await config('c1')).price%100,99);assert.equal((await config('c1')).overviewPrice99,true);
+ // 另一条链接展开时切到首套，收起不切换；滚到底后左栏与编辑项一同跟随。
+ const otherLink=page.locator('[data-product-toggle="p2"]');
+ await otherLink.locator('.link-arrow').click();
+ await card('other').waitFor();
+ assert.equal(await card('other').getAttribute('data-active'),'true');
+ await otherLink.locator('.link-arrow').click();
+ assert.equal(await card('other').getAttribute('data-active'),'true');
+ if(await link.getAttribute('aria-expanded')==='false')await link.locator('.link-arrow').click();
+ await page.locator('#config-list [data-id="c0"]').click();
+ await card('c0').waitFor();
+ assert.equal(await card('c0').getAttribute('data-active'),'true');
+ const qty=card('c0').getByRole('textbox',{name:'配置1 CPU实际数量',exact:true});
+ await qty.focus();await edit(qty,'3');
+ await card('c0').locator('td[data-metric="ERP 单价"] .ov-line-total').first().waitFor();
+ // 单价和乘数分列对齐，文字节点本身可以省略布局用空格。
+ const erpCell=card('c0').locator('td[data-metric="ERP 单价"]').first();
+ assert.equal(await erpCell.locator('.ov-line-total').textContent(),'2,400');
+ assert.match(await erpCell.locator('.ov-line-calc').textContent(),/^800\s*×\s*3$/);
+ await cell('c0',1).dispatchEvent('pointerdown',{button:0,buttons:1});
+ await cell('c0',0).dispatchEvent('pointermove',{button:0,buttons:1});
+ await cell('c0',0).dispatchEvent('pointerup',{button:0});
+ await cell('c0',0).press('Delete');
+ assert.equal((await config('c0')).actualParts[0].goodsId,'');
+ assert.equal((await config('c0')).actualParts[0].qty,1);
+ await page.evaluate(()=>window.overviewProbe.undo());
+ assert.equal((await config('c0')).actualParts[0].goodsId,'1001');
+ assert.equal((await config('c0')).actualParts[0].qty,3);
+ await cell('c0',0).press('F2');
+ const picker=card('c0').getByRole('combobox');
+ await picker.fill('');assert.equal(await picker.evaluate(node=>node===document.activeElement),true);
+ await picker.press('Escape');
+ await page.locator('.ov-sheet-scroll').evaluate(el=>el.scrollTop=el.scrollHeight);
+ await page.waitForFunction(()=>document.querySelector('[data-continuous-config="c1"]').dataset.active==='true');
+ assert.equal(await page.locator('#config-list [data-id="c1"]').getAttribute('aria-current'),'true');
+ // 快速切换同店配置时旧图保留至新图就绪，预览画布中间不应清零。
+ await page.waitForFunction(()=>document.querySelector('#poster').width>0&&!document.querySelector('#poster-stage').inert);
+ await page.evaluate(()=>{
+  const canvas=document.querySelector('#poster');
+  window.previewWasCleared=false;
+  new MutationObserver(records=>{
+   if(!canvas.width||!canvas.height||records.some(record=>record.oldValue==='0'))window.previewWasCleared=true;
+  }).observe(canvas,{attributes:true,attributeOldValue:true,attributeFilter:['width','height']});
+ });
+ for(const id of ['c0','c1','c0'])await page.locator('#config-list [data-id="'+id+'"]').click();
+ await page.waitForFunction(()=>document.querySelector('[data-continuous-config="c0"]').dataset.active==='true'&&!document.querySelector('#poster-stage').inert);
+ assert.equal(await page.evaluate(()=>window.previewWasCleared),false);
  if(screenshots)await page.screenshot({path:join(screenshots,'workbench-1119.png')});
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({passed:true,navigation:true,profitInverse:true,erpExcludesInstallment:true,price99False:true,stableWidths:true,sourceClipboard:true,selectionAndAnts:true,batchPricing:true}));
+ console.log(JSON.stringify({passed:true,navigation:true,profitInverse:true,erpExcludesInstallment:true,price99False:true,stableWidths:true,sourceClipboard:true,selectionAndAnts:true,batchPricing:true,quantitySubtotal:true,deleteUndo:true,emptySearchFocus:true,scrollFollowLast:true,previewKeepsFrame:true}));
 }finally{await browser.close();}

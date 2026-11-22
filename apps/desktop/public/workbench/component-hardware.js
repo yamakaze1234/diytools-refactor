@@ -1,5 +1,6 @@
 /** 配件维护资料：人工覆盖优先，ERP 原文和型号推断只作为自动值。 */
 export const boardTypes=['ATX','MATX','ITX','E-ATX'];
+export const hardwareColors=['黑','白'];
 const text=row=>[row?.erpModel,row?.erpSpec,row?.erpName,row?.name].filter(Boolean).join(' ').normalize('NFKC').toUpperCase();
 export function inferBoardType(row){
  const s=text(row);
@@ -28,6 +29,11 @@ export function validateHardware(value){
  if(value.gpuName!=null&&value.gpuName!==''){if(typeof value.gpuName!=='string'||value.gpuName.trim().length>80)throw Error('显卡简称须为 80 字以内的文字');if(value.gpuName.trim())result.gpuName=value.gpuName.trim();}
  if(value.boardType){if(!boardTypes.includes(value.boardType))throw Error('主板板型无效');result.boardType=value.boardType;}
  if(value.caseBoards!=null){if(!Array.isArray(value.caseBoards)||!value.caseBoards.length||value.caseBoards.some(v=>!boardTypes.includes(v)))throw Error('请选择机箱支持的主板板型');result.caseBoards=boardTypes.filter(v=>value.caseBoards.includes(v));}
+ // 空值代表自动识别，不把自动值写入人工资料。
+ if(value.color!=null&&value.color!==''){
+  if(!hardwareColors.includes(value.color))throw Error('配件颜色只能选择黑或白');
+  result.color=value.color;
+ }
  return Object.keys(result).length?result:undefined;
 }
 export function boardType(row){return row?.hardwareOverrides?.boardType||row?.hardwareFacts?.boardType||inferBoardType(row);}

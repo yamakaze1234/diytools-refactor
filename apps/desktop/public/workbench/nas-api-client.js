@@ -20,7 +20,7 @@ export const receiptLookupError=error=>receiptNotFound(error)?new NasApiError('R
 // 重放时鉴权、权限或临时失败不能证明原请求未落库；只有不可通过的原版本条件可结束此次尝试。
 export const originalVersionRejected=error=>error?.status===409&&error.code==='VERSION_CONFLICT';
 // 这些受限接口在写入前检查安装条件，事务已回滚；其它5xx仍视为提交结果未知。
-export const migrationNotInstalled=error=>error?.status===503&&['NAS_GLOBAL_TAX_NOT_INSTALLED','NAS_GLOBAL_UPGRADE_NOT_INSTALLED'].includes(error.code);
+export const migrationNotInstalled=error=>error?.status===503&&['NAS_GLOBAL_TAX_NOT_INSTALLED','NAS_GLOBAL_UPGRADE_NOT_INSTALLED','NAS_ERP_ADOPTION_NOT_INSTALLED'].includes(error.code);
 
 /** 每次请求读取当前登录令牌；禁止自动重试，避免未来写请求出现重复提交。 */
 export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,timeoutMs=15000,nativeRequest,shopId='intel'}){

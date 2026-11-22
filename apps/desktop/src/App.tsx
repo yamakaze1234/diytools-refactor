@@ -12,6 +12,7 @@ import ErpEnvironment from "./ErpEnvironment";
 import LegacyMigration from "./LegacyMigration";
 import LegacyWorkbench from "./LegacyWorkbench";
 import UpdateDialog from "./UpdateDialog";
+import type { UpdateCheck } from './updater-controller';
 import StartupLogin from './StartupLogin';
 import { createStartupLoginController, initialStartupLoginState, trustedWorkbenchSignOut } from './startup-login-controller';
 import type { CloudApiResponse } from './startup-login-controller';
@@ -28,6 +29,11 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState("");
   const [updateOpen, setUpdateOpen] = useState(false);
+  const [startupRelease, setStartupRelease] = useState<UpdateCheck|null>(null);
+  const [startupOffer, setStartupOffer] = useState<UpdateCheck|null>(null);
+  const startupCheck = useRef<Promise<UpdateCheck>|null>(null);
+  const startupChecking = useRef(false);
+  const startupNoticeDismissed = useRef(false);
   const [updateFrozen, setUpdateFrozen] = useState(false);
   const [nasMain,setNasMain]=useState(false);
   const [acceptance,setAcceptance]=useState(false);
@@ -46,6 +52,16 @@ export default function App() {
         const useNas=info.main_editor===true;
         setNasMain(useNas);
         setAcceptance(info.acceptance===true);
+        // 检查独立于登录，复用同一次启动的查询，离线时安静退出。
+        if(desktop&&info.acceptance!==true){
+          if(!startupCheck.current){
+            startupChecking.current=true;
+            startupCheck.current=invoke<UpdateCheck>('updater_check').finally(()=>{startupChecking.current=false;});
+          }
+          void startupCheck.current.then(release=>{
+            if(!disposed&&!startupNoticeDismissed.current&&release.available&&release.version)setStartupRelease(release);
+          },()=>{});
+        }
         if(useNas&&!info.configured){setConnectionRequired(true);setConnectionOpen(true);return;}
         controller=createStartupLoginController({desktop,nasMain:useNas,
           invoke:(command,args)=>invoke<CloudApiResponse>(useNas?'nas_identity_request':command,args),onState:setLogin});
@@ -120,7 +136,7 @@ export default function App() {
       }}>自动保存设置</Button>}
       {/* 新版通道由原生签名契约隔离；诊断仅导出本次运行日志。 */}
       {!acceptance&&<Button type="button" variant="outline"
-        onClick={event => { setUpdateOpen(true); event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}
+        onClick={event => { startupNoticeDismissed.current=true;setStartupRelease(null);setUpdateOpen(true);event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}
       <DiagnosticExport />
     </div></details>
   </header>;
@@ -130,6 +146,14 @@ export default function App() {
     {notice && <p className="notice" role="alert">{notice}<Button type="button" variant="outline" className="text-button" onClick={() => setNotice("")}>知道了</Button></p>}
     <div ref={content} inert={updateFrozen} className="app-content">{page === "workbench" ? <LegacyWorkbench nasMain={nasMain} onDirty={setDirty} onHeaderTarget={setHeaderTarget} /> : page === "configs" ? <ConfigWorkspace onDirty={setDirty} /> : page === "migration" ? <LegacyMigration onDirty={setDirty} /> : <ErpEnvironment />}</div>
     {connectionDialog}
-    <UpdateDialog open={updateOpen} onClose={() => setUpdateOpen(false)} dirty={page !== "workbench" && dirty} onFreeze={freezeForUpdate} />
+    {startupRelease&&!updateOpen&&<aside className="startup-update-notice" aria-label="桌面更新">
+      <span role="status">新版 {startupRelease.version} 可用</span>
+      <Button type="button" onClick={()=>{setStartupOffer(startupRelease);setStartupRelease(null);setUpdateOpen(true);}}>
+        {startupRelease.canInstall?'立即更新':'查看更新'}
+      </Button>
+      <Button type="button" variant="outline" onClick={()=>setStartupRelease(null)}>稍后</Button>
+    </aside>}
+    <UpdateDialog open={updateOpen} startupOffer={startupOffer} onClose={() => {setStartupOffer(null);setUpdateOpen(false);}} dirty={page !== "workbench" && dirty} onFreeze={freezeForUpdate}
+      check={async()=>startupChecking.current&&startupCheck.current?startupCheck.current:invoke<UpdateCheck>('updater_check')} />
   </main>;
 }

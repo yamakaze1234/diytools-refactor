@@ -10,8 +10,8 @@ import { createUpdaterAccessController, type UpdaterAccessState, type UpdaterAcc
 const initial: UpdateState = { phase: 'idle', release: null, downloaded: null, progress: null, error: '', restartAfterDownload: false };
 
 /** 连接更新控制器与界面，未保存草稿和更新中状态均参与关闭保护。 */
-export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
-  open: boolean; onClose(): void; dirty: boolean; onFreeze(frozen: boolean): void;
+export default function UpdateDialog({ open, onClose, dirty, onFreeze, startupOffer, check }: {
+  open: boolean; onClose(): void; dirty: boolean; onFreeze(frozen: boolean): void; startupOffer?: UpdateCheck|null; check?():Promise<UpdateCheck>;
 }) {
   const [state, setState] = useState(initial);
   const [eventError, setEventError] = useState('');
@@ -23,6 +23,7 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
   const accessRef = useRef<ReturnType<typeof createUpdaterAccessController> | null>(null);
   const dirtyRef = useRef(dirty);
   const freezeRef = useRef(onFreeze);
+  const checkRef = useRef(check);checkRef.current=check;
   const dialogRef = useRef<HTMLElement>(null);
   dirtyRef.current = dirty;
   freezeRef.current = onFreeze;
@@ -31,7 +32,7 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
     let closeGuardReady = !isTauri();
     const nativeOnly = () => { if (!isTauri()) throw Error('检查和安装更新需要在桌面程序中运行。'); };
     const controller = createUpdaterController({
-      check: () => { nativeOnly(); return invoke<UpdateCheck>('updater_check'); },
+      check: () => { nativeOnly(); return checkRef.current?.()??invoke<UpdateCheck>('updater_check'); },
       download: () => { nativeOnly(); return invoke<DownloadedUpdate>('updater_download'); },
       install: () => { nativeOnly(); return invoke('updater_install'); },
       getWorkbench: () => document.querySelector<HTMLIFrameElement>('.legacy-workbench-frame')?.contentWindow as UpdateWorkbench | null ?? null,
@@ -65,7 +66,14 @@ export default function UpdateDialog({ open, onClose, dirty, onFreeze }: {
     }).catch(error => { if (!disposed) setEventError('更新关闭保护未能安装：' + String(error)); });
     return () => { disposed = true; remove?.(); removeClose?.(); controller.dispose(); accessController.dispose(); if (controllerRef.current === controller) controllerRef.current = null; if (accessRef.current === accessController) accessRef.current = null; };
   }, []);
-  useEffect(() => { setToken(''); if (open) void controllerRef.current?.check(); }, [open]);
+  useEffect(() => {
+    setToken('');
+    const controller=controllerRef.current;
+    if(!open||!controller)return;
+    if(startupOffer&&controller.offer(startupOffer)){
+      if(startupOffer.canInstall)void controller.update();
+    }else void controller.check();
+  }, [open,startupOffer]);
   // 离线也能读取上次更新恢复结果，不依赖版本服务器的响应。
   useEffect(() => {
     if (!open || !isTauri()) return;

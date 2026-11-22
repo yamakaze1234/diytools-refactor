@@ -96,7 +96,7 @@ export function createWorkbenchReactRenderer() {
   // 输入值和业务写入即时完成，整表投影允许让出主线程，保留当前输入节点与光标。
   continuous(container:HTMLElement,model:Row){installStyle(container.ownerDocument);startTransition(()=>rootFor(container).render(<ContinuousWorkbench model={model}/>));},
   editor(container:HTMLElement,model:EditorModel){flushSync(()=>rootFor(container).render(<EditorPanel key={String(model.config.id)+':'+model.tab} model={model}/>));},
-  templates(container:HTMLElement,model:Row){let surface=container.querySelector<HTMLElement>(':scope > [data-react-templates]');if(!surface){surface=container.ownerDocument.createElement('div');surface.dataset.reactTemplates='true';surface.style.display='contents';container.append(surface);}flushSync(()=>rootFor(surface!).render(<TemplateArea model={model}/>));},
+  templates(container:HTMLElement,model:Row){let surface=container.querySelector<HTMLElement>(':scope > [data-react-templates]');if(!surface){surface=container.ownerDocument.createElement('div');surface.dataset.reactTemplates='true';surface.style.display='contents';container.prepend(surface);}flushSync(()=>rootFor(surface!).render(<TemplateArea model={model}/>));},
   dialog(container:HTMLElement,kind:string,model:Row){const Panel=regions[kind as keyof typeof regions];if(!Panel)throw Error('未知 React 编辑区 '+kind);flushSync(()=>rootFor(container).render(<Panel model={model}/>));},
   status(container:HTMLElement,model:Row){flushSync(()=>rootFor(container).render(<AddonStatus status={model}/>));},
   release,

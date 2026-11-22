@@ -205,8 +205,30 @@
   html[data-workbench-design] :is(button.primary,button[data-ui-primary=true],button[data-slot=button].bg-primary) {
     background-color: var(--ef-ink) !important; color: var(--ef-panel) !important;
   }
+  /* 主机模板沿用原型的蓝红平台、黑白配色与黑黄主操作。 */
+  html[data-workbench-design] .host-template-platform[data-platform="intel"] { background:#0068b5!important; color:#fff!important; }
+  html[data-workbench-design] .host-template-platform[data-platform="amd"] { background:#bd2026!important; color:#fff!important; }
+  html[data-workbench-design] .host-template-color[data-color="black"],
+  html[data-workbench-design] #host-template-create:not(:disabled) { background:#181a19!important; color:#fff!important; }
+  html[data-workbench-design] .host-template-color[data-color="white"] { background:#fff!important; color:#181a19!important; border-color:#181a19!important; }
+  html[data-workbench-design] :is(#host-template-create,#host-template-copy) { transition:none!important; }
+  html[data-workbench-design] #host-template-copy { border:2px solid #181a19!important; clip-path:none; }
+  html[data-workbench-design] #host-template-copy:not(:disabled) { background:#f3f134!important; color:#181a19!important; }
+  html[data-workbench-design] .host-template-part-line > button { background:transparent!important; color:inherit!important; }
+  html[data-workbench-design] .sidebar .host-template-card,
+  html[data-workbench-design] .sidebar .template-library-toolbar button {
+    background:var(--ef-panel,#fff)!important; color:var(--ef-ink,#181a19)!important; clip-path:none;
+  }
+  html[data-workbench-design] .sidebar .host-template-card { border-bottom-color:var(--ef-rule,#eee)!important; }
+  html[data-workbench-design] .sidebar .template-library-toolbar button { border-color:var(--ef-rule,#bbb)!important; }
+  html[data-workbench-design] .sidebar .template-library-toolbar button:disabled { opacity:.45; }
+  html[data-workbench-design] .sidebar .host-template-card:hover,
+  html[data-workbench-design] .sidebar .template-library-toolbar button:not(:disabled):hover { background:var(--ef-chip,#fcfbe7)!important; }
+  html[data-workbench-design] .sidebar .host-template-card[data-template-active="true"] {
+    background:#f3f134!important; color:#181a19!important; font-weight:700; box-shadow:inset 4px 0 #181a19!important;
+  }
   html[data-workbench-design] :is(button.danger,button[data-ui-destructive=true]) { color: var(--ef-danger) !important; }
-  html[data-workbench-design] button:not(:disabled):not(.color-swatch):not(.poster-resize-handle):not([role=checkbox]):is(:hover,:focus-visible):not(:where(#continuous-workbench *,#price-profit-page *)) {
+  html[data-workbench-design] button:not(:disabled):not(.color-swatch):not(.poster-resize-handle):not([role=checkbox]):is(:hover,:focus-visible):not(:where(#continuous-workbench *,#price-profit-page *,.ov-preview-modes *)) {
     background-color: var(--ef-signal) !important; color: var(--ef-on-signal) !important;
   }
   html[data-workbench-design] :is(button,summary,[role=button],input,select,textarea):focus-visible {
@@ -245,9 +267,9 @@
   html[data-workbench-design] .config-finance :is(.tabular-nums,input[type=number]) { font-family: var(--ef-font-ui) !important; font-stretch: 112%; font-variant-numeric: tabular-nums; font-weight: 650; }
   html[data-workbench-design] .config-finance input[type=number] { border-color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.tabular-nums,td.numeric,[data-slot=autocomplete-item] [data-price]) { font-family: var(--ef-font-ui) !important; font-stretch: 112%; font-variant-numeric: tabular-nums; }
-  html[data-workbench-design] :is(th,td):not(:where(#continuous-workbench *,#price-profit-page *)) { border-color: var(--ef-rule) !important; }
-  html[data-workbench-design] th:not(:where(#continuous-workbench *,#price-profit-page *)) { background: var(--ef-paper) !important; color: var(--ef-ink-2) !important; }
-  html[data-workbench-design] :is(td,[data-slot=data-grid-table-cell]):not(:where(#continuous-workbench *,#price-profit-page *)) { background: var(--ef-panel); color: var(--ef-ink); }
+  html[data-workbench-design] :is(th,td):not(:where(#continuous-workbench *,#price-profit-page *,#host-template-sheet *)) { border-color: var(--ef-rule) !important; }
+  html[data-workbench-design] th:not(:where(#continuous-workbench *,#price-profit-page *,#host-template-sheet *)) { background: var(--ef-paper) !important; color: var(--ef-ink-2) !important; }
+  html[data-workbench-design] :is(td,[data-slot=data-grid-table-cell]):not(:where(#continuous-workbench *,#price-profit-page *,#host-template-sheet *)) { background: var(--ef-panel); color: var(--ef-ink); }
   html[data-workbench-design] :is([data-slot=autocomplete-popup],[data-slot=select-popup],[data-slot=popover-content],[data-slot=dropdown-menu-content]) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; border: 1px solid var(--ef-trace) !important; box-shadow: none !important; }
   html[data-workbench-design] [data-slot=autocomplete-item]:is([data-highlighted],:hover) { background: var(--ef-signal) !important; color: var(--ef-on-signal) !important; }
   html[data-workbench-design] [data-slot=autocomplete-item]:is([data-highlighted],:hover) * { color: var(--ef-on-signal) !important; }
@@ -337,13 +359,13 @@
 
 /* 对齐已确认网页版：62px 顶栏、纸色编辑区、平面表格、突出价格。 */
 @layer endfield-theme {
-  :root[data-workbench-design] { --desktop-toolbar-height: 62px; --preview-w: 292px; }
+  :root[data-workbench-design] { --desktop-toolbar-height: 53px; --preview-w: 292px; }
   html[data-workbench-design] body { font-size: 12px; }
   html[data-workbench-design] .topbar { height: 62px !important; min-height: 62px !important; }
   html[data-workbench-design] .topbar .brand { position: relative; padding-top: 8px; font-size: 17px; font-weight: 700; }
   html[data-workbench-design] .topbar .brand::before { content: '// CONFIGURATION STUDIO'; position: absolute; left: 0; top: -5px; font: 600 8px/10px var(--ef-font-ui); letter-spacing: .12em; color: #a3a3a3; }
   html[data-workbench-design] .workspace > .main { background: var(--ef-paper) !important; padding: 30px 20px 12px !important; }
-  html[data-workbench-design] .workspace > .sidebar { padding: 23px 14px !important; }
+  html[data-workbench-design] .workspace > .sidebar { padding: 13px 12px !important; }
   html[data-workbench-design] .workspace > .preview-side:not(.preview-expanded) { padding: 24px 16px 16px !important; gap: 13px !important; }
   html[data-workbench-design] body.continuous-mode .page-heading { top: auto; right: auto; }
   html[data-workbench-design] .product-heading strong { font-size: 20px; line-height: 30px; }
@@ -366,6 +388,8 @@
   html[data-workbench-design] .continuous-sheet :is(td,th) { font-size: 12px !important; }
   html[data-workbench-design] .continuous-sheet td { padding: 3px 6px !important; height: 50px; }
   html[data-workbench-design] .continuous-sheet td :is(input,textarea) { border-color: transparent !important; background: transparent !important; padding-inline: 4px !important; font-size: 12px !important; }
+  /* 小计行的输入框沿用旁边的乘数字号和留白，聚焦样式继续由表格管理。 */
+  html[data-workbench-design] .continuous-sheet td .ov-line-calc .ov-tax-input { padding-inline: 0 !important; font-size: inherit !important; }
   html[data-workbench-design] .continuous-sheet td :is(input,textarea):is(:hover,:focus) { background: var(--ef-paper) !important; }
   html[data-workbench-design] .continuous-sheet td [data-slot=autocomplete-input] { padding-right: 30px !important; }
   html[data-workbench-design] :is([data-slot=autocomplete-trigger],[data-slot=autocomplete-clear]) { min-height: 0 !important; width: 22px !important; height: 24px !important; padding: 3px !important; background: var(--ef-chip) !important; color: var(--ef-ink) !important; border: 0 !important; }
@@ -606,7 +630,7 @@
 @layer endfield-theme {
  html[data-workbench-design] .sidebar-utilities:has(#workspace-tools) { display:none !important; }
  html[data-workbench-design] .rail-navigation { display:flex; flex-direction:column; align-items:center; gap:8px; width:100%; }
- html[data-workbench-design] .reui-rail .rail-nav-button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; width:52px; min-height:58px; padding:7px 0; background:transparent !important; color:#a3a3a3 !important; font-size:11px; }
+ html[data-workbench-design] .reui-rail .rail-nav-button { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:5px; width:49px; min-height:47px; padding:7px 0; background:transparent !important; color:#a3a3a3 !important; font-size:11px; }
  html[data-workbench-design] .reui-rail .rail-nav-button:is(:hover,[aria-expanded=true],:focus-visible) { background:var(--ef-signal) !important; color:var(--ef-on-signal) !important; }
  html[data-workbench-design] .rail-tool-panel { position:fixed; left:64px; top:64px; width:260px; max-height:calc(100dvh - 80px); overflow:auto; padding:10px; background:var(--ef-panel); color:var(--ef-ink); border:1px solid var(--ef-rule); border-top:2px solid var(--ef-trace); box-shadow:0 12px 28px #0003; z-index:60; }
  html[data-workbench-design] .rail-tool-panel header { display:flex; align-items:center; justify-content:space-between; padding:2px 4px 10px; border-bottom:1px solid var(--ef-rule); margin-bottom:6px; }
@@ -754,7 +778,14 @@ body.continuous-mode .main .page-heading:has(.action-menu[open]) { position:rela
   clip-path: none; border: 1px solid var(--ov-line) !important; background: var(--ov-sheet) !important; color: var(--ov-ink) !important;
   min-height: 25px; padding: 4px 8px; font-size: 11px;
  }
- html[data-workbench-design] body.overview-mode .ov-preview-modes button[aria-pressed=true] { background: #fbfad9 !important; color: #181a19 !important; border-color: #cdcb89 !important; }
+ /* 悬停只改变未选按钮，选中时用亮黄文字和底边标记当前预览。 */
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-modes button[aria-pressed=false]:is(:hover,:focus-visible) {
+  background: color-mix(in srgb,var(--ov-sheet),var(--ov-ink) 12%) !important;
+ }
+ html[data-workbench-design] body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-modes button[aria-pressed=true] {
+  background: #181a19 !important; color: #f3f134 !important; border-color: #181a19 !important;
+  border-bottom-color: #f3f134 !important; font-weight: 600;
+ }
  html[data-workbench-design] body.overview-mode .ov-preview-footer #ov-preview-enlarge { background: #181a19 !important; color: #fff !important; border-color: #181a19 !important; }
  html[data-workbench-design] body.overview-mode .sidebar #config-list .product-group.editing-product:not([data-link-colored]) > .compact-link-card { background: #fbfad9 !important; border-left: 3px solid #a6a205 !important; }
  html[data-workbench-design] body.overview-mode .sidebar #config-list .compact-link-card { padding: 6px !important; margin-top: 7px; }

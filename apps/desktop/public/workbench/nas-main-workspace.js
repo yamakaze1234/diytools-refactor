@@ -461,6 +461,8 @@ export const nasErrorText=error=>{
  PROFIT_RESULT_STALE:'配置、成本或更新的检测结果已变化，请重新检测后重设基准。',
  NAS_PROFIT_NOT_INSTALLED:'服务器尚未启用利润检测历史。',
  NAS_PRICE_HISTORY_NOT_INSTALLED:'服务器尚未启用价格变化记录。',
+ NAS_ERP_ADOPTION_NOT_INSTALLED:'服务器尚未启用从 ERP 新建输出源。',
+ ERP_SOURCE_ARCHIVED:'本店同货号的输出源已归档，请先到输出源维护恢复。',
  DEPENDENCY_CONFLICT:'关联配件来源或成本已更新，草稿已保留。',SAVE_STATUS_UNKNOWN:'尚未确认服务器是否保存，请查询提交结果。',
  RECEIPT_NOT_FOUND:'暂未查到回执。请求可能仍在途中；可以稍后查询，或使用原编号重试。',
  NO_CHANGES:'当前配置没有需要提交的修改。',INVALID_DRAFT:'这份本机草稿无法按原版本提交，请保留后核对。',

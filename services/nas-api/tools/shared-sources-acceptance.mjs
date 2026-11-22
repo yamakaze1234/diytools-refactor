@@ -63,11 +63,22 @@ async function openFixture(fixture,folder,sharedSources) {
  return db;
 }
 
-export async function startSourceAcceptance({fixture,folder,root,authenticate,tls,verifyError=()=>{},onStartupRequest=null,sharedSources=true}) {
+export async function startSourceAcceptance({fixture,folder,root,authenticate,tls,verifyError=()=>{},onStartupRequest=null,sharedSources=true,erpAdoption=true}) {
  const db = await openFixture(fixture,folder,sharedSources);
  // 已试用的本机库只修正保存函数，保留用户配置、来源和草稿，不重新导入样本。
  if(sharedSources)await db.exec(await readFile(new URL('../sql/022-shared-source-field-preservation.sql',import.meta.url),'utf8'));
  await db.exec(await readFile(new URL('../sql/023-shop-manual-tax.sql',import.meta.url),'utf8'));
+ if(sharedSources){
+  // 空库先装 ERP 建源函数，已有验收库直接升级。
+  if(erpAdoption&&!(await db.query("SELECT to_regprocedure('workbench_sources.adopt_erp(text,text,text,text,text,jsonb)') IS NOT NULL AS installed")).rows[0].installed)
+   await db.exec(await readFile(new URL('../sql/024-shop-erp-adoption.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../sql/025-source-hardware-color.sql',import.meta.url),'utf8'));
+  if(folder)console.error('025-source-hardware-color: applied');
+  if(erpAdoption){
+   await db.exec(await readFile(new URL('../sql/026-erp-adoption-shared-fields.sql',import.meta.url),'utf8'));
+   if(folder)console.error('026-erp-adoption-shared-fields: applied');
+  }
+ }
  let pending = Promise.resolve();
  // PGlite 验收库只使用一个连接，真实 PostgreSQL 使用各店池及各自运行角色。
  const underRole = task => {

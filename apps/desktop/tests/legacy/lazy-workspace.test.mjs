@@ -123,16 +123,18 @@ test('collapsed link groups create no hidden config DOM; searching renders only 
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',classList:{toggle(){}},querySelectorAll:()=>[]});return nodes.get(id);};
  // 测试使用真实兼容桥接收列表标记，React 节点稳定性另由浏览器专项覆盖。
  const context=vm.createContext({configurationSummaryHtml,reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){},collapsedZones:new Set(),paintZones(){},syncScrollHighlight(){}});
+ Object.assign(context,{savedHostTemplates:()=>[],openHostTemplate(){},renderHostTemplateView(){},openCreateHostTemplate(){},importHostTemplate(){},
+  canCreateTemplateLink:()=>true,renameHostTemplate(){},hostTemplateView:null});
  vm.runInContext('var nasMain=false;\n'+implementation,context);context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert.match(node('#config-list').innerHTML,/<header>链接<\/header>/);
  node('#search').value='配置2999';context.renderList();assert.equal((node('#config-list').innerHTML.match(/class="config-item/g)||[]).length,1);assert.match(node('#config-list').innerHTML,/data-id="c2999"/);
  assert(context.collapsedProducts.has('link'));
 });
 
-test('closed template library and collapsed template groups never construct config children',()=>{
+test('template cards never inspect configuration details or construct config children',()=>{
  let html='';const container={insertAdjacentHTML:(_where,value)=>{html+=value;},querySelector:()=>({}),querySelectorAll:()=>[]};
  const row={...config('template'),productCategory:'主机模板',product:'模板链接'};
  Object.defineProperty(row,'parts',{get(){throw Error('collapsed template inspected detailed parts');}});
- const options={container,configs:[row],active:null,selected:new Set(),collapsedProducts:new Set(['link']),opened:false,esc:String};
+ const options={container,configs:[row],opened:false,esc:String};
  mountTemplateArea(options);assert.doesNotMatch(html,/data-template-config-id|data-template-product-toggle/);
  html='';mountTemplateArea({...options,opened:true});assert.match(html,/data-template-product-toggle/);assert.doesNotMatch(html,/data-template-config-id/);
 });
@@ -141,7 +143,7 @@ test('failed detail navigation releases the old preview and retains its active c
  const text=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
  const implementation=text.slice(text.indexOf('async function activate('),text.indexOf('function renderShop('));
  const stage={inert:true},inspector={inert:true},messages=[];
- const context=vm.createContext({activationGeneration:0,fullWorkspace:false,active:'old',loadDetail:async()=>{throw Error('加载失败');},$:id=>id==='#poster-stage'?stage:inspector,toast:value=>messages.push(value)});
+ const context=vm.createContext({activationGeneration:0,fullWorkspace:false,active:'old',previewConfigId:'old',current:()=>({id:'old'}),loadDetail:async()=>{throw Error('加载失败');},$:id=>id==='#poster-stage'?stage:inspector,toast:value=>messages.push(value)});
  vm.runInContext('var nasMain=false;\n'+implementation,context);await context.activate('next');assert.equal(stage.inert,false);assert.equal(inspector.inert,false);assert.equal(context.active,'old');assert.deepEqual(messages,['加载失败']);
 });
 

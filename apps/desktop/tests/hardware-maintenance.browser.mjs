@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {createRequire} from 'node:module';
 const {chromium}=createRequire(import.meta.url)('playwright');
 const base=process.env.REACT_TEST_URL||'http://127.0.0.1:5199';
-const out=new URL('file:///D:/diytools/sandbox/hardware-maintenance-20261101/');
+const out=new URL(process.env.HARDWARE_TEST_REPORT_URL||'file:///D:/diytools/sandbox/hardware-maintenance-20261101/');
 const errors=[],blockedRequests=[],checks=[];
 const browser=await chromium.launch({channel:'msedge',headless:true});
 let page;
@@ -36,7 +36,9 @@ try {
  await page.locator('[data-source-id="fixture-a"]').click();
  await page.locator('#source-hardware').waitFor();
  // 同类显卡同时显示显存和简称，按类型去重验证显示范围。
- async function visibleKind(id,kind){await page.locator(`[data-source-id="${id}"]`).click();await page.waitForFunction(()=>!document.querySelector('.workbench-detail-ghost'));assert.deepEqual(await page.locator('[data-maintenance-kind]:visible').evaluateAll(els=>[...new Set(els.map(el=>el.dataset.maintenanceKind))]),[kind]);}
+ async function visibleKind(id,kind){await page.locator(`[data-source-id="${id}"]`).click();await page.waitForFunction(()=>!document.querySelector('.workbench-detail-ghost'));const kinds=kind==='storageGb'?[kind]:[kind,'color'];
+  const visible=await page.locator('[data-maintenance-kind]:visible').evaluateAll(els=>[...new Set(els.map(el=>el.dataset.maintenanceKind))].sort());
+  assert.deepEqual(visible,kinds.sort());}
  for(const [id,kind]of [['fixture-a','cpu'],['fixture-b','board'],['fixture-case','case'],['fixture-memory','memoryGb'],['fixture-gpu','vramGb'],['fixture-storage','storageGb']])await visibleKind(id,kind);
  await visibleKind('fixture-a','cpu');
  await page.locator('#source-hardware').evaluate(el=>el.scrollIntoView({block:'center'}));

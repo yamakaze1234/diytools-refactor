@@ -718,6 +718,7 @@ export class LiveStore extends Store{
      else{
       document.nasTaxOverride=true;
       document.nasManualTax=action==='tax_edit';
+      delete document.nasProvisionalTax;
      }
      if(document.tax!==old?.document.tax||document.erp!==old?.document.erp||document.erpUnknown!==old?.document.erpUnknown||document.erpMissing!==old?.document.erpMissing)
       priceChanges.set(id,{before:old?.document,after:document});

@@ -53,7 +53,7 @@ test('unmodified source editor replaced by conflict panel does not invent unsave
  env.api.openDialog('保存版本需要比较','<p id="save-conflict">需要重新比较</p>');
  assert.equal(env.document.querySelector('#source-message'),null);
  assert.equal(env.editor.hasPending(),false);await env.editor.save();assert.equal(env.writes.length,0);
- env.dialog.dispatch('close');assert.equal(env.context.window.workbenchSourceEditor,undefined);
+ env.dialog.close();assert.equal(env.context.window.workbenchSourceEditor,undefined);
 });
 
 test('detached edited source inputs remain saveable and do not read same-id fields from replacement dialog',async()=>{
@@ -70,19 +70,19 @@ test('save conflict retains pending entries, closing conflict panel allows dismi
  const input=env.document.querySelector('#source-name');input.value='仍需保存的输入';
  await assert.rejects(env.editor.save(),/版本发生变化/);assert.equal(env.editor.hasPending(),true);
  assert.equal(env.dialog.dispatch('cancel').defaultPrevented,false);
- env.dialog.dispatch('close');assert.equal(env.context.window.workbenchSourceEditor,env.editor);
+ env.dialog.close();assert.equal(env.context.window.workbenchSourceEditor,env.editor);
  env.context.openSourceEditor(env.api);
  assert.equal(env.context.window.workbenchSourceEditor,env.editor);assert.equal(env.document.querySelector('#source-name'),input);
  assert.equal(input.value,'仍需保存的输入');assert.equal(env.dialog.dispatch('cancel').defaultPrevented,true);
  fail=false;await env.editor.save();assert.equal(env.rows[0].name,'仍需保存的输入');assert.equal(env.editor.hasPending(),false);
- env.dialog.dispatch('close');assert.equal(env.context.window.workbenchSourceEditor,undefined);
+ env.dialog.close();assert.equal(env.context.window.workbenchSourceEditor,undefined);
 });
 
 test('invalid detached draft blocks quitting with validation error and remains available for correction',async()=>{
  const env=harness();env.document.querySelector('#source-name').value='';
  env.api.openDialog('保存版本需要比较','<p>请比较</p>');
  await assert.rejects(env.editor.save(),/尚未通过校验/);assert.equal(env.writes.length,0);
- env.dialog.dispatch('close');assert.equal(env.context.window.workbenchSourceEditor,env.editor);
+ env.dialog.close();assert.equal(env.context.window.workbenchSourceEditor,env.editor);
  env.editor.restore();assert.equal(env.document.querySelector('#source-name').value,'');
  assert.match(env.document.querySelector('#source-message').textContent,/请填写产品显示名称/);
 });
@@ -92,13 +92,25 @@ test('saved editor close removes child-panel listeners while a conflict retains 
  assert.equal(cancelCount(),1);
  const children=env.document.querySelectorAll('.source-changes-dialog');assert.equal(children.length,2);for(const child of children)assert.equal(child.listeners.get('cancel').length,1);
  env.document.querySelector('#source-name').value='保留的草稿';
- env.api.openDialog('保存版本需要比较','<p>请比较</p>');env.dialog.dispatch('close');
+ env.api.openDialog('保存版本需要比较','<p>请比较</p>');env.dialog.close();
  assert.equal(cancelCount(),1);assert.equal(env.context.window.workbenchSourceEditor,env.editor);
- env.editor.restore();await env.editor.save();env.dialog.dispatch('close');
+ env.editor.restore();await env.editor.save();env.dialog.close();
  assert.equal(cancelCount(),0);assert.equal(env.context.window.workbenchSourceEditor,undefined);
  for(const child of children){assert.equal(child.isConnected,false);assert.equal(child.listeners.get('cancel').length,0);}
  env.context.openSourceEditor(env.api);assert.equal(cancelCount(),1);
- env.dialog.dispatch('close');assert.equal(cancelCount(),0);
+ env.dialog.close();assert.equal(cancelCount(),0);
+});
+
+test('旧的关闭事件到达时保留已重开的输出源表单',()=>{
+ const env=harness();
+ env.dialog.open=false; // 模拟浏览器先关闭，随后异步派发 close。
+ env.context.openSourceEditor(env.api);
+ const reopened=env.context.window.workbenchSourceEditor;
+ env.dialog.dispatch('close');
+ assert.equal(env.context.window.workbenchSourceEditor,reopened);
+ assert.equal(env.document.querySelector('#source-name').value,'原名称');
+ env.dialog.close();
+ assert.equal(env.context.window.workbenchSourceEditor,undefined);
 });
 
 test('source sync releases its retained controls and does not block cancelling a replacement conflict dialog',async()=>{

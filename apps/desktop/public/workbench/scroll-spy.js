@@ -1,6 +1,8 @@
 // 总表只报告当前链接内滚动到的配置；编辑页和等待换链渲染期间沿用实际编辑项。
 let current=null,raf=0;
 let editingId=null,editingProductId=null;
+let follow=null,followTimer=0,targetId=null,scrollDriven=false;
+export function bindScrollPreview(activate){follow=activate;}
 function activeSheet(){
  const sheet=document.querySelector('#continuous-workbench:not([hidden]) .ov-sheet-scroll');
  return sheet?.offsetParent&&sheet.dataset.productId===editingProductId?sheet:null;
@@ -9,16 +11,32 @@ export function syncScrollHighlight(config){
  const id=config?.id??null,productId=config?.productId??null;
  const moved=id!==editingId||productId!==editingProductId;
  editingId=id;editingProductId=productId;
+ if(moved){clearTimeout(followTimer);targetId=null;}
  mark(moved||!activeSheet()?id:current??id);
 }
 function pick(){
  raf=0;
+ const scroll=scrollDriven;scrollDriven=false;
  const sheet=activeSheet();
- if(!sheet){mark(editingId);return;}
+ if(!sheet){clearTimeout(followTimer);targetId=null;mark(editingId);return;}
  const r0=sheet.getBoundingClientRect(),box={top:Math.max(r0.top,0),bottom:Math.min(r0.bottom,innerHeight)};box.height=box.bottom-box.top;const line=box.top+Math.min(160,box.height*0.3);
  let hit=null;
  for(const el of sheet.querySelectorAll('[data-continuous-config]')){const r=el.getBoundingClientRect();if(r.bottom<=box.top||r.top>=box.bottom)continue;if(r.top<=line)hit=el;else{hit??=el;break;}}
- mark(hit?.dataset.continuousConfig||editingId);
+ // 较短的末套可能永远够不到判定线，滚到底后按可见末套定位。
+ if(sheet.scrollHeight>sheet.clientHeight+4&&sheet.scrollHeight-sheet.scrollTop-sheet.clientHeight<4){
+  const last=[...sheet.querySelectorAll('[data-continuous-config]')].find(el=>el.dataset.continuousConfig===sheet.dataset.lastConfiguration);
+  if(last){const rect=last.getBoundingClientRect();if(rect.top<box.bottom&&rect.bottom>box.top)hit=last;}
+ }
+ const seen=hit?.dataset.continuousConfig||editingId;
+ mark(seen);
+ // 同一套的惯性滚动不重复计时；离开总表或手动切换时取消旧目标。
+ if(seen===editingId){clearTimeout(followTimer);targetId=null;return;}
+ if(!scroll||!follow||seen===targetId)return;
+ clearTimeout(followTimer);targetId=seen;
+ followTimer=setTimeout(()=>{
+  const candidate=targetId;targetId=null;
+  if(candidate&&current===candidate&&activeSheet()===sheet)follow(candidate,editingProductId);
+ },250);
 }
 function paint(el,bg,shadow){
  // 主题 CSS 在 @layer 里带 !important，类名样式压不过，只能用行内 !important。
@@ -42,7 +60,7 @@ function mark(id){
  const lr=list.getBoundingClientRect(),ir=item.getBoundingClientRect();
  if(ir.top<lr.top+40)list.scrollTop-=lr.top+40-ir.top;else if(ir.bottom>lr.bottom-20)list.scrollTop+=ir.bottom-(lr.bottom-20);
 }
-document.addEventListener('scroll',e=>{const t=e.target;if(t instanceof Element&&t.closest('#config-list'))return;if(!raf)raf=requestAnimationFrame(pick);},true);
+document.addEventListener('scroll',e=>{const t=e.target;if(t instanceof Element&&t.closest('#config-list'))return;if(t===activeSheet())scrollDriven=true;if(!raf)raf=requestAnimationFrame(pick);},true);
 // 左侧列表重绘后补回高亮（只盯 #config-list 自己的子节点）。
 let watched=null;const watcher=new MutationObserver(()=>mark(current));
 setInterval(()=>{const list=document.querySelector('#config-list');if(list&&list!==watched){watcher.disconnect();watcher.observe(list,{childList:true,subtree:true,attributes:true,attributeFilter:['class']});watched=list;}pick();},500);

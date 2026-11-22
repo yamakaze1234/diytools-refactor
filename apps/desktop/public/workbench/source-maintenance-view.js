@@ -1,4 +1,4 @@
-// 仅决定维护表单的显示范围；隐藏控件仍保留原值，不改动识别和保存规则。
+// 统一按配件类型控制维护表单的显示范围。
 const categoryKind=value=>({CPU:'cpu','处理器':'cpu','主板':'board','机箱':'case','显卡':'vramGb','内存':'memoryGb','硬盘':'storageGb','固态':'storageGb','固态硬盘':'storageGb','机械硬盘':'storageGb','存储':'storageGb','散热':'other','散热器':'other','风扇':'other','电源':'other'}[String(value||'').trim().toUpperCase()]);
 export function maintenanceKind(row,configs=[],costs=[]){
  if(row.specialComponent)return 'other';
@@ -37,8 +37,16 @@ export function updateMaintenanceVisibility(root,row,configs=[],costs=[],{isNew=
  const kind=maintenanceKind(row,configs,costs);
  // 新建尚无完整 ERP 或名称，先展示全部可选维护项，不让自动识别将表单隐藏为空白。
  const showAll=isNew&&!row.specialComponent;
- for(const el of root.querySelectorAll('[data-maintenance-kind]'))el.hidden=!showAll&&el.dataset.maintenanceKind!==kind;
+ const showColor=!row.specialComponent&&kind!=='storageGb';
+ for(const el of root.querySelectorAll('[data-maintenance-kind]')){
+  el.hidden=el.dataset.maintenanceKind==='color'?!showColor:!showAll&&el.dataset.maintenanceKind!==kind;
+ }
  const hardware=root.querySelector('#source-hardware'),capacity=root.querySelector('#source-capacity');
- if(hardware){const copy=showAll?['硬件简称与板型维护','只填写当前配件需要的项目；留空使用自动识别。','人工设置会保留，价格同步不会覆盖。']:hardwareCopy[kind];hardware.hidden=!copy;if(copy){hardware.querySelector('legend').textContent=copy[0];hardware.querySelector('.hardware-intro').textContent=copy[1];hardware.querySelector('.hardware-footnote').textContent=copy[2];}}
+ if(hardware){
+  const copy=showAll?['配件识别资料','只填写当前配件需要的项目；留空使用自动识别。','人工设置会保留，价格同步不会覆盖。']:
+   hardwareCopy[kind]??(showColor?['颜色识别','识别有误时选择配件的实际颜色。','选择“自动识别”可取消人工颜色。']:null);
+  hardware.hidden=!copy;
+  if(copy){hardware.querySelector('legend').textContent=copy[0];hardware.querySelector('.hardware-intro').textContent=copy[1];hardware.querySelector('.hardware-footnote').textContent=copy[2];}
+ }
  if(capacity)capacity.hidden=!showAll&&!['vramGb','memoryGb','storageGb'].includes(kind);
 }

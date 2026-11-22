@@ -31,16 +31,45 @@ function CommitInput({value,label,className='',fallback='',numeric=false,onCommi
   }} />;
 }
 
+/** 总表与候选共用 ERP 标签；展示差异只在实际配件格中提示。 */
+function ErpPartName({info}:{info:Row}){
+ return <span className="ov-erp-name" title={info.raw||undefined}>
+  {info.color&&<span className="ov-erp-color" data-color={info.color}>{info.color}</span>}
+  <span>{info.main||'—'}</span>
+  {info.tags?.map((tag:string)=><small key={tag} className="ov-erp-tag">{tag}</small>)}
+  {info.spec&&<small className="ov-erp-spec">{info.spec}</small>}
+  {info.missing&&<small className="ov-erp-spec">暂无 ERP 名称</small>}
+  {info.issues?.length>0&&<small className="ov-erp-issue">⚠ {info.issues.join('；')}</small>}
+ </span>;
+}
+
 const PartPicker=memo(function PartPicker({part,slot,c,model,initial,close}:{part:Row|null;slot:string;c:Row;model:Row;initial:string;close:()=>void}){
  const [query,setQuery]=useState<string>(part?.name||'');
  const [open,setOpen]=useState(false);
+ const [erp,setErp]=useState<{query:string;rows:Row[];error:string}|null>(null);
+ const [saving,setSaving]=useState(false);
+ const pending=useRef(false);
  const hasPart=Boolean(part&&(part.name||part.goodsId||part.sourceId));
  useLayoutEffect(()=>{if(!open)setQuery(part?.name||'');},[part?.name,open]);
- const matches=useMemo(()=>{if(!open)return [];const tokens=query.trim().toLowerCase().split(/\s+/).filter(Boolean),found:Row[]=[];for(const p of model.catalog){if(!p.deletedAt&&tokens.every(t=>p.searchText.includes(t)))found.push(p);if(found.length===50)break;}return found;},[model.catalog,query,open]);
+ const existing=useMemo(()=>{if(!open)return [];const tokens=query.normalize('NFKC').trim().toLowerCase().split(/\s+/).filter(Boolean),found:Row[]=[];for(const p of model.catalog){if(!p.deletedAt&&tokens.every(t=>p.searchText.includes(t)))found.push(p);if(found.length===50)break;}return found;},[model.catalog,query,open]);
+ const erpSearch=model.erpSearch;
+ useEffect(()=>{
+  if(!open||query.trim().length<2||existing.length===50||!erpSearch)return;
+  let current=true;
+  const timer=setTimeout(async()=>{
+   try{const rows=await erpSearch(query);if(current)setErp({query,rows,error:''});}
+   catch{if(current)setErp({query,rows:[],error:'ERP 补充搜索暂不可用，可在 ERP 同步中设置连接。'});}
+  },250);
+  return()=>{current=false;clearTimeout(timer);};
+ },[erpSearch,open,query,existing.length]);
+ const matches=useMemo(()=>{
+  const goods=new Set(model.catalog.map((row:Row)=>row.goodsId));
+  return [...existing,...(erp?.query===query?erp.rows.filter(row=>!goods.has(row.goodsId)).slice(0,50-existing.length):[])];
+ },[existing,erp,query,model.catalog]);
  useLayoutEffect(()=>{setQuery(initial);setOpen(true);},[initial]);
  return <Autocomplete items={matches} filteredItems={matches} value={query} open={open} onOpenChange={(next,details)=>{
   // 清空后继续保留搜索框，方便直接输入新型号。
-  if(!next&&hasPart&&details.reason==='input-clear'){details.cancel();return;}
+  if(!next&&(details.reason==='input-clear'||pending.current)){details.cancel();return;}
   setOpen(next);if(!next)close();
  }} onValueChange={(value,details)=>{
   setQuery(value);
@@ -49,10 +78,18 @@ const PartPicker=memo(function PartPicker({part,slot,c,model,initial,close}:{par
  <AutocompleteInput render={<textarea rows={1} role="combobox"/>} className="ov-part-picker" size="sm" autoFocus
   aria-label={c.name+' '+slot+' 实际配件'} placeholder="搜索型号 / ERP ID" onFocus={e=>{model.activate(c.id);if(initial===part?.name)e.currentTarget.select();}} />
  <AutocompleteContent portalContainer={model.portalContainer} className="continuous-part-popup w-[min(650px,calc(100vw-2rem))]">
- <AutocompleteEmpty>没有匹配配件，请调整关键词</AutocompleteEmpty><AutocompleteList>
- {(p:Row)=><AutocompleteItem key={p.sourceId} value={p} onClick={()=>{model.pick(c.id,slot,true,p.sourceId);close();}}>
- <div className="continuous-candidate"><strong>{p.name}</strong><small>GoodID {p.goodsId||'未绑定'} · ERP ¥{amount(p.erp)} · 含税 ¥{amount(p.tax)}</small>
- <span className="candidate-stock" data-stock-status={p.stock.status}>ERP 可销库存：{p.stock.label}</span></div></AutocompleteItem>}
+ {saving&&<small role="status">正在保存本店输出源…</small>}
+ <AutocompleteEmpty>{erp?.query===query&&erp.error||'没有匹配配件，请调整关键词'}</AutocompleteEmpty><AutocompleteList>
+ {(p:Row)=><AutocompleteItem key={p.sourceId} value={p} className={p.erpOnly?'ov-erp-candidate':undefined} onClick={async()=>{
+  if(pending.current)return;
+  if(!p.erpOnly){if(model.pick(c.id,slot,true,p.sourceId))close();return;}
+  pending.current=true;setSaving(true);
+  try{if(await model.adoptErp(c.id,slot,p))close();}
+  finally{pending.current=false;setSaving(false);}
+ }}>
+ <div className="continuous-candidate"><strong><ErpPartName info={model.describePart(p,null,slot)}/></strong>
+ <small>GoodID {p.goodsId||'未绑定'} · ERP ¥{amount(p.erp)}{p.erpOnly?' · 未建输出源，选中后创建':` · 含税 ¥${amount(p.tax)}`}</small>
+ <span className="candidate-stock" data-stock-status={p.stock.status}>{p.stock.label}</span></div></AutocompleteItem>}
  </AutocompleteList></AutocompleteContent></Autocomplete>;
 });
 
@@ -76,7 +113,9 @@ function DisplayPart({row,c,model,addons}:{row:Row;c:Row;model:Row;addons:boolea
  const part=row.part,slot=row.slot,name=part?.displayName||part?.name||'',hidden=part?.posterVisible===false;
  const [showEmpty,setShowEmpty]=useState(false),editor=useRef<HTMLDivElement>(null);
  useLayoutEffect(()=>{if(showEmpty)editor.current?.querySelector<HTMLElement>('[contenteditable]')?.focus();},[showEmpty]);
- if(hidden)return <div className="ov-display-line"><span className="ov-missing">展示明细已隐藏</span><button onClick={()=>model.partField(c.id,slot,false,'posterVisible',true)}>恢复展示</button></div>;
+ const sourceAction=(row.actual?.sourceId||row.actual?.goodsId||row.actual?.name||part?.sourceId||part?.goodsId||part?.name)&&
+  <button className="ov-edit-source" onClick={()=>model.editSource(c.id,slot)}>修改输出源</button>;
+ if(hidden)return <div className="ov-display-line"><span className="ov-missing">展示明细已隐藏</span><button onClick={()=>model.partField(c.id,slot,false,'posterVisible',true)}>恢复展示</button>{sourceAction}</div>;
  // 空描述有独立的添加入口，原有描述仍可隐藏或显示。
  const hasAddon=Boolean(String(part?.upgrade??'').trim());
  const bracketed=/^【[\s\S]*】$/.test(String(part?.upgrade??'').trim());
@@ -85,12 +124,13 @@ function DisplayPart({row,c,model,addons}:{row:Row;c:Row;model:Row;addons:boolea
   <div className="ov-display-name"><EditableText value={name} placeholder="填写展示明细" label={slot+'展示明细'} onCommit={value=>model.partField(c.id,slot,false,'displayName',value)}/>
   {part?.qty>1&&<small>×{part.qty}</small>}</div>
   {(name||part?.upgrade)&&<button onClick={()=>model.partField(c.id,slot,false,'posterVisible',false)}>隐藏展示配件</button>}
+  {!addons&&sourceAction}
  </div>
  {addons&&<div className="ov-addon-line">
   {addonVisible&&<div className="ov-addon ov-addon-bracket" ref={editor}>{!bracketed&&<span className="ov-bracket">【</span>}<EditableText value={hasAddon?part.upgrade:''} label={slot+'加购'} placeholder="填写加购描述"
     onCommit={value=>{setShowEmpty(false);model.partField(c.id,slot,false,'upgrade',value);}}/>{!bracketed&&<span className="ov-bracket">】</span>}</div>}
   <span className="ov-addon-apply">
-   {(part?.sourceId||part?.goodsId||part?.name||row.actual?.sourceId)&&<button className="ov-edit-source" onClick={()=>model.editSource(c.id,slot)}>修改输出源</button>}
+   {sourceAction}
    {addonVisible&&hasAddon&&<><button onClick={()=>model.upgradeScope(c.id,slot,'link')}>本链接</button><button className="ov-addon-apply-all" onClick={()=>model.upgradeScope(c.id,slot,'all')}>全局</button></>}
   </span>
   <button onClick={()=>{if(!hasAddon)setShowEmpty(v=>!v);else model.partField(c.id,slot,false,'overviewAddonHidden',addonVisible);}}>
@@ -174,6 +214,15 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
   const target=e.target as HTMLElement;
   if(!target.matches('[data-ov-cell]')||e.ctrlKey||e.metaKey||e.altKey||e.nativeEvent.isComposing)return;
   const pos=position(target)!;
+  // 清空复用网格粘贴的事务和撤销记录，编辑框内按键照常输入。
+  if(e.key==='Backspace'||e.key==='Delete'){
+   e.preventDefault();
+   const box=bounds&&pos.row>=bounds.top&&pos.row<=bounds.bottom&&pos.col>=bounds.left&&pos.col<=bounds.right?
+    bounds:{top:pos.row,bottom:pos.row,left:pos.col,right:pos.col};
+   const row=Array<string>(box.right-box.left+1).fill(' ').join('\t');
+   model.pasteActual(c.id,box.top,box.left,Array<string>(box.bottom-box.top+1).fill(row).join('\n'));
+   return;
+  }
   const delta:Record<string,[number,number]>={ArrowUp:[-1,0],ArrowDown:[1,0],ArrowLeft:[0,1],ArrowRight:[0,-1]};
   const move=delta[e.key];
   if(move){e.preventDefault();const next={row:Math.max(0,Math.min(c.rows.length-1,pos.row+move[0])),col:Math.max(actual?0:1,Math.min(1,pos.col+move[1])) as 0|1};
@@ -250,11 +299,16 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
     const taxDraft=draft?.field==='tax'&&draft.index===index?draft.value:undefined;
     const taxDifferent=taxDraft===undefined?changed:taxDraft!==(base??part?.tax);
     const label=c.name+' '+row.slot;
-    return <tr key={row.slot} className={row.slot==='风扇'?'ov-divider':''}>
-     <td className="ov-number" data-metric="ERP 单价">{amount(part?.erp)}</td>
+    const qty=part?.qty??1,subtotal=qty>1,shownTax=taxDraft??part?.tax;
+    // 单价和乘数分开排，含税单价复用原输入框和提交逻辑。
+    const multiplier=<span>× {qty}</span>;
+    const taxUnit=part?.goodsId&&stock?.status!=='special'?<CommitInput className="ov-tax-input" value={part.tax} label={label+'含税单价'} numeric
+       onCommit={value=>model.tax(c.id,row.slot,value)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.tax);
+    return <tr key={row.slot} className={[row.slot==='风扇'?'ov-divider':'',subtotal?'ov-multiple-qty':''].filter(Boolean).join(' ')}>
+     <td className="ov-number" data-metric="ERP 单价">{subtotal?<><span className="ov-line-total">{amount(typeof part?.erp==='number'?part.erp*qty:null)}</span><span className="ov-line-calc"><span>{amount(part?.erp)}</span>{multiplier}</span></>:amount(part?.erp)}</td>
      <td className={'ov-number ov-tax'+(taxDifferent||global?' ov-tax-changed':'')+(global?' ov-tax-global-changed':'')} data-metric="含税单价" title={global?'全局改价：原价 '+amount(global.base)+' → '+amount(global.value)+' · '+new Date(global.at).toLocaleString('zh-CN'):taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
-      {part?.goodsId&&stock?.status!=='special'?<CommitInput className="ov-tax-input" value={part.tax} label={label+'含税单价'} numeric
-       onCommit={value=>model.tax(c.id,row.slot,value)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.tax)}
+      {subtotal&&<span className="ov-line-total">{amount(typeof shownTax==='number'?shownTax*qty:null)}</span>}
+      {subtotal?<span className="ov-line-calc"><span>{taxUnit}</span>{multiplier}</span>:<span>{taxUnit}</span>}
       {(taxDifferent||global)&&<div className="ov-tax-actions">{taxDifferent&&<><button className="ov-tax-global" onClick={()=>model.taxGlobal(c.id,row.slot)}>全局</button><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxReset(c.id,row.slot)}>恢复</button></>}{global&&<><span className="ov-tax-global-tag">全局</span><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxGlobalRestore(c.id,row.slot)}>全局恢复</button></>}</div>}
      </td>
      <td className="ov-number" data-metric="GoodID">{part?.goodsId||'—'}</td>
@@ -268,7 +322,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
       if(!e.shiftKey){rowAnchor.current=row.slot;const saved=selections.get(c.id);if(saved)saved.anchor=row.slot;}
      }}>{row.slot}</button></th>
      {actual&&<td className="ov-actual" aria-label={label+' 实际配件'} {...gridProps(index,0)}>
-      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>setPicker(null)}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}>{part?.name||'—'}</span>}
+      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>setPicker(null)}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}><ErpPartName info={model.describePart(part,row.part,row.slot)}/></span>}
      </td>}
      <td className="ov-display"><DisplayPart row={row} c={c} model={model} addons={addons}/></td>
     </tr>;
@@ -336,7 +390,7 @@ export function ContinuousWorkbench({model}:{model:Row}){
   <p className="ov-hint">实际配件和数量可双击或键入编辑，删空型号即清除。用 <kbd>Shift</kbd> 选区，两列粘贴从实际配件格开始，顺序为型号、数量。</p>
   {model.error&&<p role="alert">{model.error} <button onClick={()=>model.retry()}>重试加载</button></p>}
   {!list.length&&<p>没有匹配的配置 <button onClick={()=>setQuery('')}>清空搜索</button></p>}
-  <div ref={sheet} className="ov-sheet-scroll" data-product-id={model.productId} aria-label="连续配置表" tabIndex={0}
+  <div ref={sheet} className="ov-sheet-scroll" data-product-id={model.productId} data-last-configuration={list.at(-1)?.id} aria-label="连续配置表" tabIndex={0}
    onFocusCapture={event=>setFocusedId((event.target as HTMLElement).closest<HTMLElement>('[data-continuous-config]')?.dataset.continuousConfig||null)}
    onBlurCapture={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setFocusedId(null);}}>
    <div className="ov-content" style={virtual?{height:virtualizer.getTotalSize(),position:'relative'}:undefined}>

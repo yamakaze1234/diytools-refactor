@@ -31,6 +31,20 @@ test('NAS 桥接不转发本地业务、云同步、ERP、写入或本机原图'
  assert.equal(calls[0].command,'nas_native_request');
 });
 
+test('NAS ERP 候选搜索携带当前店与身份交给原生命令',async()=>{
+ const target=frame(),calls=[],actor=['test-workspace','test-operator'];
+ target.location=new URL('http://localhost:1420/workbench/index.html?workspace=nas');
+ await installWorkbenchBridge(target,{invoke:async(command,args)=>{
+  calls.push({command,args});return {status:200,body:'{"ok":true}'};
+ }});
+ const options={method:'POST',body:JSON.stringify({kind:'erp-catalog',goodsIds:[],shopId:'jonsbo'})};
+ const path='/api/native-nas/erp-read';
+ assert.equal((await target.fetch(path,options)).status,403);
+ const headers={'x-workbench-nas-owner':encodeURIComponent(JSON.stringify(actor))};
+ assert.equal((await target.fetch(path,{...options,headers})).status,200);
+ assert.deepEqual(calls,[{command:'nas_erp_read',args:{kind:'erp-catalog',goodsIds:[],shopId:'jonsbo',connection:null,expectedActor:actor}}]);
+});
+
 test('分批导出桥接逐次传递会话阶段，不拼接整批图片',async()=>{
  const calls=[],target=frame();
  await installWorkbenchBridge(target,{invoke:async(command,args)=>{calls.push({command,args});return {ok:true,token:'test',files:[]};}});

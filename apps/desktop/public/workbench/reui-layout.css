@@ -1,6 +1,6 @@
 /* Workbench shell owns geometry; ReUI owns component internals. */
 :root {
-  --desktop-toolbar-height: 52px;
+  --desktop-toolbar-height: 53px;
   --ui-ink: #1f2328;
   --ui-muted: #656d76;
   --ui-line: #d1d9e0;
@@ -9,12 +9,15 @@
   --blue: #0969da;
   --line: #d1d9e0;
   --legacy-muted: #656d76;
-  --sidebar-w: 218px;
+  --sidebar-w: clamp(185px,15.3vw,258px);
   --preview-w: 280px;
 }
 html { height: 100%; overflow: hidden; }
 body { height: 100%; overflow: hidden; color: var(--ui-ink); background: #fff; }
-body.has-reui-rail { padding-left: 64px; }
+body.has-reui-rail { padding-left: 50px; }
+body .reui-rail { width: 50px; padding: 9px 0 5px; gap: 3px; }
+body .reui-rail strong { margin-bottom: 18px; }
+body .reui-rail :is(a,.rail-nav-button) { width: 49px; min-height: 47px; }
 body .topbar { height: var(--desktop-toolbar-height); min-height: var(--desktop-toolbar-height); position: relative; padding: 8px 16px; flex-wrap: nowrap; background: #f6f8fa; border-bottom: 1px solid var(--ui-line); box-shadow: none; }
 body .topbar .brand { display: block; font-size: 15px; }
 body .topbar .brand span { font-size: 12px; }
@@ -118,17 +121,16 @@ body .source-item.active { border-color: #b6e3ff; background: var(--ui-soft); }
 #preview-close { display: none; }
 body.preview-collapsed .workspace { grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
 body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
-@media (min-width: 1800px) { :root { --sidebar-w: 238px; --preview-w: 310px; } }
+@media (min-width: 1800px) { :root { --preview-w: 310px; } }
 @media (max-width: 1279px) {
   #preview-close { display: inline-block; }
-  :root { --sidebar-w: 200px; --preview-w: 260px; }
+  :root { --preview-w: 260px; }
   body .workspace { grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
   body .workspace > .preview-side:not(.preview-expanded) { position: absolute; top: 0; right: 0; bottom: 0; width: 300px; z-index: 15; box-shadow: -12px 0 30px #1f23281a; }
   body .topbar .brand span { display: none; }
   body .main { padding: 12px; }
 }
 @media (max-width: 900px) {
-  :root { --sidebar-w: 180px; }
   body .topbar .brand { display: none; }
   body.continuous-mode .page-heading { align-self: stretch; margin-bottom: 6px; }
   body.continuous-mode #product-panel .product-heading { padding-right: 0; }
@@ -137,7 +139,7 @@ body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
 
 /* 双页签设计稿：外层继续使用工作台导航，页头和表格的尺寸独立于旧编辑器。 */
 body.overview-mode {
- --desktop-toolbar-height: 53px; --ov-gutter: clamp(12px,1.12vw,22px);
+ --ov-gutter: clamp(12px,1.12vw,22px);
  --ov-ink: #181a19; --ov-muted: #5d645f; --ov-line: #dbdfdb;
  --ov-page: #f1f3f0; --ov-sheet: #fff; --ov-columns: #f5f7f4; --ov-display: #faf9ed;
  --ov-numbers: 'Cascadia Mono',Consolas,'Microsoft YaHei UI',monospace;
@@ -146,14 +148,10 @@ html.dark body.overview-mode {
  --ov-ink: var(--ef-ink); --ov-muted: var(--ef-ink-2); --ov-line: var(--ef-rule);
  --ov-page: var(--ef-paper); --ov-sheet: var(--ef-panel); --ov-columns: var(--ef-chip); --ov-display: var(--ef-chip);
 }
-body.overview-mode .workspace { --sidebar-w: clamp(185px,15.3vw,258px); --preview-w: clamp(282px,20.8vw,402px); }
-body.has-reui-rail.overview-mode { padding-left: 50px; }
-body.overview-mode .reui-rail { width: 50px; padding-inline: 0; padding-block: 9px 5px; gap: 3px; }
-body.overview-mode .reui-rail strong { margin-bottom: 18px; }
-body.overview-mode .reui-rail :is(a,.rail-nav-button) { width: 49px; min-height: 47px; }
-body.overview-mode .sidebar :is(.links-eyebrow,.links-helper,.sidebar-note) { display: none; }
-body.overview-mode .sidebar .side-title { margin-block: 5px; }
-body.overview-mode .sidebar .selection-tools { margin-block: 3px; }
+body.overview-mode .workspace { --preview-w: clamp(282px,20.8vw,402px); }
+body .sidebar :is(.links-eyebrow,.links-helper,.sidebar-note) { display: none; }
+body .sidebar .side-title { margin-block: 5px; }
+body .sidebar .selection-tools { margin-block: 3px; }
 body.overview-mode .sidebar #editing-context { display: none; }
 body.overview-mode .main .product-heading { padding-right: min(250px,38%); }
 body.overview-mode .main { container-type: inline-size; }
@@ -179,7 +177,9 @@ body.overview-mode .preview-side:not(.preview-expanded) :is(.ov-preview-modes,.o
 body.overview-mode .preview-side:not(.preview-expanded) #preview-close { display: inline-block; }
 body.overview-mode .preview-side:not(.preview-expanded) :is(.preview-canvas-actions,.canvas-tools,.preview-settings-scroll) { display: none; }
 body.overview-mode .preview-side:not(.preview-expanded) #poster-stage { pointer-events: none; }
-body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-modes { order: 1; }
+/* 三种预览并排等宽放置，缩窄右栏时保留单行按钮文字。 */
+body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-modes { order: 1; flex-wrap: nowrap; }
+.ov-preview-modes button { flex: 1; min-width: 0; white-space: nowrap; }
 body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer { order: 6; padding-top: 10px; border-top: 1px solid var(--ov-line); }
 body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer button { flex: 1; }
 .ov-expanded-poster { display: block; width: auto; max-width: min(760px,85vw); height: auto; margin: 0 auto; }
@@ -221,7 +221,15 @@ body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer butto
 #continuous-workbench .ov-title-bar { display: flex; min-height: 66px; align-items: stretch; }
 #continuous-workbench .ov-title-bar h2 { align-self: center; flex: 1; margin: 0; padding: 4px 8px; text-align: center; color: #fff; font: 700 14px/1.25 'Microsoft YaHei UI','Segoe UI',sans-serif; overflow-wrap: anywhere; }
 /* 配置名称与版本固定使用黄色，同一规则覆盖桌面和窄屏表头。 */
-#continuous-workbench .ov-config-badge { min-width: 79px; display: grid; place-content: center; gap: 2px; padding: 4px; color: #181a18; background: #f3f134; text-align: center; }
+#continuous-workbench .ov-config-badge { flex: 0 0 115px; font-size: 14px; display: grid; place-content: center; gap: 2px; padding: 4px; color: #181a18; background: #f3f134; text-align: center; }
+#continuous-workbench th.ov-title { height: 1px; }
+#continuous-workbench .ov-title-bar { height: 100%; }
+#continuous-workbench .ov-line-total { display:block; font-size:15px; font-weight:750; }
+#continuous-workbench .ov-multiple-qty > :nth-child(-n+2) { vertical-align:top; }
+/* 两列的单价和乘数采用同样的行高、字距和居中方式。 */
+#continuous-workbench .ov-line-calc { display:flex; justify-content:center; align-items:center; gap:.5ch; min-height:18px; line-height:18px; font-size:11px; color:#785030; white-space:nowrap; }
+#continuous-workbench .ov-line-calc > :first-child { padding-inline:2px; }
+html.dark #continuous-workbench .ov-line-calc { color:#e1bd95; }
 #continuous-workbench .ov-config-badge label { display: flex; justify-content: center; align-items: center; gap: 3px; }
 #continuous-workbench .ov-config-badge select { min-width: 0; max-width: 100%; color: inherit; background: transparent; padding: 0 2px; min-height: 16px; font-size: 12px; }
 #continuous-workbench .ov-controls { padding: 4px 6px; color: #e6eae4; font-size: 11px; }
@@ -332,10 +340,114 @@ html[data-workbench-design] body .sidebar #config-list button.list-zone-heading.
 html[data-workbench-design] body .sidebar #config-list button.list-zone-heading :is(span,small) { color: inherit !important; background: transparent !important; }
 
 /* 11-19：三个区标题统一 */
-html[data-workbench-design] .sidebar .template-library-section { margin-top: 10px; }
+html[data-workbench-design] .sidebar .template-library-section { margin-block: 0 6px; }
 html[data-workbench-design] .sidebar #template-section-toggle.list-zone-heading { display:flex !important; justify-content:flex-start !important; width:100% !important; height:auto !important; min-height:32px; padding:6px 8px !important; border:0 !important; border-radius:0 !important; box-shadow:none !important; font-size:13px !important; font-weight:750 !important; gap:6px !important; }
 html[data-workbench-design] .sidebar #template-section-toggle.list-zone-heading > :last-child { margin-left:auto; font-size:11px !important; font-weight:500 !important; opacity:.75; border:0 !important; padding:0 !important; }
-html[data-workbench-design] .sidebar #template-section-toggle .zone-arrow { display:inline-flex; width:16px; justify-content:center; font-size:12px; }
+.sidebar .list-zone-heading .zone-arrow { display:inline-flex; flex:0 0 16px; width:16px; height:14px; justify-content:center; font-size:0!important; align-items:center; }
+.list-zone-heading .zone-arrow::before { content:''; width:9px; height:11px; background:currentColor; clip-path:polygon(0 0,100% 50%,0 100%); }
+.list-zone-heading[aria-expanded="true"] .zone-arrow::before { transform:rotate(90deg); }
+
+/* 主机模板表占用编辑区和预览区，左栏维持与配置编辑相同的位置。 */
+.workspace > #host-template-sheet[hidden],
+.host-template-mode .workspace > :is(.main,.preview-side,.workspace-resizer[data-resize-column="right"]),
+.host-template-mode #editing-context { display: none !important; }
+.workspace > #host-template-sheet {
+ grid-column: 2 / -1;
+ grid-row: 1;
+ min-width: 0;
+ min-height: 0;
+ display: grid;
+ grid-template-columns: minmax(0,1fr) minmax(240px,320px);
+ gap: 12px;
+ padding: 12px;
+ color: var(--ef-ink, #181a19);
+ background: var(--ef-panel, #f5f5f0);
+}
+.host-template-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.host-template-center { min-height:0; min-width:0; display:flex; flex-direction:column; gap:8px; }
+.host-template-toolbar :is(.host-template-platform,.host-template-color) { font-weight:700; min-height:24px; padding:2px 8px; }
+.host-template-platform[data-platform="amd"] { background:#bd2026!important; color:#fff!important; }
+.host-template-platform[data-platform="intel"] { background:#0068b5!important; color:#fff!important; }
+.host-template-color[data-color="black"] { background:#181a19!important; color:#fff!important; }
+.host-template-color[data-color="white"] { background:#fff!important; color:#181a19!important; border:1px solid #181a19!important; }
+.host-template-state { font-size:12px; color:#217346; }
+.host-template-state[data-dirty="true"] { color:#a7251c; font-weight:700; }
+.host-template-menu { position:relative; }
+.host-template-menu > div { position:absolute; right:0; z-index:4; display:grid; min-width:128px; padding:6px; background:var(--ef-panel,#fff); border:1px solid var(--ef-rule,#ccc); }
+.host-template-toolbar h2 { margin: 0 6px 0 0; font-size: 16px; overflow-wrap: anywhere; }
+.host-template-toolbar label, .host-template-choices { display: inline-flex; align-items: center; gap: 5px; }
+.host-template-picked { margin-inline-start: auto; white-space: nowrap; }
+.host-template-picked strong { display: inline-block; background: var(--ef-signal, #f3f134); color: #181a19; padding: 1px 6px; }
+.host-template-scroll { min-height: 0; overflow: auto; border: 1px solid var(--ef-rule, #d5d6d1); }
+.host-template-scroll table { width: 100%; min-width: 1050px; border-spacing: 0; font-size: 13px; }
+.host-template-scroll :is(th,td) { padding: 6px 8px; text-align: left; vertical-align: middle; height: 38px; }
+.host-template-scroll thead { position: sticky; top: 0; z-index: 1; background: #181a19; color: white; }
+.host-template-scroll tbody :is(th,td) {
+ border-bottom: 1px solid var(--ef-rule, #d5d6d1);
+ border-right: 1px solid var(--ef-rule, #d5d6d1);
+}
+.host-template-scroll tr > :is(th,td):nth-child(-n+2) { text-align: center; white-space: nowrap; }
+.host-template-scroll td:nth-child(3) { min-width: 142px; }
+.host-template-scroll td small { display: block; margin-top: 2px; color: var(--ef-muted, #4d514a); font-size: 11px; }
+.host-template-scroll td small { overflow-wrap:anywhere; }
+.host-template-scroll td .host-template-warning { color:#ba2621; }
+.host-template-scroll td.host-template-invalid { box-shadow:inset 0 0 0 2px #d92d20; }
+.host-template-part-line { display:flex; align-items:center; gap:4px; min-width:0; }
+.host-template-part-line > button { text-align:left; background:transparent!important; border:0!important; padding:0!important; min-height:22px!important; color:inherit!important; }
+.host-template-part-line > button:hover { text-decoration:underline dotted; text-underline-offset:3px; }
+/* 显卡规格占位与按钮同行，复用深浅主题的提醒色。 */
+.host-template-gpu-pending { flex:none; padding:1px 4px; font-size:10px; line-height:1.2; white-space:nowrap; color:var(--ef-warning-ink,#805700); background:var(--ef-warning-surface,#fff5d6); }
+.host-template-part-line input[type=number] { width:43px; min-height:22px; padding:1px 2px; text-align:center; }
+.host-template-row-actions { white-space:nowrap; }
+.host-template-row-actions > button { padding:0 4px!important; min-height:23px!important; }
+.host-template-inline { width:100%; min-width:75px; }
+.host-template-scroll tr.is-picked { background: #e0edd7; }
+.host-template-scroll tr.is-picked > th { background: #216b46; color: white; }
+html.dark .host-template-scroll tr.is-picked { background: #263f31; }
+/* 主机模板按附件显示为平铺卡片，下方一行五个操作。 */
+.sidebar .template-library-section { border:0; border-radius:0; margin:0 0 6px; }
+.sidebar .template-library-content { background:var(--ef-panel,#fff); border:1px solid var(--ef-rule,#d9d9d4); border-top:0; padding:0; }
+.sidebar .template-library-content > .hint { padding:8px 10px; margin:0; }
+.sidebar .host-template-card { display:flex; align-items:center; gap:5px; width:100%; min-height:34px; padding:6px 8px;
+ text-align:left; font-size:13px; border:0; border-bottom:1px solid var(--ef-rule,#eee); border-radius:0; }
+.sidebar .host-template-card strong { flex:1; min-width:0; font-weight:inherit; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sidebar .host-template-card small { flex:none; color:inherit; opacity:.75; font-size:11px; font-weight:400; }
+.sidebar .host-template-card[data-template-dirty="true"] small::before { content:""; display:inline-block; width:7px; height:7px; border-radius:50%; background:#bd2026; margin-inline-end:4px; }
+.sidebar .host-template-card-tags { display:inline-flex; flex:none; gap:3px; font-size:10px; line-height:14px; font-weight:700; }
+.sidebar .host-template-card-tags::before,.sidebar .host-template-card-tags::after { padding:0 3px; border-radius:2px; color:white; }
+.sidebar .host-template-card[data-template-platform="intel"] .host-template-card-tags::before { content:"Intel"; background:#0068b5; }
+.sidebar .host-template-card[data-template-platform="amd"] .host-template-card-tags::before { content:"AMD"; background:#bd2026; }
+.sidebar .host-template-card[data-template-color="black"] .host-template-card-tags::after { content:"黑"; background:#181a19; }
+.sidebar .host-template-card[data-template-color="white"] .host-template-card-tags::after { content:"白"; background:#fff; color:#181a19; box-shadow:inset 0 0 0 1px #181a19; }
+.sidebar .template-library-toolbar { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:4px; padding:6px; }
+.sidebar .template-library-toolbar button { width:100%; min-width:0; min-height:24px; height:24px; padding:0; text-align:center; justify-content:center; font-size:12px; border:1px solid #bbb; border-radius:3px; }
+.sidebar .host-template-rename { display:block; width:calc(100% - 12px); margin:3px 6px; }
+.host-template-appearance { overflow:auto; align-self:start; max-height:100%; padding:14px; border:2px solid var(--ef-ink,#181a19); background:var(--ef-panel,#fff); }
+.host-template-appearance h2 { margin:0 0 10px; padding-left:8px; border-left:5px solid #f3f134; font-size:15px; }
+.host-template-field { display:flex; gap:6px; margin-bottom:8px; align-items:end; }
+.host-template-field label,.host-template-change { display:grid; gap:4px; flex:1; min-width:0; font-weight:600; }
+.host-template-field input,.host-template-change textarea { width:100%; }
+.host-template-field input[type=number] { width:58px; }
+.host-template-change { margin-top:10px; }
+.host-template-copy-preview { white-space:pre-wrap; overflow:auto; block-size:clamp(112px,18vh,180px); border:1px solid var(--ef-rule,#e6dd8a); background:var(--ef-paper,#fcfbe7); padding:10px; margin:10px 0; font:12px/1.6 'Microsoft YaHei',sans-serif; }
+#host-template-create,#host-template-copy { width:100%; min-height:40px; font-size:15px; font-weight:700; transition:none; }
+#host-template-copy { border:2px solid #181a19!important; clip-path:none; }
+#host-template-create:not(:disabled) { background:#181a19!important; color:#fff!important; }
+#host-template-copy:not(:disabled) { background:#f3f134!important; color:#181a19!important; }
+.host-template-generate-hint { display:block; margin:4px 0 8px; color:var(--ef-ink-2,#555); }
+@media(max-width:1050px) {
+ .workspace > #host-template-sheet { grid-template-columns:minmax(0,1fr); overflow:auto; }
+ .host-template-appearance { width:100%; }
+}
+.ov-erp-name { display:inline-flex; align-items:center; gap:4px; flex-wrap:wrap; text-align:left; }
+.ov-erp-name :is(.ov-erp-issue,.ov-erp-spec) { display:block; width:100%; font-weight:400; font-size:11px; }
+.ov-erp-spec { color:var(--ef-ink-2,#535853); }
+.ov-erp-issue,.ov-erp-tag { color:#a72b20; }
+html.dark :is(.ov-erp-issue,.ov-erp-tag) { color:#ffaaa0; }
+.ov-erp-tag,.ov-erp-color { padding:1px 3px; border:1px solid currentColor; border-radius:2px; font-size:10px; }
+.ov-erp-color[data-color="黑"] { background:#181a19; color:white; }
+.ov-erp-color[data-color="白"] { background:white; color:#181a19; }
+.ov-erp-candidate { border-inline-start:3px solid #386baf; }
 
 /* 11-19：配置下方工具条、到手价 ±100 与取 99 */
 #continuous-workbench .ov-row-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; }
@@ -363,6 +475,10 @@ html[data-workbench-design] .sidebar #template-section-toggle .zone-arrow { disp
 /* 11-19：输入框宽度固定为格子宽度，打字时不再来回弹；数字超出时才变宽 */
 #continuous-workbench .ov-table :is(.ov-sum,.ov-tax) input,
 #continuous-workbench .ov-table .ov-profit-input { min-width: 100%; box-sizing: border-box; }
+/* 小计下方给乘数留空间，单价输入框只占自己的数字宽度。 */
+#continuous-workbench .ov-table .ov-line-calc .ov-tax-input {
+ display:block; field-sizing:content; width:auto; min-width:1ch; height:18px; min-height:18px; padding:0; font:inherit; color:inherit;
+}
 /* 数字统一等宽，切换字体后也不跳 */
 #continuous-workbench :is(.ov-table, .ov-sum) { font-variant-numeric: tabular-nums; }
 html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-variant-numeric: tabular-nums; }
@@ -472,7 +588,7 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  #dialog.source-quick-dialog { width:min(850px,calc(100vw - 32px))!important; max-width:calc(100vw - 32px)!important; }
  #dialog.source-quick-dialog .source-editor-root > :not(.source-workspace,#source-message),
  #dialog.source-quick-dialog .source-list-panel,
- #dialog.source-quick-dialog :is(#source-detail,.source-detail-form) > :not(.source-detail-form,.source-field-name,.source-addon-editor,.source-save-actions) { display:none!important; }
+ #dialog.source-quick-dialog :is(#source-detail,.source-detail-form) > :not(.source-detail-form,.source-field-name,.source-field-price,.source-erp-block,.source-addon-editor,.source-save-actions,#source-maintenance-fields,.source-shared-field-state) { display:none!important; }
  #dialog.source-quick-dialog .source-workspace { display:block!important; }
  #dialog.source-quick-dialog #source-detail { min-width:0!important; padding:0!important; }
  #dialog.source-quick-dialog .source-detail-form { gap:18px!important; padding:0!important; border:0!important; }
@@ -483,7 +599,7 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  #dialog.source-quick-dialog textarea#source-name { min-height:76px!important; resize:vertical!important; }
  #dialog.source-quick-dialog .addon-choice { padding:14px!important; margin-block:10px!important; border:1px solid var(--ef-rule)!important; }
  #dialog.source-quick-dialog .inline-grid { gap:12px!important; }
- #continuous-workbench .ov-addon-apply .ov-edit-source { border-color:var(--ov-line)!important; background:var(--ov-sheet)!important; color:var(--ov-ink)!important; }
+ #continuous-workbench .ov-edit-source { border-color:var(--ov-line)!important; background:var(--ov-sheet)!important; color:var(--ov-ink)!important; }
  #continuous-workbench .ov-addon-apply button:focus-visible { outline:2px solid #b89b20!important; outline-offset:2px!important; }
 
  /* 深色使用暗底与浅色状态字，避免加购条、卡片和输入框出现大块亮白。 */
@@ -540,7 +656,6 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  html.dark body.overview-mode .sidebar #config-list .product-group.editing-product:not([data-link-colored])>.compact-link-card{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-left:3px solid var(--ef-signal)!important;}
  html.dark body.overview-mode .sidebar #config-list .product-group.editing-product:not([data-link-colored])>.compact-link-card :is(button,span,strong,small){color:var(--ef-ink)!important;}
  html.dark body.overview-mode .sidebar .config-item.scroll-spy{background:var(--ef-chip)!important;box-shadow:inset 3px 0 0 var(--ef-signal)!important;}
- html.dark body.overview-mode .ov-preview-modes button[aria-pressed=true]{background:var(--ef-chip)!important;color:var(--ef-signal)!important;border-color:var(--ef-rule)!important;}
  html.dark body.overview-mode .preview-side:not(.preview-expanded) #preview-scroll{background:var(--ef-paper)!important;}
 }
 .poster-extras-editor{max-width:900px;display:grid;gap:20px;}
@@ -673,7 +788,9 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  #dialog.source-quick-dialog .source-workspace{flex:1!important;min-height:0!important;}
  #dialog.source-quick-dialog .source-list-panel{display:none!important;}
  #dialog.source-quick-dialog #source-detail{flex:1!important;padding:19px 22px!important;overflow:auto!important;}
- #dialog.source-quick-dialog :is(#source-detail,.source-detail-form)>:not(.source-detail-form,.source-field-name,.source-addon-editor){display:none!important;}
+ #dialog.source-quick-dialog .source-save-actions{display:none!important;}
+ /* 保留现有快速弹窗，展示这条来源的原生核算字段和硬件维护折叠区。 */
+ #dialog.source-quick-dialog .source-erp-block { padding-block:8px!important; }
  #dialog.source-quick-dialog .source-detail-form{gap:20px!important;}
  #dialog.source-quick-dialog .source-addon-editor{padding-top:16px!important;}
  #dialog.source-quick-dialog .source-batch-bar{width:100%!important;}
@@ -681,7 +798,6 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  #dialog.source-quick-dialog #source-quick-preview>span{flex:none!important;font-size:10.5px!important;color:var(--ef-ink-2)!important;}
  #dialog.source-quick-dialog #source-quick-preview p{font-size:12px!important;line-height:1.7!important;margin:0!important;overflow-wrap:anywhere!important;}
  #dialog.source-quick-dialog .addon-merged-preview{display:none!important;}
- #dialog.source-quick-dialog [data-shared-addon-note],#dialog.source-quick-dialog label:has([data-shared-addon-note]){display:none!important;}
 }
 @media(max-width:850px){@layer workbench-interaction{
  #dialog.source-dialog .source-toolbar{flex-wrap:wrap!important;padding:10px 14px!important;}

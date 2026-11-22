@@ -18,6 +18,7 @@ const controls = {
  'hardwareOverrides.gpuName':'#source-hardware-gpu',
  'hardwareOverrides.boardType':'#source-hardware-board',
  'hardwareOverrides.caseBoards':'.hardware-case',
+ 'hardwareOverrides.color':'#source-hardware-color',
 };
 const unique = values => values.filter((value,index)=>values.findIndex(other=>equal(other,value))===index);
 /** 明确修改三店共用核算价时，只解除该字段的店铺覆盖，使当前来源和核算使用新价。 */
@@ -97,6 +98,8 @@ export function mountSharedScope(root,{row,entry,scope,scopes,edits,onScope,onFi
   const host = key==='addon'?input.parentElement:input.closest('label')||input;
   const actions = document.createElement('div');
   actions.className = 'source-shared-field-state';
+  // 颜色的范围提示与下拉项同步隐藏，硬盘不留恢复按钮。
+  if(key==='hardwareOverrides.color')actions.dataset.maintenanceKind='color';
   actions.innerHTML = `<small class="hint">${state.label}</small>${state.restore?
     '<button type="button">恢复共用</button>':''}${state.alternatives?.length?
     `<select aria-label="${esc(sharedSourceLabels[key])}历史值"><option value="">选用一个历史值</option>${

@@ -1,8 +1,8 @@
 /** 按 NAS 服务、成员和资源保留原提交编号；只有显式重试才重放原请求。 */
-import {NasApiError,receiptNotFound,receiptLookupError,originalVersionRejected} from './nas-api-client.js';
+import {NasApiError,receiptNotFound,receiptLookupError,originalVersionRejected,migrationNotInstalled} from './nas-api-client.js';
 const known=new Set(['WRITES_DISABLED','FORBIDDEN','CATALOG_SHARED_READ_ONLY','INVALID_REQUEST','INVALID_IMAGE','INVALID_CONTENT_TYPE',
  'PAYLOAD_TOO_LARGE','VALIDATION_FAILED','CATALOG_EXISTS','NOT_FOUND','INVALID_CONFIGURATION_STATE','OPERATION_REUSED','VERSION_CONFLICT',
- 'CATALOG_IN_USE','SHARED_SOURCE_VALUE_REQUIRED','SHARED_SOURCE_EDITOR_REQUIRED','IMAGE_UPLOAD_DISABLED','UNAUTHENTICATED']);
+ 'CATALOG_IN_USE','SHARED_SOURCE_VALUE_REQUIRED','SHARED_SOURCE_EDITOR_REQUIRED','IMAGE_UPLOAD_DISABLED','UNAUTHENTICATED','ERP_SOURCE_ARCHIVED']);
 const pendingOp=(kind,id)=>JSON.stringify([kind,id]);
 export function createNasCatalogController({client,storage,scope,shopId='intel',uuid=()=>crypto.randomUUID()}){
  const prefix='diy-nas-catalog:'+JSON.stringify(scope)+':',flights=new Map();
@@ -91,7 +91,7 @@ export function createNasCatalogController({client,storage,scope,shopId='intel',
    persist(key,op);
    let result;
    try{result=await send();}
-   catch(error){if(known.has(error.code)&&error.status>=400&&error.status<500)persist(key,null);throw error;}
+   catch(error){if(known.has(error.code)&&error.status>=400&&error.status<500||migrationNotInstalled(error))persist(key,null);throw error;}
    verify(result,op);persist(key,null);return result;
   })();
   flights.set(key,flight);

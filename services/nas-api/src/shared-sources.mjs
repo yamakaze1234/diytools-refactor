@@ -5,7 +5,7 @@ import {
 } from '../../../apps/desktop/public/workbench/shared-source-fields.js';
 import {sourceAddon,validateAddon} from '../../../apps/desktop/public/workbench/addon-data.js';
 import {validateCapacities} from '../../../apps/desktop/public/workbench/component-capacity.js';
-import {validateHardware} from '../../../apps/desktop/public/workbench/component-hardware.js';
+import {hardwareColors,validateHardware} from '../../../apps/desktop/public/workbench/component-hardware.js';
 import {excludedComponent} from '../../../apps/desktop/public/workbench/component-policy.js';
 
 const scopes = ['shared','intel','gigabyte','jonsbo'];
@@ -14,6 +14,31 @@ const plain = value => value !== null && typeof value === 'object' && !Array.isA
 const valid = (condition, field) => {
  if (!condition) throw new Fault('VALIDATION_FAILED',400,{field});
 };
+
+/** 目录新增依旧使用原操作编号；ERP 观察仅作为本店建源和缺价的初值。 */
+export function validateErpAdoption(id,document){
+ const row=document.erpAdoption;
+ const name=text=>typeof text==='string'&&text===text.trim()&&text.length>0&&text.length<=512&&!excludedComponent({name:text});
+ valid(sourceGoodsId(id)&&document.id===id&&Object.keys(document).every(k=>['id','name','erpAdoption'].includes(k))&&name(document.name),'document');
+ valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','sku','tableTax'].includes(k))&&name(row.name)&&
+  (row.erp===null||Number.isFinite(row.erp)&&row.erp>=0&&row.erp<=100000000)&&
+  (!Object.hasOwn(row,'tableTax')||Number.isFinite(row.tableTax)&&row.tableTax>=0&&row.tableTax<=100000000)&&
+  (row.stockAvailable===null||Number.isFinite(row.stockAvailable)&&Math.abs(row.stockAvailable)<=Number.MAX_SAFE_INTEGER)&&
+  typeof row.sku==='string'&&row.sku.length<=512,'document.erpAdoption');
+}
+
+export async function adoptErpSource(db,member,shop,id,document){
+ try{
+  const {rows:[row]}=await db.query('SELECT workbench_sources.adopt_erp($1,$2,$3,$4,$5,$6::jsonb) AS result',
+   [shop,member.workspaceId,member.uid,id,document.name,JSON.stringify(document.erpAdoption)]);
+  return row.result;
+ }catch(error){
+  if(error.code==='42883')throw new Fault('NAS_ERP_ADOPTION_NOT_INSTALLED',503);
+  if(error.code==='P0001'&&['FORBIDDEN','VALIDATION_FAILED','ERP_SOURCE_ARCHIVED'].includes(error.message))
+   throw new Fault(error.message,{FORBIDDEN:403,VALIDATION_FAILED:400,ERP_SOURCE_ARCHIVED:409}[error.message]);
+  throw error;
+ }
+}
 
 function validateFields(fields, special, scope) {
  const capacity = {}, hardware = {};
@@ -29,6 +54,8 @@ function validateFields(fields, special, scope) {
    valid(plain(value) && Object.keys(value).every(key=>sharedSourceAddonKeys.includes(key)),key);
    try { validateAddon(sourceAddon(Object.fromEntries(Object.entries(value).filter(([,v])=>v!=null)))); }
    catch { valid(false,key); }
+  } else if (key === 'hardwareOverrides.color') {
+   valid(value === null || hardwareColors.includes(value),key);
   } else if (value !== null) {
    const [group,field] = key.split('.');
    (group === 'capacityOverrides' ? capacity : hardware)[field] = value;

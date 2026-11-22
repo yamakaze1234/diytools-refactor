@@ -14,16 +14,21 @@ const sources=[
  {shopId:'intel',sourceId:'s-cpu',goodsId:'1001',slot:'CPU',name:'样例 CPU',erp:800,tax:850,stockAvailable:12,upgrade:'测试加购'},
  {shopId:'intel',sourceId:'s-memory',goodsId:'1002',slot:'内存',name:'样例内存',erp:200,tax:220,stockAvailable:24},
 ];
+const quantitySources=[
+ {shopId:'intel',sourceId:'s-unit-20',goodsId:'1020',slot:'CPU',name:'两位单价布局样例',erp:20,tax:20,stockAvailable:12},
+ {shopId:'intel',sourceId:'s-unit-1520',goodsId:'1520',slot:'CPU',name:'四位单价布局样例',erp:1520,tax:1520,stockAvailable:12},
+];
 const configs=Array.from({length:2},(_,index)=>{
  const c=blankConfig(null,product,'配置'+(index+1));c.id='c'+index;c.price=2000;c.skuId='340000000000000000'+index;
  c.parts=sources.map(p=>({...p,qty:1}));c.actualParts=structuredClone(c.parts);
  // 模拟旧测试版已选实际型号、展示行仍为空的配置。
  if(index===0)c.parts=c.parts.filter(part=>part.slot!=='CPU');
+ if(index===1)c.skuExportMode='dedicated';
  return c;
 });
 let state=normalizeWorkspaceState({revision:1,updatedAt:new Date().toISOString(),configs,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{intel:{coupon:0}},logs:[]},[]);
-state.sourceCatalog=sources;
-state.costSource=sources;
+state.sourceCatalog=[...sources,...quantitySources];
+state.costSource=[...sources,...quantitySources];
 const html=(await fs.readFile(new URL('../public/workbench/index.html',import.meta.url),'utf8')).replace('<script type="module" src="./bootstrap.js"></script>',"<script type=module>import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const {createWorkbenchReactRenderer}=await import('/src/legacy/react-workbench.tsx');window.createWorkbenchReactRenderer=createWorkbenchReactRenderer;await import('/workbench/app.js');document.body.classList.remove('login-required');</script>");
 const app=await fs.readFile(new URL('../public/workbench/app.js',import.meta.url),'utf8');
 const errors=[],browser=await chromium.launch({channel:'msedge',headless:true});
@@ -31,7 +36,7 @@ try{
  const page=await browser.newPage({viewport:{width:1920,height:1080},bypassCSP:true,permissions:['clipboard-read','clipboard-write']});
  page.on('pageerror',error=>errors.push(error.stack));
  await page.route('**/workbench/overview-price-fixture',route=>route.fulfill({contentType:'text/html',body:html}));
- await page.route('**/workbench/app.js',route=>route.fulfill({contentType:'text/javascript',body:app+'\nwindow.overviewProbe={snapshot:()=>structuredClone(state),undo:()=>stepHistory(history,redoHistory,"撤销")};'}));
+ await page.route('**/workbench/app.js',route=>route.fulfill({contentType:'text/javascript',body:app+'\nwindow.overviewProbe={snapshot:()=>structuredClone(state),previewId:()=>previewConfigId,undo:()=>stepHistory(history,redoHistory,"撤销")};'}));
  await page.route('**/catalog.json',route=>route.fulfill({json:[]}));
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname,payload=req.method()==='POST'?req.postDataJSON():null;
@@ -64,12 +69,108 @@ try{
  assert.equal(await card('c0').locator('.ov-sum-labels .ov-dark').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(24, 26, 24)');
  assert.ok(await card('c0').locator('.ov-columns th').evaluateAll(cells=>cells.every(cell=>cell.getBoundingClientRect().width>0))); // 新表头按固定金额位数留宽。
  assert.equal(await card('c0').locator('.ov-sum-values .ov-fee').textContent(),'1,213');
- await page.locator('[data-ov-preview="square"]').click();
- await page.waitForFunction(()=>{const canvas=document.querySelector('#poster');return canvas.width>0&&canvas.width===canvas.height;});
- assert.equal(await page.evaluate(()=>window.overviewProbe.snapshot().configs.find(c=>c.id==='c0').layout),'long');
- await page.locator('[data-ov-preview="long"]').click();
+ // 右栏三种画布和导出选择联动，切换方案时保留显式选项。
+ const previews=page.locator('.ov-preview-modes');
+ const previewButton=mode=>previews.locator('[data-ov-preview="'+mode+'"]');
+ const kind=page.locator('#image-export-kind'),sku=page.locator('#image-export-sku-mode');
+ const labels={long:'紧凑详情图',padded:'1:1 详情补白',dedicated:'1:1 专用 SKU'};
+ const waitPreview=async(mode,id='c0',expanded=false)=>{
+  await page.waitForFunction(({label,id})=>window.overviewProbe.previewId()===id&&
+   document.querySelector('#dimensions').textContent.endsWith(label),{label:labels[mode],id});
+  if(!expanded)assert.deepEqual(await previews.locator('[aria-pressed="true"]').evaluateAll(buttons=>buttons.map(button=>button.dataset.ovPreview)),[mode]);
+  const canvas=page.locator('#poster');
+  assert.ok(await canvas.evaluate((el,square)=>el.width>0&&el.height>0&&(!square||el.width===el.height),mode!=='long'));
+  assert.equal(await page.locator('#dialog').evaluate(el=>el.open),false);
+  assert.equal(await page.evaluate(()=>window.workbenchHasPendingChanges()),false);
+  return canvas.evaluate(async el=>{
+   const pixels=el.getContext('2d').getImageData(0,0,el.width,el.height).data;
+   return [...new Uint8Array(await crypto.subtle.digest('SHA-256',pixels))].join(',');
+  });
+ };
+ const activate=async id=>{
+  await page.locator('[data-id="'+id+'"]').click();
+  await card(id).filter({has:page.locator('.ov-columns')}).waitFor();
+ };
+ // 先载入和归一化两个配置，再记录切换预览前的配置内容。
+ await activate('c1');await waitPreview('long','c1');
+ await activate('c0');
+ const detail=await waitPreview('long');
+ const beforePreview=await page.evaluate(()=>window.overviewProbe.snapshot().configs);
+ const revisionBeforePreview=state.revision;
+ let dialogCount=0;
+ page.on('dialog',async dialog=>{dialogCount++;await dialog.dismiss();});
+ assert.deepEqual(await previews.getByRole('button').allTextContents(),['清单图','SKU 补白','SKU 专用']);
+
+ await previewButton('padded').click();
+ const padded=await waitPreview('padded');
+ assert.equal(await sku.inputValue(),'padded');
+ await previewButton('dedicated').click();
+ const dedicated=await waitPreview('dedicated');
+ assert.equal(await sku.inputValue(),'dedicated');
+ assert.equal(new Set([detail,padded,dedicated]).size,3);
+ await activate('c1');
+ assert.notEqual(await waitPreview('dedicated','c1'),dedicated);
+ assert.equal(await sku.inputValue(),'dedicated');
+ await activate('c0');
+ assert.equal(await waitPreview('dedicated'),dedicated);
+
+ await sku.selectOption('padded');
+ assert.equal(await waitPreview('padded'),padded);
+ await sku.selectOption('dedicated');
+ assert.equal(await waitPreview('dedicated'),dedicated);
+ await sku.selectOption('saved');
+ assert.equal(await waitPreview('padded'),padded);
+ await activate('c1');await waitPreview('dedicated','c1');
+ assert.equal(await sku.inputValue(),'saved');
+ await activate('c0');await waitPreview('padded');
+ await previewButton('dedicated').click();await waitPreview('dedicated');
+ await previewButton('long').click();await waitPreview('long');
+ assert.equal(await sku.inputValue(),'dedicated');
+ assert.equal(await kind.inputValue(),'both');
+ await kind.selectOption('square');await waitPreview('dedicated');
+ await kind.selectOption('long');await waitPreview('long');
+ assert.equal(await page.locator('#image-export-sku-choice').isVisible(),false);
+ await previewButton('padded').click();await waitPreview('padded');
+ assert.equal(await kind.inputValue(),'square');
+ assert.equal(await page.locator('#image-export-sku-choice').isVisible(),true);
+ await page.locator('#preview-expand').click();
+ assert.equal(await previews.isVisible(),false);
+ await sku.selectOption('dedicated');await waitPreview('long','c0',true);
+ await page.keyboard.press('Escape');await waitPreview('dedicated');
+ await previewButton('padded').click();await waitPreview('padded');
+
+ // 深浅主题和两种栏宽下，三颗按钮保持单行，选中态不同于未选按钮的悬停态。
+ const background=button=>button.evaluate(el=>getComputedStyle(el).backgroundColor);
+ for(const [theme,width] of [['light',350],['dark',300]]){
+  await page.evaluate(({theme,width})=>{
+   document.querySelector('.workspace').style.setProperty('--preview-w',width+'px');
+   window.dispatchEvent(new CustomEvent('workbench-ui-theme-change',{detail:theme}));
+  },{theme,width});
+  await page.waitForFunction(theme=>document.documentElement.dataset.workbenchTheme===theme,theme);
+  assert.equal(await previews.getByRole('button').evaluateAll(buttons=>buttons.every(button=>
+   button.getBoundingClientRect().top===buttons[0].getBoundingClientRect().top&&
+   getComputedStyle(button).whiteSpace==='nowrap'&&button.scrollWidth<=button.clientWidth)),true);
+  const selected=previewButton('padded'),idle=previewButton('dedicated');
+  const normal=await background(idle);
+  await idle.hover();
+  await page.waitForFunction(normal=>getComputedStyle(document.querySelector('[data-ov-preview="dedicated"]')).backgroundColor!==normal,normal);
+  assert.notEqual(await background(idle),await background(selected));
+  assert.equal(await selected.evaluate(el=>getComputedStyle(el).color),'rgb(243, 241, 52)');
+  await selected.hover();
+  assert.equal(await background(selected),'rgb(24, 26, 25)');
+ }
+ await page.evaluate(()=>{
+  document.querySelector('.workspace').style.removeProperty('--preview-w');
+  window.dispatchEvent(new CustomEvent('workbench-ui-theme-change',{detail:'light'}));
+ });
+ await kind.selectOption('both');
+ await previewButton('long').click();await waitPreview('long');
+ await sku.selectOption('saved');await waitPreview('long');
+ assert.equal(dialogCount,0);
+ assert.equal(state.revision,revisionBeforePreview);
+ assert.deepEqual(await page.evaluate(()=>window.overviewProbe.snapshot().configs),beforePreview);
  await edit(tax('c0','CPU'),'900');await waitCount(1);
- assert.equal(await tax('c0','CPU').locator('..').getAttribute('title'),'原含税单价 850');
+ assert.equal(await tax('c0','CPU').evaluate(input=>input.closest('td').title),'原含税单价 850');
  assert.equal(await card('c0').locator('.ov-tax-changed').count(),1);
  await edit(tax('c0','内存'),'230');await waitCount(1);
  await edit(tax('c1','CPU'),'910');await waitCount(2);
@@ -117,6 +218,54 @@ try{
   const clipboardData=new DataTransfer();clipboardData.setData('text/plain',text);
   cell.dispatchEvent(new ClipboardEvent('paste',{clipboardData,bubbles:true,cancelable:true}));
  },value);
+ // 分别验收两位和四位单价。两列的乘数要对齐，焦点态和单件价格仍可正常编辑。
+ const cpuRow=card('c0').locator('tr').filter({has:page.getByRole('button',{name:'CPU',exact:true})});
+ const taxUnit=tax('c0','CPU');
+ async function pasteQuantity(goodsId,qty){
+  await pasteModel(goodsId+'\t'+qty);
+  await page.waitForFunction(({goodsId,qty})=>{
+   const part=window.overviewProbe.snapshot().configs.find(c=>c.id==='c0').actualParts.find(p=>p.slot==='CPU');
+   return part?.goodsId===goodsId&&part.qty===qty;
+  },{goodsId,qty});
+ }
+ for(const [goodsId,unit,formatted] of [['1020',20,'20'],['1520',1520,'1,520']]){
+  await pasteQuantity(goodsId,1);
+  assert.equal(await cpuRow.locator('.ov-line-calc').count(),0);
+  assert.equal(await taxUnit.inputValue(),formatted);
+  assert.equal(await taxUnit.evaluate(input=>input.getBoundingClientRect().width<=input.closest('td').clientWidth),true);
+  await pasteQuantity(goodsId,5);
+  const measure=()=>cpuRow.evaluate(row=>{
+   const rect=el=>el.getBoundingClientRect();
+   return [...row.querySelectorAll('.ov-line-calc')].map(line=>{
+    const unit=line.firstElementChild,multiplier=line.lastElementChild,cell=rect(line.closest('td'));
+    const r=rect(line),u=rect(unit),m=rect(multiplier),style=getComputedStyle(unit.querySelector('input')||unit);
+    return {top:r.top,height:r.height,multiplierTop:m.top,multiplier:multiplier.textContent,gap:m.left-u.right,width:m.right-u.left,
+     centerOffset:(u.left+m.right-cell.left-cell.right)/2,inside:u.left>cell.left&&m.right<cell.right,
+     fontSize:style.fontSize,unitText:unit.querySelector('input')?.value??unit.textContent};
+   });
+  });
+  const [erp,taxLine]=await measure();
+  assert.equal(erp.unitText,formatted);
+  assert.equal(taxLine.unitText,formatted);
+  assert.equal(erp.multiplier,'× 5');
+  assert.equal(taxLine.multiplier,erp.multiplier);
+  assert.equal(erp.fontSize,taxLine.fontSize);
+  assert.equal(erp.height,18);
+  assert.equal(taxLine.height,erp.height);
+  assert.ok(Math.abs(taxLine.top-erp.top)<1&&Math.abs(taxLine.multiplierTop-erp.multiplierTop)<1);
+  assert.ok(Math.abs(taxLine.gap-erp.gap)<1&&Math.abs(taxLine.width-erp.width)<2);
+  assert.ok([erp,taxLine].every(line=>line.inside&&Math.abs(line.centerOffset)<1));
+  await taxUnit.focus();
+  assert.equal(await taxUnit.inputValue(),String(unit));
+  assert.equal(await taxUnit.evaluate(input=>getComputedStyle(input).outlineStyle),'solid');
+  assert.ok((await measure()).every(line=>line.inside));
+  await taxUnit.press('Escape');
+  assert.equal(await taxUnit.inputValue(),formatted);
+  await page.locator('#undo').evaluate(button=>button.click());
+  await waitQuantity(1);
+  await page.locator('#undo').evaluate(button=>button.click());
+  await page.waitForFunction(()=>window.overviewProbe.snapshot().configs.find(c=>c.id==='c0').actualParts.find(p=>p.slot==='CPU')?.goodsId==='1001');
+ }
  await pasteModel('1001');
  await page.waitForFunction(()=>window.overviewProbe.snapshot().configs.find(c=>c.id==='c0').parts.find(p=>p.slot==='CPU')?.name==='样例 CPU');
  await edit(display,'对客户显示的 CPU');
@@ -306,5 +455,5 @@ try{
   assert.equal(c.actualParts.find(p=>p.slot==='内存').goodsId,'1002');
  }
  assert.deepEqual(errors,[]);
- console.log('通过：双页签、表头合计、核算价醒目标记与整链去重计数、出图与实际分离、整链分期、价格明细、简称编辑与选区复制。');
+ console.log('通过：三种纯预览、导出联动、深浅主题按钮、双页签、表头合计、两侧单价乘数对齐、核算价醒目标记与整链去重计数、出图与实际分离、整链分期、价格明细、简称编辑与选区复制。');
 }finally{await browser.close();}

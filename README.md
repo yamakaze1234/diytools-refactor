@@ -2,7 +2,7 @@
 
 面向 DIY 整机业务的 Windows 工作台。配置、价格、成本和历史由 NAS 服务端集中保存；桌面端负责编辑、图片预览与导出，并保留本机草稿。
 
-**Windows x64 · 0.2.43 · 服务端数据库版本**
+**Windows x64 · 0.2.48 · 服务端数据库版本**
 
 旧版本停止更新。后续功能与修复统一在服务端数据库版本提供；旧 `refactor-updates` 通道冻结，不会自动将旧本地数据迁到新版。
 
@@ -10,9 +10,9 @@
 
 | 下载入口 | 用途 |
 | --- | --- |
-| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.43/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.43.zip) | 首次使用，完整解压 |
-| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.43/DIY-0.2.43.zip) | 同一程序和使用包 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.43) | 更新内容与附件 |
+| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.48/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.48.zip) | 首次使用，完整解压 |
+| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.48/DIY-0.2.48.zip) | 同一程序和使用包 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.48) | 更新内容与附件 |
 
 1. 完整解压到独立可写目录，运行 `DIY配置工作台.exe`，无需 CMD。
 2. 首次连接所需的 NAS 服务地址与 CA 由管理员提供。账号由 NAS 认证，员工账号、密码和会话不随包分发。
@@ -43,7 +43,7 @@
 | `apps/desktop/src-tauri` | Rust HTTPS、账号会话、连接落盘、ERP 和签名更新 |
 | `services/nas-api` | NAS API、权限边界、PostgreSQL 操作及部署模板 |
 | `services/erp-worker`、`services/cost-reader` | 本机 ERP 查询与 Excel 只读组件 |
-| `packages` | 共享模块及旧 Agent 兼容代码；新版正式包不启用 Agent |
+| `packages` | 共享模块与正式包内置的 Agent CLI |
 | `tools` | 本地检查、构建、验签及发布 |
 | `docs` | 当前使用、开发、架构与发布说明 |
 

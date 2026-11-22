@@ -25,9 +25,9 @@ export function SourceEditorDetail({model:m}:{model:Row}) {
   <label className="field source-special-field"><span><Input id="source-special" type="checkbox" checked={m.special} disabled={!!m.selectedId}/>特殊配件（无 ERP ID，成本及维护表导出为 0）</span></label>
   <section className="source-erp-block"><div className="source-erp-query"><label className="field">ERP ID<Input id="source-id" value={row.goodsId} readOnly={!!m.selectedId||m.special} inputMode="numeric"/></label><Button type="button" id="source-erp-refresh">查询 ERP</Button></div><div className="source-erp-reference"><label className="field">ERP 单价（只读）<Input id="source-erp-price" readOnly value={m.erpPrice}/></label><div id="source-stock" dangerouslySetInnerHTML={{__html:m.stockHtml}}/><div className="text-sm text-muted-foreground" id="source-erp-status" role="status">当前为已同步价格</div></div></section>
   <label className="field source-field-name">{m.shared&&!m.quickEdit?'产品显示名称':'本店产品显示名称'}<Textarea id="source-name" rows={1} value={row.name}/></label>
-  <label className="field source-field-price">{m.nas?'含税核算单价':'三店共用含税核算单价'}<Input id="source-tax" readOnly={m.special} type="number" min="0" step=".01" value={row.tax??''} placeholder="留空表示待核算"/></label>
+  <label className="field source-field-price">{m.nas?(m.quickEdit?'本店含税核算单价':'含税核算单价'):'三店共用含税核算单价'}<Input id="source-tax" readOnly={m.special} type="number" min="0" step=".01" value={row.tax??''} placeholder="留空表示待核算"/></label>
   {/* 容量提示由原模块生成、读取和更新；此处不复制计算及联动规则。 */}
-  {m.shared?<details id="source-maintenance-fields" hidden={m.special}><summary>容量、硬件简称维护</summary><div dangerouslySetInnerHTML={{__html:m.capacityHtml}}/></details>:
+  {m.shared?<details id="source-maintenance-fields" hidden={m.special}><summary>容量、颜色与硬件资料</summary><div dangerouslySetInnerHTML={{__html:m.capacityHtml}}/></details>:
    <div dangerouslySetInnerHTML={{__html:m.capacityHtml}}/>}
   <section className="source-addon-editor" hidden={m.special}><h4>{m.shared?'多选加购':m.nas?'共享加购定义':'三店加购'}</h4><div id="source-addon-fields"/></section>
   {m.shared&&<section id="source-shared-preview" aria-label="各店生效值"/>}

@@ -10,6 +10,14 @@ use std::{
 const DEPLOYMENT: &str = "intel-production-acceptance";
 static SESSION: OnceLock<(String,String)> = OnceLock::new();
 
+// 合成货号只出现在 ERP 候选中，首次选择时由本机验收服务创建当前店输出源。
+pub(crate) fn erp_catalog() -> [serde_json::Value; 2] {
+    [
+        serde_json::json!({"goodsId":"990112901","name":"演示新品 X870M 主板 白色（DDR5 Wi-Fi 7）","erp":1680,"stockAvailable":8}),
+        serde_json::json!({"goodsId":"990112902","name":"演示新品 ZE-120B 风扇 黑色 正叶（ARGB）","erp":29,"stockAvailable":16}),
+    ]
+}
+
 pub struct LocalAcceptance {
     child: Child,
     _guard: File,

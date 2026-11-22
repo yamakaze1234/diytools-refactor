@@ -64,7 +64,8 @@ test('历史包含新增、删除、顺序及全局编辑；大小缓存与原JS
 const app=await fs.readFile(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
 // These VM fixtures exercise the legacy complete-workspace branch. Compact
 // eviction is tested independently; it must not schedule work after a VM test.
-const fullBranch={fullWorkspace:true,pruneDetails(){},compactWorkspace:async()=>false,setTimeout:()=>0};
+// VM 只装入历史和保存函数，沿用未初始化总表时的空引用。
+const fullBranch={fullWorkspace:true,continuousWorkbench:null,pruneDetails(){},compactWorkspace:async()=>false,setTimeout:()=>0};
 const receiptCode=app.slice(app.indexOf('async function savedReceiptState('),app.indexOf('async function recoverySnapshot('));
 test('实际普通增量保存不先比较完整草稿，两次并发调用与飞行输入共用请求且后续单独保存',async()=>{
  const s=state(),requests=[],nodes=new Map();let resolveFirst;

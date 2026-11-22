@@ -100,3 +100,10 @@ test('显卡人工简称保留后缀显存，保存重载后可清空恢复自�
  assert.throws(()=>validateHardware({gpuName:'x'.repeat(81)}),/显卡简称/);
  assert.throws(()=>validateHardware({gpuName:123}),/显卡简称/);
 });
+
+test('配件颜色仅接受黑白，空值移除并保留同一配件上的其他维护字段',()=>{
+ for(const color of ['黑','白'])assert.deepEqual(validateHardware({color}),{color});
+ assert.deepEqual(validateHardware({boardType:'MATX',color:''}),{boardType:'MATX'});
+ assert.equal(validateHardware({color:null}),undefined);
+ assert.throws(()=>validateHardware({color:'蓝'}),/配件颜色/);
+});

@@ -61,6 +61,12 @@ export function createUpdaterController(options: UpdaterOptions) {
   };
   const controller = {
     get state() { return state; },
+    /** 接续当前进程的启动检查结果，更新仍走原有下载与保存流程。 */
+    offer(release: UpdateCheck) {
+      if(disposed||!release.available||!release.version||!['idle','ready'].includes(state.phase)||state.downloaded)return false;
+      emit({phase:'ready',release,error:'',progress:null});
+      return true;
+    },
     async check() {
       if (disposed || ['checking', 'downloading', 'installing'].includes(state.phase) || state.downloaded) return;
       const operation = ++generation;

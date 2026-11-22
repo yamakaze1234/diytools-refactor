@@ -1,6 +1,6 @@
 # 项目结构与系统架构
 
-当前正式构建启用 `formal-nas-client`。React 与原工作台页面共享业务操作，Rust 提供网络、凭据、文件和更新能力。配置业务数据集中在 NAS PostgreSQL，原图保存在 NAS 文件目录。桌面不直连数据库，也不初始化旧本机业务 SQLite。
+当前正式构建启用 `formal-nas-client,agent-tools`，并内置同一源码构建的 Agent CLI。React 与原工作台页面共享业务操作，Rust 提供网络、凭据、文件和更新能力。配置业务数据集中在 NAS PostgreSQL，原图保存在 NAS 文件目录。
 
 ## 运行结构图
 
@@ -62,7 +62,7 @@ flowchart LR
 | 上传的原图 | NAS 文件存储及数据库元信息 |
 | 本机草稿、恢复队列、WebView 缓存 | 程序目录 `data/webview2`，作用域隔离 |
 | 服务端地址、部署标识、公开 CA | 程序旁 `workbench-connection.json`；兼容旧 `nas-launch.json` 与 `data/nas-ca.pem` |
-| 原账号认证接入 | 构建时内置非密码默认值；外部 `data/integrations.json` 优先覆盖 |
+| 原账号认证接入 | 由当前 NAS 连接确定认证入口，本机系统凭据管理器保护登录会话 |
 | 登录续期信息 | Windows 凭据管理器；不保存明文密码 |
 | ERP 查询运行时 | 本机 data 内，凭据由本机加密存储 |
 | 当前店铺核算价 | 读取已配置主机成本表的保存值，手动保存走 NAS 本店写入 |

@@ -1,5 +1,5 @@
 /** 模板库兼容与编辑：区分历史模板配置和普通配置，校验新模板并迁移旧保存结构。 */
-import {productGroups,templateConfigs} from './core.js';
+import {importTemplateConfigs,productGroups,templateConfigs} from './core.js';
 import {configCapacityMessage} from './config-capacity.js';
 import {suggestedName} from './legacy-names.js';
 
@@ -7,6 +7,17 @@ export const LEGACY_TEMPLATE_CATEGORY='主机模板';
 
 export function templateConfigLabel(config){
  return suggestedName({...config,name:''},'compact').replace(/^配置：/,'');
+}
+
+/** 沿用模板复制规则，将勾选的配置按原顺序生成一条待编辑的草稿链接。 */
+export function draftLinkFromTemplate(sources,shopId,name){
+ const product={id:crypto.randomUUID(),name,shopId,installment:sources[0].installment??0,configs:[]};
+ return importTemplateConfigs(sources,product).map((config,index)=>{
+  config.productDraft=true;
+  if(sources[index].shortNameAuto!==true&&String(config.shortName??'').trim())config.shortNameAuto=false;
+  for(const key of ['quotation','published','final_price_cents','isTemplate','templateId','templatePlatform','templateColor'])delete config[key];
+  return config;
+ });
 }
 
 export function isLegacyTemplateConfig(config){

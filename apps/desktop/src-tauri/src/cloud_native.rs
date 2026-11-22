@@ -451,13 +451,20 @@ pub async fn nas_erp_read(
     // 只开放固定只读查询和原生文件选择；英特尔对外报价表不用于其他店铺。
     let shop=shop_id.unwrap_or_else(||"intel".into());
     if !matches!(shop.as_str(),"intel"|"gigabyte"|"jonsbo")||(kind=="quote-file"&&shop!="intel")||
-        !matches!(kind.as_str(),"erp"|"erp-saved"|"erp-status"|"erp-clear"|"erp-form"|"tax-file"|"tax-status"|"tax-choose"|"tax-read"|"tax-current"|"quote-file")||
+        !matches!(kind.as_str(),"erp"|"erp-saved"|"erp-status"|"erp-clear"|"erp-form"|"erp-catalog"|"tax-file"|"tax-status"|"tax-choose"|"tax-read"|"tax-current"|"quote-file")||
         matches!(kind.as_str(),"erp-form"|"tax-read")!=connection.is_some()||goods_ids.len()>5000||
+        (kind=="erp-catalog"&&!goods_ids.is_empty())||
         goods_ids.iter().any(|id|id.is_empty()||id.len()>20||!id.bytes().all(|c|c.is_ascii_digit())) {
         return Err("ERP 查询范围无效".into());
     }
     let runtime=Arc::clone(runtime.inner());
     verify_nas_reader(Arc::clone(&runtime),expected_actor.clone(),shop.clone()).await?;
+    #[cfg(feature="nas-acceptance")]
+    if kind=="erp-catalog" {
+        // 独立验收版的候选来自合成 ERP，实际建源仍提交本包的 NAS 事务。
+        let rows=crate::nas_acceptance::erp_catalog();
+        return Ok(response(200,json!({"ok":true,"complete":true,"total":rows.len(),"rows":rows})));
+    }
     let scope_data=(runtime.nas.as_ref().map(|url|url.as_str()),runtime.nas_deployment.as_deref(),&expected_actor);
     // 英特尔保留既有连接范围；新店独立存储连接与所选工作簿。
     let scope_bytes=if shop=="intel" { serde_json::to_vec(&scope_data) } else { serde_json::to_vec(&(scope_data,&shop)) };
@@ -484,7 +491,7 @@ pub async fn nas_erp_read(
         let Some(path)=file else{return Ok(response(200,json!({"ok":true,"cancelled":true})));};
         verify_nas_reader(Arc::clone(&runtime),expected_actor.clone(),shop.clone()).await?;
         worker.nas_read_selected_vault(&path).await?
-    } else if kind=="erp"{worker.nas_form_request(&scope,json!({"action":"sql_read_nas"})).await?}
+    } else if matches!(kind.as_str(),"erp"|"erp-catalog"){worker.nas_form_request(&scope,json!({"action":"sql_read_nas"})).await?}
     else if kind=="erp-form"{
         let input=nas_erp_form(connection.as_ref().ok_or("请填写公司数据库连接")?)?;
         worker.nas_form_request(&scope,input).await?
@@ -525,6 +532,15 @@ pub async fn nas_erp_read(
         rows
     };
     verify_nas_reader(runtime,expected_actor,shop.clone()).await?;
+    if kind=="erp-catalog"{
+        // 搜索只取经过同店授权校验的 ERP 观察，不传凭据或原始连接信息。
+        let rows=result["rows"].as_array().ok_or("ERP 查询返回无效")?;
+        // SQL worker 成功时已通过全量快照的行数哨兵；旧 worker 仅返回 rows。
+        if rows.is_empty()||rows.len()>100000{
+            return Err("ERP 查询结果不完整".into());
+        }
+        return Ok(response(200,json!({"ok":true,"complete":true,"total":rows.len(),"rows":rows})));
+    }
     if kind=="quote-file"{
         return Ok(response(200,json!({"ok":true,"rows":result["rows"],"workbook_sha256":result["workbook_sha256"],
             "invalidCount":result["invalidCount"].as_u64().unwrap_or(0)})));
