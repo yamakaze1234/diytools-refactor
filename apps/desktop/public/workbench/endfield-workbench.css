@@ -188,7 +188,8 @@
     --ef-font-text: 'Microsoft YaHei UI', sans-serif !important;
   }
   html[data-workbench-design] body { background: var(--ef-paper) !important; color: var(--ef-ink) !important; }
-  html[data-workbench-design] :is(button, input, textarea, select, summary, dialog, [data-slot], .continuous-sheet, .config-item, .gallery-card, .source-item, .app-more-menu, .update-dialog, .login-card) {
+  /* 启动更新提醒采用独立的圆角卡片和按钮配色。 */
+  html[data-workbench-design] :is(button, input, textarea, select, summary, dialog, [data-slot], .continuous-sheet, .config-item, .gallery-card, .source-item, .app-more-menu, .update-dialog, .login-card):not(:where(.startup-update-notice, .startup-update-notice *)) {
     border-radius: 0 !important; box-shadow: none !important;
   }
   html[data-workbench-design] :is(input:not([type=checkbox]):not([type=radio]):not([type=color]), select, textarea):not(:where(#continuous-workbench *,#price-profit-page *)) {
@@ -197,7 +198,7 @@
   html[data-workbench-design] :is(input,select,textarea)::placeholder { color: var(--ef-ink-2) !important; opacity: .8; }
   html[data-workbench-design] :is(input,select,textarea):focus { outline-color: var(--ef-trace) !important; border-color: var(--ef-trace) !important; }
   html[data-workbench-design] [aria-invalid=true] { border-color: var(--ef-trace) !important; outline: 2px solid var(--ef-trace) !important; background-color: var(--ef-signal) !important; color: var(--ef-on-signal) !important; }
-  html[data-workbench-design] :where(button:not(.color-swatch):not(.poster-resize-handle):not([data-slot=checkbox]):not([data-slot=autocomplete-trigger]):not([data-slot=autocomplete-clear]):not([role=checkbox])):not(:where(#continuous-workbench *,#price-profit-page *)) {
+  html[data-workbench-design] :where(button:not(.color-swatch):not(.poster-resize-handle):not([data-slot=checkbox]):not([data-slot=autocomplete-trigger]):not([data-slot=autocomplete-clear]):not([role=checkbox])):not(:where(#continuous-workbench *,#price-profit-page *,.startup-update-notice *)) {
     clip-path: polygon(0 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%);
     background-color: var(--ef-chip) !important; color: var(--ef-ink) !important; border-color: transparent !important;
     transition: background-color 100ms var(--ef-mech),color 100ms var(--ef-mech) !important;
@@ -238,7 +239,7 @@
   html[data-workbench-design] [role=checkbox] { clip-path: none; color: var(--ef-ink) !important; background: var(--ef-panel) !important; border-color: var(--ef-ink-2) !important; }
   html[data-workbench-design] [role=checkbox][aria-checked=true] { color: var(--ef-on-signal) !important; background: var(--ef-signal) !important; border-color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.hint,.muted,.sidebar-note,.preview-hint,.storage-note,.image-status,.breadcrumb,.product-heading small,.selection-tools,.field,.dialog-title small) { color: var(--ef-ink-2) !important; }
-  html[data-workbench-design] :is(.workspace > .main,.workspace > .sidebar,.workspace > .preview-side,.config-editor,.config-sidebar,.login-card,.checks,.config-fields,.parts-scroll,dialog,.update-dialog,.update-versions) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; border-color: var(--ef-rule) !important; box-shadow: none !important; }
+  html[data-workbench-design] :is(.workspace > .main,.workspace > .sidebar,.workspace > .preview-side,.config-editor,.config-sidebar,.login-card,.checks,.config-fields,.parts-scroll,dialog:not(:where(.startup-update-notice)),.update-dialog,.update-versions) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; border-color: var(--ef-rule) !important; box-shadow: none !important; }
   html[data-workbench-design] :is(h1,h2,h3,.product-heading strong,.preview-head h2,.side-title,.config-item strong,.source-item strong,.gallery-card strong):not(:where(#continuous-workbench *,#price-profit-page *)) { color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) { background: #161616 !important; color: #ededed !important; border-color: #353535 !important; box-shadow: none !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) :is(.brand,.brand span,#save-status,small,.prototype,.sandbox-label,.app-more > summary) { color: #a3a3a3 !important; border-color: #353535 !important; }

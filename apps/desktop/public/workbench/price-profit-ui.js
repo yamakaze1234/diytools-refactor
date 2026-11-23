@@ -57,6 +57,7 @@ export function mountPriceProfit(root,api){
  let baseRows=new Map(),selectedRows=new Map(),removeRange=false,copyAligned=true;
  let renderedRows=new Map(),renderedLinks=new Map(),paintedCells=new Set(),paintedCurrent=null;
  let pendingWrites=0,writeTail=Promise.resolve(),savedState=null,saving=false,fullDrawRequested=false;
+ const pendingInputResults=new Set();let inputRejected=false;
  const pendingInputs=new WeakSet(),dirtyRows=new Set();
  let rowCache=new Map(),stockIndex=new Map(),linkScope=[];
  const focusClass=index=>index===0?' pp-frozen-number':index===3?' pp-frozen-config':'';
@@ -345,6 +346,7 @@ export function mountPriceProfit(root,api){
  function commitInput(el){
   if(pendingInputs.has(el))return false;
   if(!isEdited(el))return true;
+  inputRejected=false;
   const {ppCell:key,rowId:id}=el.dataset;
   try{
    const current=currentPriceRow(id);if(!current)throw Error('配置范围已变化，请重新选择。');
@@ -359,7 +361,7 @@ export function mountPriceProfit(root,api){
    }else plan=planIdEdit(api.allConfigs(),key,[id],[el.value],{allowBlank:true});
    if(!plan.length){el.value=el.defaultValue;return true;}
    pendingInputs.add(el);el.readOnly=true;
-   return mutate(()=>api.apply(plan,key==='price'?'调整到手价':'修改 '+fieldNames[key])).then(()=>{
+   const result=mutate(()=>api.apply(plan,key==='price'?'调整到手价':'修改 '+fieldNames[key])).then(()=>{
     if(key==='price')el.dataset.ppPrecise=String(plan[0].fields.price??'');
     el.defaultValue=el.value;
     if(key==='price'&&document.activeElement!==el)formatPrice(el);
@@ -367,11 +369,12 @@ export function mountPriceProfit(root,api){
    },error=>{
     el.value=el.defaultValue;
     if(key==='price'&&document.activeElement!==el)formatPrice(el);
-    announce(error.message);return false;
+    inputRejected=true;announce(error.message);return false;
    }).finally(()=>{
-    pendingInputs.delete(el);el.readOnly=false;
+    pendingInputs.delete(el);pendingInputResults.delete(result);el.readOnly=false;
    });
-  }catch(error){el.value=el.defaultValue;announce(error.message);return false;}
+   pendingInputResults.add(result);return result;
+  }catch(error){el.value=el.defaultValue;inputRejected=true;announce(error.message);return false;}
  }
  function formatPrice(field){
   const precise=field.dataset.ppPrecise;
@@ -520,7 +523,7 @@ export function mountPriceProfit(root,api){
    updateLinkHeader(renderedLinks.get(previous),previous);
    updateLinkHeader(renderedLinks.get(activeLink),activeLink);
   }
-  if(ppJumpLink){const c=api.rows().find(row=>linkKey(row)===ppJumpLink);if(c){hide();api.locate(c);}else{const link=api.links().find(row=>linkKey(row)===ppJumpLink);if(link)api.editLink(link);}}
+  if(ppJumpLink){const c=api.rows().find(row=>linkKey(row)===ppJumpLink);if(c){void hide(c);}else{const link=api.links().find(row=>linkKey(row)===ppJumpLink);if(link)api.editLink(link);}}
   if(ppEditLink){const c=api.links().find(c=>linkKey(c)===ppEditLink);if(c)api.editLink(c);}
   if(ppExpand){expanded.has(ppExpand)?expanded.delete(ppExpand):expanded.add(ppExpand);refresh({force:true,ids:new Set([ppExpand])});body.querySelector('[data-pp-expand="'+CSS.escape(ppExpand)+'"]')?.focus({preventScroll:true});}
   if(ppPickPart)openPartPicker(ppConfig,ppPickPart);
@@ -762,7 +765,7 @@ export function mountPriceProfit(root,api){
   const {config:c,quote:p,metrics:t}=row;
   api.openDialog('利润明细','<p class="hint">'+esc(shopName(c.shopId)+' · '+c.product+' · '+c.name)+'</p><dl class="pp-details"><dt>到手价 / 定价</dt><dd>'+money(p.arrival)+' / '+money(p.listPrice)+'</dd><dt>ERP 成本 / 扣点 / 固定费用</dt><dd>'+money(t.erp)+' / '+money(t.erpDeduction)+' / '+money(p.rule.erpFixed)+'</dd><dt>核算成本 / 扣点 / 固定费用</dt><dd>'+money(t.tax)+' / '+money(t.taxDeduction)+' / '+money(p.rule.taxFixed)+'</dd><dt>分期费'+(p.term?'（'+p.term+' 期 · '+p.percent+'%）':'')+'</dt><dd>'+money(p.fee)+'</dd><dt>ERP 利润 / 利润率</dt><dd>'+money(t.erpProfitAfter)+' / '+percent(t.erpMargin)+'</dd><dt>核算利润 / 利润率</dt><dd>'+money(t.taxProfitAfter)+' / '+percent(t.taxMargin)+'</dd></dl><p class="hint">利润 = 到手价 − 成本 − 扣点 − 固定费用 − 分期费。利润率按到手价计算。'+(t.erpFallback?'有 '+t.erpFallback+' 项 ERP 成本暂用核算成本代入。':'')+'</p><div class="actions"><button id="pp-details-rule">链接设置</button><button id="pp-details-config">前往配置</button></div>');
   dialog().querySelector('#pp-details-rule').onclick=()=>api.editLink(c);
-  dialog().querySelector('#pp-details-config').onclick=()=>{api.closeDialog();hide();api.locate(c);};
+  dialog().querySelector('#pp-details-config').onclick=()=>{api.closeDialog();void hide(c);};
  }
  function openAlert(){
   const targetShop=shop,rules=normalizeProfitAlerts(api.settings(shop).profitAlert)??{bases:['erp','tax'],erpProfit:DEFAULT_PROFIT_ALERT,taxProfit:DEFAULT_PROFIT_ALERT};
@@ -845,11 +848,23 @@ export function mountPriceProfit(root,api){
   root.hidden=false;workspace.classList.add('price-profit-active');
   refresh({force:true});grid.focus({preventScroll:true});
  }
- function hide(){
-  if(!visible())return;
-  if(partPanel.matches(':popover-open'))partPanel.hidePopover();
-  if(root.contains(document.activeElement)&&isEdited(document.activeElement))commitInput(document.activeElement);
-  root.hidden=true;workspace.classList.remove('price-profit-active');pointerDown=false;rangePointer=null;api.onClose();
+ let leaving=false;
+ async function hide(target){
+  if(!visible()||leaving)return;
+  leaving=true;
+  try{
+   const field=document.activeElement;
+   if(root.contains(field)&&isEdited(field)&&!pendingInputs.has(field)&&!await commitInput(field)){inputRejected=false;return;}
+   // 先提交当前输入并等待已入队的失焦写入，再交还焦点或定位配置。
+   const inputResults=await Promise.all([...pendingInputResults]);
+   while(pendingWrites)await writeTail;
+   if(inputRejected||inputResults.includes(false)){inputRejected=false;return;}
+   if(partPanel.matches(':popover-open'))partPanel.hidePopover();
+   root.hidden=true;workspace.classList.remove('price-profit-active');pointerDown=false;rangePointer=null;
+   await api.onClose();
+   if(target)await api.locate(target);
+  }catch(error){announce(error.message);}
+  finally{leaving=false;}
  }
  return {show,hide,visible,refresh,historyButtons,saveStatus};
 }

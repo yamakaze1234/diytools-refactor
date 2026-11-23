@@ -14,8 +14,10 @@ const base=process.env.REACT_TEST_URL||'http://127.0.0.1:5236';
 const root=await mkdtemp(join(tmpdir(),'diy-price-poster-nas-'));
 const api=await startSourceAcceptance({fixture,root,authenticate:async()=>({uid:fixtureActor,workspaceId:fixtureWorkspace})});
 const link=id=>'price-fix-'+id;
+for(const migration of ['027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql'])
+ await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+migration,import.meta.url),'utf8'));
 const row=(id,i)=>link(id)+'-'+i;
-let browser;
+let browser,page;
 try{
  const send=(path,options)=>fetch(api.url+path,{...options,headers:{...options?.headers,'x-workbench-deployment':fixtureDeployment}});
  const client=createNasApiClient({nativeRequest:send,shopId:'intel'});
@@ -47,7 +49,7 @@ try{
   [target,JSON.stringify({text:copy,note:'',sourceId:source.sourceId})]);
 
  browser=await chromium.launch({channel:'msedge',headless:true});
- const page=await browser.newPage({viewport:{width:1700,height:1040},bypassCSP:true,acceptDownloads:true});
+ page=await browser.newPage({viewport:{width:1700,height:1040},bypassCSP:true,acceptDownloads:true});
  page.setDefaultTimeout(15000);
  const errors=[],details=[];
  let holdDetails=null;
@@ -71,6 +73,16 @@ try{
  await page.route('**/api/**',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname.replace(/^\/api\/native-nas/,'');
   if(path==='/settings')return route.fulfill({json:{configured:true,main_editor:true,endpoint_id:'isolated-price-poster',deployment_id:fixtureDeployment}});
+  if(path==='/erp-read'){
+   const {kind,goodsIds}=req.postDataJSON();
+   if(kind==='tax-status')return route.fulfill({json:{ok:true,settings:{path:'D:/fixtures/成本表.xlsb'}}});
+   if(kind==='erp-status')return route.fulfill({json:{ok:true,saved:false}});
+   if(kind==='quote-file')return route.fulfill({json:{ok:true,workbook_sha256:'e'.repeat(64),rows:[{spu:'33333333',sku:'22222222',amount_cents:'222000',workbook_row:5}]}});
+   if(kind==='tax-read'){
+    assert.ok(goodsIds.includes('9900791'));
+    return route.fulfill({json:{ok:true,rows:[{goods_id:'9900791',tax:100}]}});
+   }
+  }
   if(!path.startsWith('/api/v1/'))return route.fulfill({json:{}});
   const id=path.match(/\/configurations\/([^/]+)$/)?.[1];
   if(id&&req.method()==='GET'){details.push(id);await holdDetails?.(id);}
@@ -211,8 +223,46 @@ try{
  await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
  assert.equal((await client.detail(target)).document.price,2213.25);
 
+ const openPriceMenu=async()=>{
+  if(await page.locator('.pp-menu').getAttribute('open')===null)await page.locator('.pp-menu > summary').click();
+ };
+ const returnToConfig=async()=>{
+  await openPriceMenu();await page.locator('#pp-back').click();
+  await page.locator('#price-profit-page').waitFor({state:'hidden'});
+ };
+ // 从价格页退出时仍有单元格未失焦，退出必须等同一份草稿写完。
+ await openPriceMenu();
+ await cell(target).fill('无效价格');
+ await page.locator('#pp-back').click();
+ await page.waitForFunction(()=>document.querySelector('#pp-status').textContent.includes('有效到手价'));
+ assert.equal(await page.locator('#price-profit-page').isVisible(),true);
+ await cell(target).fill('2230.75');
+ await returnToConfig();
+ await page.locator('#continuous-workbench').getByRole('textbox',{name:/配置4到手价/}).waitFor();
+ await page.waitForFunction(()=>document.querySelector('#continuous-workbench input[aria-label="配置4到手价"]')?.value.replaceAll(',','')==='2231');
+ await page.getByRole('button',{name:'价格',exact:true}).click();
+ await page.locator(`[data-pp-row="${target}"] [data-pp-expand]`).click();
+ const qty=page.locator(`[data-pp-config="${target}"][data-pp-qty="散热"]`);
+ await qty.fill('3');await qty.press('Enter');
+ await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='1 套待保存');
+ await page.locator('#pp-save').click();
+ await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
+ const saved=(await client.detail(target)).document;
+ assert.equal(saved.price,2230.75);
+ assert.equal(saved.actualParts.find(part=>part.slot==='散热').qty,3);
+ assert.equal(saved.parts.find(part=>part.slot==='散热').qty,3);
+ await returnToConfig();
+ const viewPrice=page.locator('#continuous-workbench').getByRole('textbox',{name:/配置4到手价/});
+ await viewPrice.fill('2240.75');await viewPrice.press('Enter');
+ await page.getByRole('button',{name:'价格',exact:true}).click();
+ await page.waitForFunction(id=>document.querySelector(`[data-pp-row="${id}"] [data-pp-cell="price"]`)?.dataset.ppPrecise==='2240.75',target);
+
+
+ await page.locator('#pp-save').click();
+ await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
+
  // 从实际侧栏拖动最后一套到最前面，再进入价格表读取新索引。
- await page.locator('.pp-menu > summary').click();await page.locator('#pp-back').click();
+ await returnToConfig();
  await page.evaluate(([from,to])=>{
   const source=document.querySelector(`.config-item[data-id="${from}"]`);
   const target=document.querySelector(`.config-item[data-id="${to}"]`);
@@ -225,8 +275,51 @@ try{
  await page.getByRole('button',{name:'价格',exact:true}).click();
  await page.locator('#price-profit-title').waitFor();
  assert.deepEqual(await shown(),newOrder);
+ // 同一窗口从价格页换码保存，链接菜单必须使用刚保存的新编码与版本核价。
+ await api.db.query(`INSERT INTO intel_live.quotations(configuration_id,workbook_sha256,source,sheet,status,amount_cents,workbook_rows)
+  VALUES($1,$2,'fixture','综合表','matched',200000,'[5]')`,[target,'a'.repeat(64)]);
+ for(const [field,value] of [['sku','22222222'],['spu','33333333']]){
+  const input=page.locator(`[data-pp-row="${target}"] [data-pp-cell="${field}"]`);
+  await input.fill(value);await input.press('Enter');
+ }
+ await page.locator('#pp-save').click();
+ await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
+ assert.equal((await client.quotation(target)).amount_cents,null);
+ await returnToConfig();
+ await page.locator('.ov-link-more > summary').click();
+ await page.getByRole('button',{name:'从维护表重新核价',exact:true}).click();
+ await page.locator('#nas-quote-file').click();
+ await page.waitForFunction(()=>document.querySelector('#nas-quote-message').textContent.includes('唯一匹配 1 套'));
+ await page.locator('#nas-quote-apply').click();
+ await page.waitForFunction(()=>document.querySelector('#nas-quote-message').textContent.includes('已确认 1 套'));
+ assert.equal((await client.quotation(target)).amount_cents,'222000');
+ await dialog.press('Escape');
+
+ // 三店均有手动价时，成本表共用基准已一致，零变更也显示所有受保护的价格。
+ for(const [i,shop] of ['intel','gigabyte','jonsbo'].entries()){
+  await api.db.query(`INSERT INTO ${shop}_live.intel_cost_overrides(goodsid,document,version)
+   VALUES('9900791',$1,90) ON CONFLICT(goodsid) DO UPDATE SET document=excluded.document,version=excluded.version`,
+   [JSON.stringify({goodsId:'9900791',tax:111+i,nasTaxOverride:true,nasManualTax:true})]);
+ }
+ await page.locator('#workspace-sync').click();await page.waitForFunction(()=>window.workbenchReady===true);
+ await page.locator(`[data-product-toggle="${link('a')}"] .link-arrow`).click();
+ await openRow(target);
+ await page.locator('.overview-manual-tax').waitFor();
+ assert.match(await page.locator('.overview-manual-tax').textContent(),/同步成本表时保留/);
+ assert.ok(await page.locator('.ov-tax .ov-manual-tax-tag').count()>0);
+ await page.locator('#erp-sync').click();
+ await page.locator('#cost-read').click();
+ const protectedRows=page.locator('.manual-tax-sync-warning tbody tr');
+ await protectedRows.first().waitFor();
+ assert.equal(await protectedRows.count(),3);
+ assert.deepEqual((await protectedRows.allTextContents()).map(text=>text.replace(/\s+/g,'')),['英特尔9900791111100','技嘉9900791112100','乔思伯9900791113100']);
+ assert.match(await page.locator('#cost-sync-message').textContent(),/0 处成本变化/);
+ assert.equal(await page.locator('#cost-apply').isVisible(),false);
+
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({通过:true,价格配置:original.length,加载分批:details.slice(start).length,合成资料目录:root}));
 }catch(error){
- console.error(error.stack);process.exitCode=1;
+ console.error(error.stack);
+ if(page)console.error(await page.evaluate(()=>({ready:window.workbenchReady,status:document.querySelector('#save-status')?.textContent,pageError:document.querySelector('#editor .error')?.textContent,quoteStatus:document.querySelector('#nas-quote-message')?.textContent,costStatus:document.querySelector('#cost-sync-message')?.textContent})).catch(()=>null));
+ process.exitCode=1;
 }finally{await browser?.close();await api.close();}

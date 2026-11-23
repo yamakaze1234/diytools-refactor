@@ -14,6 +14,7 @@ import LegacyWorkbench from "./LegacyWorkbench";
 import UpdateDialog from "./UpdateDialog";
 import type { UpdateCheck } from './updater-controller';
 import StartupLogin from './StartupLogin';
+import StartupUpdateNotice from './StartupUpdateNotice';
 import { createStartupLoginController, initialStartupLoginState, trustedWorkbenchSignOut } from './startup-login-controller';
 import type { CloudApiResponse } from './startup-login-controller';
 import "./App.css";
@@ -108,6 +109,11 @@ export default function App() {
       await invoke('nas_connection_restart');
     }catch(error){window.workbenchUpdatePending=false;freezeForUpdate(false);throw error;}
   }
+  // 关闭启动提醒只影响本次会话，仍可从更多菜单手动检查。
+  function dismissStartupNotice() {
+    startupNoticeDismissed.current = true;
+    setStartupRelease(null);
+  }
   const connectionDialog=connectionOpen?<ConnectionSettings firstUse={connectionRequired} onClose={()=>setConnectionOpen(false)} onSave={saveConnection}/>:null;
   function navigate(next: Page) {
     if(nasMain&&next!=='workbench')return;
@@ -136,7 +142,7 @@ export default function App() {
       }}>自动保存设置</Button>}
       {/* 新版通道由原生签名契约隔离；诊断仅导出本次运行日志。 */}
       {!acceptance&&<Button type="button" variant="outline"
-        onClick={event => { startupNoticeDismissed.current=true;setStartupRelease(null);setUpdateOpen(true);event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}
+        onClick={event => { dismissStartupNotice();setUpdateOpen(true);event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}
       <DiagnosticExport />
     </div></details>
   </header>;
@@ -146,13 +152,13 @@ export default function App() {
     {notice && <p className="notice" role="alert">{notice}<Button type="button" variant="outline" className="text-button" onClick={() => setNotice("")}>知道了</Button></p>}
     <div ref={content} inert={updateFrozen} className="app-content">{page === "workbench" ? <LegacyWorkbench nasMain={nasMain} onDirty={setDirty} onHeaderTarget={setHeaderTarget} /> : page === "configs" ? <ConfigWorkspace onDirty={setDirty} /> : page === "migration" ? <LegacyMigration onDirty={setDirty} /> : <ErpEnvironment />}</div>
     {connectionDialog}
-    {startupRelease&&!updateOpen&&<aside className="startup-update-notice" aria-label="桌面更新">
-      <span role="status">新版 {startupRelease.version} 可用</span>
-      <Button type="button" onClick={()=>{setStartupOffer(startupRelease);setStartupRelease(null);setUpdateOpen(true);}}>
-        {startupRelease.canInstall?'立即更新':'查看更新'}
-      </Button>
-      <Button type="button" variant="outline" onClick={()=>setStartupRelease(null)}>稍后</Button>
-    </aside>}
+    {startupRelease && !updateOpen && !connectionOpen && (
+      <StartupUpdateNotice release={startupRelease} onDismiss={dismissStartupNotice} onUpdate={() => {
+        setStartupOffer(startupRelease);
+        dismissStartupNotice();
+        setUpdateOpen(true);
+      }} />
+    )}
     <UpdateDialog open={updateOpen} startupOffer={startupOffer} onClose={() => {setStartupOffer(null);setUpdateOpen(false);}} dirty={page !== "workbench" && dirty} onFreeze={freezeForUpdate}
       check={async()=>startupChecking.current&&startupCheck.current?startupCheck.current:invoke<UpdateCheck>('updater_check')} />
   </main>;

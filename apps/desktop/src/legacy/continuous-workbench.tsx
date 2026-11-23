@@ -295,6 +295,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
    <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual}/>
    <tbody>{c.rows.map((row:Row,index:number)=>{
     const part=row.actual,stock=part?.name||part?.goodsId||part?.specialComponent?model.stock(part):null;
+    const manualTax=part&&model.manualTax?.(part);
     const changed=part&&model.different(part),global=part&&model.globalTax(part),base=changed?model.baseTax(part):null,baseline=base??part?.tax;
     const taxDraft=draft?.field==='tax'&&draft.index===index?draft.value:undefined;
     const taxDifferent=taxDraft===undefined?changed:taxDraft!==(base??part?.tax);
@@ -306,9 +307,10 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
        onCommit={value=>model.tax(c.id,row.slot,value)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.tax);
     return <tr key={row.slot} className={[row.slot==='风扇'?'ov-divider':'',subtotal?'ov-multiple-qty':''].filter(Boolean).join(' ')}>
      <td className="ov-number" data-metric="ERP 单价">{subtotal?<><span className="ov-line-total">{amount(typeof part?.erp==='number'?part.erp*qty:null)}</span><span className="ov-line-calc"><span>{amount(part?.erp)}</span>{multiplier}</span></>:amount(part?.erp)}</td>
-     <td className={'ov-number ov-tax'+(taxDifferent||global?' ov-tax-changed':'')+(global?' ov-tax-global-changed':'')} data-metric="含税单价" title={global?'全局改价：原价 '+amount(global.base)+' → '+amount(global.value)+' · '+new Date(global.at).toLocaleString('zh-CN'):taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
+     <td className={'ov-number ov-tax'+(taxDifferent||global||manualTax?' ov-tax-changed':'')+(global?' ov-tax-global-changed':'')} data-metric="含税单价" title={manualTax?'店铺手动核算价，同步成本表时保留':global?'全局改价：原价 '+amount(global.base)+' → '+amount(global.value)+' · '+new Date(global.at).toLocaleString('zh-CN'):taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
       {subtotal&&<span className="ov-line-total">{amount(typeof shownTax==='number'?shownTax*qty:null)}</span>}
       {subtotal?<span className="ov-line-calc"><span>{taxUnit}</span>{multiplier}</span>:<span>{taxUnit}</span>}
+      {manualTax&&<span className="ov-manual-tax-tag">手动价 · 同步保留</span>}
       {(taxDifferent||global)&&<div className="ov-tax-actions">{taxDifferent&&<><button className="ov-tax-global" onClick={()=>model.taxGlobal(c.id,row.slot)}>全局</button><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxReset(c.id,row.slot)}>恢复</button></>}{global&&<><span className="ov-tax-global-tag">全局</span><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxGlobalRestore(c.id,row.slot)}>全局恢复</button></>}</div>}
      </td>
      <td className="ov-number" data-metric="GoodID">{part?.goodsId||'—'}</td>

@@ -269,6 +269,10 @@ html.dark #continuous-workbench .ov-line-calc { color:#e1bd95; }
 #continuous-workbench :is(.ov-display-line,.ov-addon-line) > button { flex: none; min-height: 0; border: 0; background: transparent; white-space: nowrap; font-size: 11px; color: var(--ov-muted); padding: 2px 4px; }
 #continuous-workbench .ov-missing { font-size: 11px; opacity: .75; }
 #continuous-workbench .ov-add-row { margin: 4px 7px; font-size: 11px; }
+.overview-manual-tax:not([hidden]) { display: inline-block; margin-left: 6px; background: #fff27a; color: #372900; padding: 1px 4px; font-weight: 750; }
+.ov-manual-tax-tag { display: block; font-size: 11px; color: inherit; }
+.manual-tax-sync-warning { background: #fff8bc; color: #372900; border: 1px solid #d6b944; padding: 8px 12px; margin: 8px 0; }
+html.dark :is(.overview-manual-tax:not([hidden]),.manual-tax-sync-warning) { background: var(--ef-warning-surface, #fff8bc); color: var(--ef-warning-ink, #372900); }
 .overview-tax-count[data-has-difference] { display: inline-block; background: #fff27a; color: #372900; padding: 1px 4px; font-weight: 750; }
 #continuous-workbench .ov-editable { flex: 1; min-width: 0; cursor: text; overflow-wrap: anywhere; white-space: pre-wrap; }
 #continuous-workbench .ov-editable:empty::before { content: attr(data-placeholder); opacity: .6; }

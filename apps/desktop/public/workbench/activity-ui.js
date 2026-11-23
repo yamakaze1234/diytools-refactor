@@ -4,7 +4,7 @@ const nasKinds={configurations:['配置','configuration'],sources:['输出源','
  addons:['加购','source'],gallery:['机箱图库','gallery'],templates:['配置模板','template'],settings:['店铺设置','settings'],
  quotations:['维护表报价','quotation'],assets:['原图',null]};
 const nasActions={create:'新增',replace:'修改',design:'调整样式',archive:'移入回收站',restore:'恢复',copy:'复制',apply:'应用',
- upload:'上传',erp_snapshot:'同步 ERP',tax_file:'导入含税成本',tax_edit:'修改含税成本',tax_resume:'重新同步核算价',tax_file_skipped:'跳过手动核算价',select_workbook:'确认维护表价格',
+ upload:'上传',erp_snapshot:'同步 ERP',erp_sync:'三店同步 ERP',tax_file:'导入含税成本',tax_sync:'三店同步含税成本表',tax_edit:'修改含税成本',tax_resume:'重新同步核算价',tax_file_skipped:'跳过手动核算价',select_workbook:'确认维护表价格',
  publish:'向销售发布',withdraw:'撤回销售发布'};
 
 /** 用 NAS 已有审计字段恢复可读的记录；服务端没有细分字段或成员名时不猜测。 */

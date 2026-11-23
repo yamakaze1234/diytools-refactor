@@ -53,7 +53,7 @@ node --max-old-space-size=6144 tools/verify-live-import.mjs <完整接收区SQL�
 | 归档、恢复 | `POST /configurations/{id}/archive`、`POST /configurations/{id}/restore` |
 | 核查结果 | `GET /save-receipts/{operationId}` |
 
-保存携带 UUID `operation_id`；更新、归档、恢复和图格式保存须提交原 `expected_version`，新建与整体保存提交完整文档和关联版本。服务在同一事务内检查运营授权、保存完整修改、更新聚合版本并写同员工回执和审计。相同人员同 ID 相同正文复用回执，正文变化拒绝。配置已有确认维护表价时，SPU/SKU 变更必须先重新核价，工作台价不会替代维护表价。新建配置没有确认维护表价，归档撤下发布，恢复不会重新发布。全量初始化不自动发布销售配置。
+保存携带 UUID `operation_id`；更新、归档、恢复和图格式保存须提交原 `expected_version`，新建与整体保存提交完整文档和关联版本。服务在同一事务内检查运营授权、保存完整修改、更新聚合版本并写同员工回执和审计。相同人员同 ID 相同正文复用回执，正文变化拒绝。安装迁移 027 后，修改 SPU/SKU 会在保存时撤下原销售发布并失效旧编码报价；保存后按新编码核价。旧库沿用原报价保护。新建配置没有确认维护表价，归档撤下发布，恢复不会重新发布。全量初始化不自动发布销售配置。
 
 `GET /images/{sha256}.{png|jpg|jpeg}` 匿名访问，仅服务登记的摘要文件。首次读取和文件变化后核对格式、长度和 SHA-256；文件与业务资料分开挂载。
 
@@ -186,6 +186,14 @@ Windows 独立包使用 `tauri.nas-intel-production.conf.json` 和 `--features f
 `tax_edit`、`tax_file`、ERP 快照和其他来源核算价变更会使旧恢复标记失效。匹配新全局价的配置独立覆盖可取消，配置版本随之递增，原草稿仍需按既有冲突流程核对。
 
 隔离验证：`node test/global-tax.integration.mjs <合成三店SQL目录>`。该测试使用 PGlite 和真实生产角色，不连接正式数据库；普通单元测试仍为 `npm test`。
+
+### 三店成本表与 ERP 同步
+
+迁移 `027-quotation-identity-invalidation.sql` 与 `028-cross-shop-cost-sync.sql` 要在三店 NAS 库由管理员安装，随后部署支持相应接口的 API，再更新客户端。重复执行只更新函数及授权。旧库的配置换码仍沿用原报价保护，缺少三店同步函数时新 API 返回 `NAS_COST_SYNC_NOT_INSTALLED`。
+
+工作台先通过 `GET /api/v1/operations/workspace/costs/sync-preview` 获取三店成本版本，再读取 Excel 或 ERP。发起店的在用运营账号即可确认。成本表动作 `tax_sync` 同步已有共用来源及三店核算价，手动核算价保留并固定为该店的覆盖。ERP 动作 `erp_sync` 统一三店的库存及 ERP 成本字段。每批最多 100 个货号，批内三店同时提交审计、价格历史及回执。版本冲突回滚当批并返回冲突货号，已确认的其他批次可从原回执核对。
+
+隔离验收运行 `node test/cost-sync-quotation.integration.mjs <合成三店SQL目录>`。
 
 ## 本链接与三店全局加购
 

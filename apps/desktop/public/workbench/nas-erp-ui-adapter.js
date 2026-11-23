@@ -1,5 +1,5 @@
 // 原 ERP 页面共用表单及差异表；本适配器只管理受限只读预览和已确认的 NAS 写计划。
-import {planNasErpRows} from './nas-cost-overlay.js';
+import {planNasErpRows,planSharedCostSync,sharedCostGoods} from './nas-cost-overlay.js';
 import {REPAIRED_HOST_COST} from './maintenance-workbook.js';
 
 // 输出源查询独立于同步计划，找新品时无需先在工作区建立成本记录。
@@ -11,11 +11,23 @@ export async function lookupNasSourceProduct(read,goodsId){
  return {row:result.rows.find(row=>row.goodsId===goodsId)};
 }
 
-export function createNasErpUiAdapter({read,snapshot,context,apply,shopName='英特尔',now=()=>Date.now(),id=()=>crypto.randomUUID()}){
+export function createNasErpUiAdapter({read,snapshot,readSyncSnapshot,shopId,context,apply,shopName='英特尔',now=()=>Date.now(),id=()=>crypto.randomUUID()}){
  const plans=new Map();
  let layout={sheet:REPAIRED_HOST_COST.sheet,goodsColumn:13,taxColumn:26};
  const settings=fields=>({mode:'nas',path:'',...layout,...fields});
  async function preview(kind,mode,input){
+  if(readSyncSnapshot){
+   const stamp=context(),before=await readSyncSnapshot(),goods=sharedCostGoods(before);
+   if(!goods.length)throw Error('三店没有可同步的商品 ID。');
+   const source=await read(mode,goods,input);
+   if(source.cancelled)return {cancelled:true};
+   const plan=planSharedCostSync(before,source.rows,kind,shopId),key=id();
+   plans.set(kind,{id:key,at:now(),stamp,changes:plan.changes,protectedCount:plan.protectedRows.length});
+   return {id:key,source:source.settings||input?.settings,total:source.rows.length,matched:source.rows.length,
+    unmatched:plan.missing,unknown:kind==='erp'?source.rows.filter(row=>row.stockAvailable===null).length:0,
+    changes:plan.examples,examples:plan.examples.slice(0,80),changed:plan.changes.length,
+    invalidCount:source.invalidCount||0,protectedCount:plan.protectedRows.length,protectedRows:plan.protectedRows};
+  }
   const before=snapshot();
   if(!before.size)throw Error('本店没有可核对的商品 ID。');
   const stamp=context(),source=await read(mode,[...before.keys()],input);
@@ -38,10 +50,11 @@ export function createNasErpUiAdapter({read,snapshot,context,apply,shopName='英
    throw Error('预览已过期或工作区已变化，请重新读取预览。');
   const outcome=await apply(draft.changes,kind);
   if(!outcome)return {cancelled:true};
-  const skipped=outcome.batches?.flatMap(batch=>batch.result?.changes??[]).filter(row=>row.skipped==='manual_tax').length??0;
+  const skipped=draft.protectedCount??outcome.batches?.flatMap(batch=>batch.result?.changes??[]).filter(row=>row.skipped==='manual_tax').length??0;
   plans.delete(kind);return {committed:true,skipped};
  }
  return {
+  sharedCosts:Boolean(readSyncSnapshot),
   async sqlRequest(route,data){
    if(route==='credentials')return read('erp-status');
    if(route==='credentials/clear'){plans.delete('erp');return read('erp-clear');}

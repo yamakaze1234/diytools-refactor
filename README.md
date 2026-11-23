@@ -2,7 +2,7 @@
 
 面向 DIY 整机业务的 Windows 工作台。配置、价格、成本和历史由 NAS 服务端集中保存；桌面端负责编辑、图片预览与导出，并保留本机草稿。
 
-**Windows x64 · 0.2.50 · 服务端数据库版本**
+**Windows x64 · 0.2.51 · 服务端数据库版本**
 
 旧版本停止更新。后续功能与修复统一在服务端数据库版本提供；旧 `refactor-updates` 通道冻结，不会自动将旧本地数据迁到新版。
 
@@ -10,9 +10,9 @@
 
 | 下载入口 | 用途 |
 | --- | --- |
-| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.50/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.50.zip) | 首次使用，完整解压 |
-| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.50/DIY-0.2.50.zip) | 同一程序和使用包 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.50) | 更新内容与附件 |
+| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.51/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.51.zip) | 首次使用，完整解压 |
+| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.51/DIY-0.2.51.zip) | 同一程序和使用包 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.51) | 更新内容与附件 |
 
 1. 完整解压到独立可写目录，运行 `DIY配置工作台.exe`，无需 CMD。
 2. 首次连接所需的 NAS 服务地址与 CA 由管理员提供。账号由 NAS 认证，员工账号、密码和会话不随包分发。
@@ -26,8 +26,8 @@
 ## 主要功能
 
 - 按店铺和商品链接管理配置，维护配件、到手价、加购和版式。
-- 查询 ERP 成本和库存，预览后明确应用；查看价格变化、利润和操作历史。
-- 价格表与配置清单顺序一致，支持按链接或平铺排序。批量按利润定价按所选范围载入。
+- 任一店运营可预览并同步三店的 ERP 成本、库存与含税核算价，成本表同步保留手动核算价。
+- 价格与利润页和写配置双向联动。价格表与配置清单顺序一致，支持按链接或平铺排序。批量按利润定价按所选范围载入。
 - 新增输出源可按 ERP ID 查询尚未同步的配件。查看当前店铺核算价时读取已配置主机成本表的保存值。
 - 三店共用字段会标明仍有单店覆盖的店铺，可按字段恢复共用。总表多件配件的 ERP 和含税金额垂直居中。
 - 本机草稿与服务端保存分离；提交检查版本，遇到冲突保留编辑内容。

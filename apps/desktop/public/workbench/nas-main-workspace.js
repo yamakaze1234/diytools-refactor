@@ -429,6 +429,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
     return data;
    });
   },
+  costSyncSnapshot:()=>call(()=>client.costSyncSnapshot()),
   costVersion:id=>meta?.costVersions?.[id]??null,settingsVersion:()=>meta?.settingsVersion??null,
   supportsAddonPacks:()=>meta?.addonPacksSupported===true,
   priceDraft,

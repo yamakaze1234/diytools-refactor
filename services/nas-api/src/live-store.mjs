@@ -8,6 +8,7 @@ import {lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
 import {runNasProfit} from './profit-store.mjs';
 import {priceHistoryAction,priceHistorySnapshot,priceHistoryCurrent} from './price-history.mjs';
 import {validateGlobalTax,applyGlobalTax} from './global-tax.mjs';
+import {applyCostSync,costSyncSnapshot,crossShopCostAction,validateCostSync} from './cost-sync.mjs';
 import {addonItems,choiceAddon,effectiveNasAddons} from '../../../apps/desktop/public/workbench/addon-data.js';
 import {DEFAULT_PRICING_RULE,normalizePricingRule,normalizeProfitAlert,normalizeProfitAlerts} from '../../../apps/desktop/public/workbench/pricing.js';
 import {applyNameFormatPlan,nameFormatPlan} from '../../../apps/desktop/public/workbench/name-format-batch.js';
@@ -367,7 +368,7 @@ export class LiveStore extends Store{
     ...(this.workspaceWritable?{costVersions:Object.fromEntries(costs.map(row=>[row.goodsid,row.version])),settingsVersion:shopOverride?.version??null,addonPacksSupported:true}:{})};
   });
  }
- async configurationChange(db,shop,id,action,body,op){
+ async configurationChange(db,shop,id,action,body,op,member){
    // 先锁定单配置，即使新建记录尚不存在也能校验同一标识的并发请求。
    await shopLock(db,shop,814518,id);
    const {rows:[old]}=await db.query('SELECT version::text,archived_at,spu,sku FROM intel_live.configurations WHERE shop_id=$1 AND configuration_id=$2 FOR UPDATE',[shop,id]);
@@ -386,9 +387,16 @@ export class LiveStore extends Store{
      if(duplicate.rows.length)throw new Fault('SKU_ALREADY_USED',409);
     }
     if(old&&(old.spu!==document.spu||old.sku!==document.skuId)){
-     const {rows}=await db.query("SELECT 1 FROM intel_live.quotations WHERE configuration_id=$1 AND status='matched'",[id]);
-     if(rows.length)throw new Fault('QUOTATION_REVIEW_REQUIRED',409,{field:'document.skuId/spu'});
-     await db.query('SELECT intel_live.withdraw_publication($1)',[id]);
+     // 旧库继续执行原报价保护。先探测函数，避免在事务中用不存在的函数触发回滚。
+     const {rows:[feature]}=await db.query("SELECT to_regprocedure('workbench_sources.invalidate_quotation_identity(text,text,text,text,bigint,text,text)') IS NOT NULL AS installed");
+     if(feature.installed){
+      await db.query('SELECT workbench_sources.invalidate_quotation_identity($1,$2,$3,$4,$5,$6,$7)',
+       [shop,member.workspaceId,member.uid,id,old.version,document.spu,document.skuId]);
+     }else{
+      const {rows}=await db.query("SELECT 1 FROM intel_live.quotations WHERE configuration_id=$1 AND status='matched'",[id]);
+      if(rows.length)throw new Fault('QUOTATION_REVIEW_REQUIRED',409,{field:'document.skuId/spu'});
+      await db.query('SELECT intel_live.withdraw_publication($1)',[id]);
+     }
     }
     const oldParts=old?(await db.query('SELECT part_kind,line_id,source_id FROM intel_live.parts WHERE configuration_id=$1 AND source_id IS NOT NULL',[id])).rows:[];
     const oldSet=new Set(oldParts.map(p=>JSON.stringify([p.part_kind,p.line_id,p.source_id])));
@@ -440,7 +448,7 @@ export class LiveStore extends Store{
    if(this.workspaceWritable){
     if(await this.workspaceReceiptRow(db,[member.workspaceId,member.uid,op]))throw new Fault('OPERATION_REUSED',409);
    }
-   const {result,previousVersion}=await this.configurationChange(db,shop,id,action,item,op);
+   const {result,previousVersion}=await this.configurationChange(db,shop,id,action,item,op,member);
    await db.query('INSERT INTO intel_live.save_receipts(workspace_id,actor_uid,operation_id,shop_id,configuration_id,request_sha256,result) VALUES($1,$2,$3,$4,$5,$6,$7)',[member.workspaceId,member.uid,op,shop,id,hash,JSON.stringify(result)]);
    await db.query('INSERT INTO intel_live.audit_events(workspace_id,actor_uid,operation_id,shop_id,configuration_id,action,previous_version,next_version,request_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[member.workspaceId,member.uid,op,shop,id,action,previousVersion,result.version,requestId]);
    return result;
@@ -517,7 +525,7 @@ export class LiveStore extends Store{
     if(row)products.add(row.product_id);
    }
    for(const {id,action,doc} of ordered){
-    try{byId.set(id,{id,action,...await this.configurationChange(db,shop,id,action,doc,op)});}
+    try{byId.set(id,{id,action,...await this.configurationChange(db,shop,id,action,doc,op,member)});}
     catch(error){if(error instanceof Fault)error.details={...error.details,configuration_id:id};throw error;}
    }
    const reordered=[];
@@ -641,12 +649,26 @@ export class LiveStore extends Store{
   if(!row)throw new Fault('NOT_FOUND',404);
   return row;
  }
+ async workspaceCostSyncSnapshot(member,shop){
+  requireValue(this.workspaceWritable&&this.sharedSources,'NAS_COST_SYNC_NOT_INSTALLED',503);
+  return this.tx(false,async db=>{
+   await this.catalog.bind(db,member);
+   return costSyncSnapshot(db,shop,member);
+  });
+ }
  async workspaceMaintain(member,shop,kind,body,requestId){
   const expectedVersion=v=>v===null||version(v);
   failure(plain(body)&&Object.keys(body).every(k=>['operation_id','changes'].includes(k))&&Array.isArray(body.changes)&&
    body.changes.length>0&&body.changes.length<=100&&body.changes.every(row=>plain(row)&&identity(row.id)&&
     expectedVersion(row.expected_version))&&new Set(body.changes.map(row=>row.id)).size===body.changes.length,'changes');
   const entries=body.changes;
+  if(kind==='costs'&&entries.some(row=>crossShopCostAction(row.action))){
+   const action=validateCostSync(entries,shop);
+   requireValue(this.sharedSources,'NAS_COST_SYNC_NOT_INSTALLED',503);
+   const hash=sha(canonical({shop,kind,...body,operation_id:body.operation_id?.toLowerCase()}));
+   return this.workspaceOperation(member,shop,kind,body,requestId,(db,operationId)=>
+    applyCostSync(db,{member,shop,rows:entries,action,operationId,requestId,hash}),{shared:true});
+  }
   // 全局改价是单项原子操作，仍使用 costs 队列和原回执，不能与单店动作混发。
   if(kind==='costs'&&entries.some(row=>row.action==='global_tax')){
    failure(entries.length===1,'changes.global_tax');

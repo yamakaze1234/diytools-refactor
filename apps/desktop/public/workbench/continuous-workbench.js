@@ -12,6 +12,47 @@ import {markSourceFieldManual} from './source-follow.js';
 import {componentStockView} from './component-stock-view.js';
 import {erpDescription} from './erp-part-description.js';
 import {changeOverviewTax,differentTax,overviewTableTotals,overviewTaxDifferenceCount,readOverviewFeeRate} from './overview-table-model.js';
+const blank=(slot,lineId)=>({slot,lineId:lineId||crypto.randomUUID(),name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''});
+const ensure=(c,slot,actual)=>{const key=actual?'actualParts':'parts';c[key]??=actual?structuredClone(actualParts(c)):[];let i=c[key].findIndex(p=>p.slot===slot);if(i<0){i=c[key].length;c[key].push(blank(slot));}return i;};
+// 空白展示行和同型号展示行随实际型号变动，独立选择的展示配件保留。
+function sameModel(a,b){
+ if(a.sourceId&&b.sourceId)return a.sourceId===b.sourceId;
+ if(a.goodsId&&b.goodsId)return String(a.goodsId)===String(b.goodsId);
+ return !!a.name&&a.name===b.name;
+}
+export function changeActual(config,slot,source){
+ const index=ensure(config,slot,true),old=config.actualParts[index];
+ if(!source){
+  // 清空实际型号时同槽位的展示名称和逐项加购也一并清空。
+  config.actualParts[index]={...blank(slot,old.lineId),qty:old.qty};
+  const displayIndex=ensure(config,slot,false);
+  config.parts[displayIndex]=blank(slot,config.parts[displayIndex].lineId);
+  return;
+ }
+ const display=config.parts?.find(part=>part.slot===slot);
+ const empty=!display||(!display.sourceId&&!display.goodsId&&!display.name);
+ const follows=empty||sameModel(display,old);
+ const qty=old.qty,oldUpgrade=old.upgrade;
+ if(!old.sourceId||old.sourceId!==source.sourceId)replaceSourcePart({...config,parts:config.actualParts,addons:[]},index,source);
+ if(!follows)return;
+ const pos=ensure(config,slot,false),part=config.parts[pos];
+ if(source.sourceId===part.sourceId&&part.name)return;
+ const manualName=part.displayName||(part.sourceFollow?.name?.mode==='manual'?part.name:'');
+ const manualUpgrade=part.sourceFollow?.upgrade?.mode==='manual'||(!part.sourceFollow?.upgrade&&part.upgrade&&part.upgrade!==oldUpgrade);
+ const upgrade=part.upgrade;
+ replaceSourcePart(config,pos,source);
+ const next=config.parts[pos];
+ if(empty)next.qty=qty;
+ if(manualName){next.displayName=manualName;markSourceFieldManual(next,'name');}
+ if(manualUpgrade){next.upgrade=upgrade;markSourceFieldManual(next,'upgrade');}
+}
+// 展示数量仅在型号和原数量都相同时跟随。
+export function changeQuantity(config,slot,qty){
+ const index=ensure(config,slot,true),part=config.actualParts[index],display=config.parts?.find(row=>row.slot===slot);
+ if(display&&display.qty===part.qty&&sameModel(display,part))display.qty=qty;
+ part.qty=qty;
+}
+
 export function createContinuousWorkbench(api){
  const host=document.createElement('section');host.id='continuous-workbench';document.querySelector('.tabs').after(host);
  let epoch=0,clipboard=null,loading=false,lastError='',disposed=false;
@@ -29,46 +70,6 @@ export function createContinuousWorkbench(api){
  const configs=()=>api.available().filter(c=>c.productId===api.current()?.productId);
  const find=id=>api.configs().find(c=>c.id===id);
  const safe=fn=>{try{const result=fn();return result?.then?result.catch(e=>{api.toast(e.message);return false;}):result;}catch(e){api.toast(e.message);return false;}};
- const blank=(slot,lineId)=>({slot,lineId:lineId||crypto.randomUUID(),name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''});
- const ensure=(c,slot,actual)=>{const key=actual?'actualParts':'parts';c[key]??=actual?structuredClone(actualParts(c)):[];let i=c[key].findIndex(p=>p.slot===slot);if(i<0){i=c[key].length;c[key].push(blank(slot));}return i;};
- // 空白展示行和同型号展示行随实际型号变动，独立选择的展示配件保留。
- function sameModel(a,b){
-  if(a.sourceId&&b.sourceId)return a.sourceId===b.sourceId;
-  if(a.goodsId&&b.goodsId)return String(a.goodsId)===String(b.goodsId);
-  return !!a.name&&a.name===b.name;
- }
- function changeActual(config,slot,source){
-  const index=ensure(config,slot,true),old=config.actualParts[index];
-  if(!source){
-   // 清空实际型号时同槽位的展示名称和逐项加购也一并清空。
-   config.actualParts[index]={...blank(slot,old.lineId),qty:old.qty};
-   const displayIndex=ensure(config,slot,false);
-   config.parts[displayIndex]=blank(slot,config.parts[displayIndex].lineId);
-   return;
-  }
-  const display=config.parts?.find(part=>part.slot===slot);
-  const empty=!display||(!display.sourceId&&!display.goodsId&&!display.name);
-  const follows=empty||sameModel(display,old);
-  const qty=old.qty,oldUpgrade=old.upgrade;
-  if(!old.sourceId||old.sourceId!==source.sourceId)replaceSourcePart({...config,parts:config.actualParts,addons:[]},index,source);
-  if(!follows)return;
-  const pos=ensure(config,slot,false),part=config.parts[pos];
-  if(source.sourceId===part.sourceId&&part.name)return;
-  const manualName=part.displayName||(part.sourceFollow?.name?.mode==='manual'?part.name:'');
-  const manualUpgrade=part.sourceFollow?.upgrade?.mode==='manual'||(!part.sourceFollow?.upgrade&&part.upgrade&&part.upgrade!==oldUpgrade);
-  const upgrade=part.upgrade;
-  replaceSourcePart(config,pos,source);
-  const next=config.parts[pos];
-  if(empty)next.qty=qty;
-  if(manualName){next.displayName=manualName;markSourceFieldManual(next,'name');}
-  if(manualUpgrade){next.upgrade=upgrade;markSourceFieldManual(next,'upgrade');}
- }
- // 展示数量仅在型号和原数量都相同时跟随。
- function changeQuantity(config,slot,qty){
-  const index=ensure(config,slot,true),part=config.actualParts[index],display=config.parts?.find(row=>row.slot===slot);
-  if(display&&display.qty===part.qty&&sameModel(display,part))display.qty=qty;
-  part.qty=qty;
- }
  function pickSource(id,slot,actual,sourceId){
   const row=api.catalog().find(p=>p.sourceId===sourceId&&!p.deletedAt);
   if(!row)throw Error('配件来源已变化，请重新搜索');
@@ -89,14 +90,15 @@ export function createContinuousWorkbench(api){
   return source&&source.goodsId===part?.goodsId?{...part,hardwareOverrides:source.hardwareOverrides,hardwareFacts:source.hardwareFacts}:part;
  };
  const model=()=>{const visible=configs(),details=visible.map(c=>find(c.id)).filter(Boolean),term=details.length===visible.length?productInstallment(details):undefined,settings=api.settings(),ids=new Set(visible.map(c=>c.id));for(const id of projections.keys())if(!ids.has(id))projections.delete(id);const catalog=pickerCatalog();const cost=part=>stockCosts.get(String(part?.goodsId??''))?.[0];const editing=api.current();return {portalContainer:host.ownerDocument.body,active:editing?.id,productId:editing?.productId,loading,error:lastError,retry:()=>render(),configs:visible.map(c=>project(c,settings,term)),
- catalog,stock:part=>componentStockView(part,stockCosts),different:part=>differentTax(part,cost(part)),globalTax:part=>cost(part)?.globalTax||null,baseTax:part=>cost(part)?.tax??part.taxOverride?.base??null,
+ catalog,manualTax:part=>cost(part)?.nasManualTax===true,stock:part=>componentStockView(part,stockCosts),different:part=>differentTax(part,cost(part)),globalTax:part=>cost(part)?.globalTax||null,baseTax:part=>cost(part)?.tax??part.taxOverride?.base??null,
  describePart:(part,shown,slot)=>erpDescription(withLiveHardware(part),withLiveHardware(shown),
   cost(part)?.nasErpOverride?cost(part).name:part?.erpName||cost(part)?.erpName||cost(part)?.name,slot),
  erpSearch:lookupErp,
  adoptErp:(id,slot,item)=>safe(async()=>pickSource(id,slot,true,await api.adoptErp(id,slot,item))),
  configurationBenefits:api.configurationBenefits,
  canUndo:api.canUndo(),canRedo:api.canRedo(),undo:api.undo,redo:api.redo,
- diffCount:overviewTaxDifferenceCount(details,new Map([...stockCosts].map(([id,rows])=>[id,rows[0]]))),term,
+ diffCount:overviewTaxDifferenceCount(details,new Map([...stockCosts].map(([id,rows])=>[id,rows[0]]))),
+ manualTaxConfigCount:details.filter(config=>actualParts(config).some(part=>cost(part)?.nasManualTax===true)).length,term,
  installment:enabled=>safe(()=>{if(details.length!==visible.length)throw Error('请等当前链接加载完成');api.updateMany([...ids],c=>{c.installment=enabled?24:0;},enabled?'开启整链分期':'关闭整链分期');}),
  fee:(id,value,all=false)=>safe(()=>{const rate=readOverviewFeeRate(value);if(all&&details.length!==visible.length)throw Error('请等当前链接加载完成');const selected=(all?details:details.filter(c=>c.id===id)).filter(c=>c.overviewFeeRate!==rate);if(selected.length)api.updateMany(selected.map(c=>c.id),c=>{c.overviewFeeRate=rate;},all?'应用全部运营费率':'修改运营费率');}),
  activate:id=>{if(api.current()?.id!==id)api.activate(id);},
@@ -189,6 +191,11 @@ export function createContinuousWorkbench(api){
    let count=title.querySelector('.overview-tax-count');if(!count){count=document.createElement('span');count.className='overview-tax-count';count.setAttribute('role','status');title.append(' · ',count);}
    count.textContent=data.loading||data.configs.some(c=>c.loading)?'核算价差异统计中…':data.diffCount+' 套配置核算价有差异';
    count.toggleAttribute('data-has-difference',data.diffCount>0);
+   let manual=title.querySelector('.overview-manual-tax');
+   if(!manual){manual=document.createElement('span');manual.className='overview-manual-tax';manual.setAttribute('role','status');title.append(manual);}
+   manual.hidden=!data.manualTaxConfigCount;
+   manual.textContent=data.manualTaxConfigCount+' 套配置含手动核算价 · 同步成本表时保留';
+
   }
   renderedCanUndo=data.canUndo;
   renderedCanRedo=data.canRedo;

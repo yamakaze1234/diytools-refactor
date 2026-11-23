@@ -3,7 +3,8 @@ import {moneyCents,productInstallment} from '../../../apps/desktop/public/workbe
 import {trackedProfit} from '../../../apps/desktop/public/workbench/price-changes.js';
 
 const effective=(part,row)=>row?{...part,
- ...(row.nasTaxOverride?{tax:row.tax}:{}),
+ // 与实际 BOM 的核算规则一致：配置独立价优先于店铺成本。
+ ...(row.nasTaxOverride&&!(part.taxOverride?.goodsId===part.goodsId&&Number.isFinite(part.taxOverride.value))?{tax:row.tax}:{}),
  ...(row.nasErpOverride?{erp:row.erp,erpMissing:row.erpMissing,erpUnknown:row.erpUnknown}:{})}:part;
 const priceRow=row=>({tax:moneyCents(row?.tax),erp:row?.erpMissing===true||row?.erpUnknown===true?null:moneyCents(row?.erp)});
 const compact=(c,parts,settings,linkConfigs)=>({id:c.id,shopId:c.shopId,productId:c.productId,product:c.product,name:c.name,productUrl:c.productUrl,price:c.price,

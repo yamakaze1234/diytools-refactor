@@ -260,6 +260,7 @@ fn nas_route(base: &reqwest::Url, method: &str, route: &str) -> Option<(reqwest:
         ("GET", ["operations", "workspace-index" | "workspace-catalog"]) |
         ("POST", ["operations", "workspace", "configurations" | "import-preview" | "costs" | "settings" | "quotations" | "source-usage"]) |
         ("GET", ["operations", "workspace", "activity"]) |
+        ("GET", ["operations", "workspace", "costs", "sync-preview"]) |
         ("POST", ["operations", "workspace", "profit", "start" | "status" | "history" | "reset"]) |
         ("POST", ["operations", "workspace", "price-history", "list" | "detail" | "day" | "handle"]) |
         ("GET", ["operations", "workspace", "receipts" | "quotations", _]) |
@@ -290,6 +291,8 @@ fn nas_native_routes_only_allow_configured_https_business_methods() {
     let base = nas_base("https://nas.example:18443/").unwrap();
     let route = nas_route(&base, "PUT", "/api/v1/operations/configurations/id/design?shop_id=intel").unwrap();
     assert_eq!(route.1.origin(), base.origin());
+    assert!(nas_route(&base, "GET", "/api/v1/operations/workspace/costs/sync-preview?shop_id=intel").is_some());
+    assert!(nas_route(&base, "POST", "/api/v1/operations/workspace/costs/sync-preview").is_none());
     assert!(nas_route(&base, "PUT", "/api/v1/sales/configurations/id").is_none());
     assert!(nas_route(&base, "PUT", "/api/v1/operations/configurations/%2e%2e/me").is_none());
     assert!(nas_route(&base, "POST", "https://outside.example/api/v1/operations/configurations").is_none());
@@ -450,9 +453,11 @@ pub async fn nas_erp_read(
 ) -> Result<ApiResponse,String>{
     // 只开放固定只读查询和原生文件选择；英特尔对外报价表不用于其他店铺。
     let shop=shop_id.unwrap_or_else(||"intel".into());
+    // 共用同步用三店成本并集，本机读取器仍按明确货号过滤结果。
+    let max_goods=if matches!(kind.as_str(),"erp"|"erp-saved"|"erp-form"|"tax-read"){100000}else{5000};
     if !matches!(shop.as_str(),"intel"|"gigabyte"|"jonsbo")||(kind=="quote-file"&&shop!="intel")||
         !matches!(kind.as_str(),"erp"|"erp-saved"|"erp-status"|"erp-clear"|"erp-form"|"erp-catalog"|"tax-file"|"tax-status"|"tax-choose"|"tax-read"|"tax-current"|"quote-file")||
-        matches!(kind.as_str(),"erp-form"|"tax-read")!=connection.is_some()||goods_ids.len()>5000||
+        matches!(kind.as_str(),"erp-form"|"tax-read")!=connection.is_some()||goods_ids.len()>max_goods||
         (kind=="erp-catalog"&&!goods_ids.is_empty())||
         goods_ids.iter().any(|id|id.is_empty()||id.len()>20||!id.bytes().all(|c|c.is_ascii_digit())) {
         return Err("ERP 查询范围无效".into());

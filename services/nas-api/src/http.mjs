@@ -143,6 +143,8 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
      }
      return send(200,{ok:true,data:await store.workspaceActivity(member,200)});
     }
+    if(kind==='costs'&&id==='sync-preview'&&method==='GET')
+     return send(200,{ok:true,data:await store.workspaceCostSyncSnapshot(member,shop)});
     if(kind==='quotations'&&method==='GET'&&id)
      return send(200,{ok:true,data:await store.workspaceQuotations(shop,identifier(id))});
     requireValue(method==='POST'&&!id,'METHOD_NOT_ALLOWED',405);
