@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {blankConfig,importTemplateConfigs,totals} from '../../public/workbench/core.js';
 import {pricing,DEFAULT_PRICING_RULE} from '../../public/workbench/pricing.js';
-import {parseIdPaste,planIdEdit,planPriceBatch,priceProfitRow,flagsFor} from '../../public/workbench/price-profit-model.js';
+import {parseIdPaste,planIdEdit,planPriceBatch,priceProfitRow,flagsFor,priceTail99} from '../../public/workbench/price-profit-model.js';
 import {priceReportSheets} from '../../public/workbench/price-changes-export.js';
 import {applyWorkspace,projectWorkspace} from '../../public/workbench/cloud-projection.js';
 import {validateCloudRecord} from '../../public/workbench/cloud-protocol.js';
@@ -57,6 +57,15 @@ test('四种批量调价含精确目标验算，缺成本跳过，纯计划不�
  assert.match(plan('margin',95)[0].reason,/过高/);
  assert.match(plan('target',300,[priceProfitRow({...c,actualParts:[]},settings)])[0].reason,/缺少/);
  assert.equal(c.price,1000);
+});
+
+test('尾数 99 按核算保本价向上取整，缺少成本或超出上限时留空',()=>{
+ const c=fixture(),row=priceProfitRow(c,settings);
+ assert.equal(priceTail99(row),799);
+ const noCost=priceProfitRow({...c,actualParts:[]},settings);
+ assert.equal(priceTail99(noCost),null);
+ const overLimit=priceProfitRow({...c,actualParts:[{...c.actualParts[0],tax:900000}]},settings);
+ assert.equal(priceTail99(overLimit),null);
 });
 
 test('空链接模板接续占位，历史价格报表区分历史与现用扣点',()=>{

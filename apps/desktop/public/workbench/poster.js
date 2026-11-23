@@ -1,5 +1,6 @@
 import {skuImageMode} from './sku-image-mode.js';
 import {displayedAddon} from './hardware-upgrade.js';
+import {posterExtraRows} from './config-extras.js';
 /** 配置图与 SKU 图共用 Canvas 渲染器：将配件、模块、文字及素材合成为最终画布。 */
 import {modelCanvasWidth,posterColumns} from './poster-width.js';
 import {ensurePosterFonts,withPosterFonts} from './poster-fonts.js';
@@ -20,7 +21,8 @@ const entryContent=entry=>typeof entry==='string'?hasText(entry):hasText(entry?.
 const comparableCopy=value=>String(value??'').normalize('NFKC').replace(/\s+/g,'');
 /** 配置图使用方案 ID 定位链接文案。旧文案继续使用自己的行号与样式。 */
 export function posterAddonEntries(config,moduleId){
- const legacy=(config.addons||[]).map((row,index)=>({index,entry:displayedAddon(typeof row==='string'?{text:row}:row,config)}))
+ // 保留独立行的原始索引，配件来源加购仍由对应配件行负责展示。
+ const legacy=posterExtraRows(config,'addons').map(({index,...row})=>({index,entry:displayedAddon(row,config)}))
   .filter(({entry})=>entryContent(entry));
  const packs=new Map();
  for(const {id,mode,text} of config.posterAddonPacks||[]){

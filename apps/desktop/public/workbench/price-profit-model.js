@@ -93,6 +93,14 @@ function targetPrice(row,basis,mode,amount){
  return {reason:'结果超出价格范围'};
 }
 
+/** 以核算保本价为基数，向上取可用的 99 尾数。 */
+export function priceTail99(row){
+ const {price}=targetPrice(row,'tax','target',0);
+ if(price==null)return null;
+ const tail=Math.ceil((price-99)/100)*100+99;
+ return tail<=MAX_ARRIVAL?tail:null;
+}
+
 export function planPriceBatch(rows,{basis,mode,input}){
  const raw=String(input??'').trim(),amount=Number(raw);
  if(!['erp','tax'].includes(basis)||!['delta','ratio','target','margin'].includes(mode)||!raw||!Number.isFinite(amount)||Math.abs(amount)>MAX_ARRIVAL||(['target','margin'].includes(mode)&&amount<0)||mode==='margin'&&amount>=100||mode==='target'&&moneyCents(amount)/100!==amount)throw Error('请输入有效调整值；目标金额最多两位小数，目标利润率应低于 100%。');

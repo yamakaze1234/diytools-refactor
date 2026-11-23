@@ -84,3 +84,18 @@ test('旧文案与新加购包同文时只绘一份，删旧行不移动或清�
  assert.deepEqual(model.textStyles,{'addon.pack:bundle.text':{color:'#123456'}});
  assert.deepEqual(model.textTransforms.long,{'addon.pack:bundle.text':{x:30}});
 });
+
+test('底部加购仅使用页签独立文案与链接加购包，保留原文案的样式索引和配件数据',()=>{
+ const model={addons:[
+  {text:'共用来源加购',sourceId:'cpu-source',priceCents:9900},
+  {text:'配件结构化选配',choices:[]},
+  '手写旧文案',
+ ],textStyles:{'addon.0.text':{text:'旧版来源文案覆盖'}}};
+ const before=structuredClone(model);
+ assert.deepEqual(posterAddonEntries(model,'addon'),[{index:2,entry:{text:'手写旧文案',note:''}}]);
+ assert.deepEqual(model,before);
+ model.addons.pop();
+ assert.deepEqual(posterAddonEntries(model,'addon'),[]);
+ model.posterAddonPacks=[{id:'pack',mode:'text',text:'页签链接文案'}];
+ assert.deepEqual(posterAddonEntries(model,'addon').map(({entry})=>entry.text),['页签链接文案']);
+});

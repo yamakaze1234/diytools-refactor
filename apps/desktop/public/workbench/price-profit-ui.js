@@ -1,7 +1,7 @@
 import {profitTone} from './profit-tone.js';
 import {copyPlainText} from './clipboard.js';
 import {DEFAULT_PROFIT_ALERT,DEFAULT_PRICING_RULE,normalizeProfitAlert,normalizeProfitAlerts,validatePricingRule,productInstallment} from './pricing.js';
-import {flagsFor,linkKey,MAX_ARRIVAL,parseArrival,parseIdPaste,planIdEdit,planPriceBatch,priceProfitRow} from './price-profit-model.js';
+import {flagsFor,linkKey,parseArrival,parseIdPaste,planIdEdit,planPriceBatch,priceProfitRow,priceTail99} from './price-profit-model.js';
 import {actualParts} from './actual-parts.js';
 import {componentStockView} from './component-stock-view.js';
 import {isSpecialComponent} from './special-components.js';
@@ -15,6 +15,7 @@ const whole=value=>value==null?'—':yuan.format(value);
 const ruleFields={erpRate:'ERP 扣点',taxRate:'核算扣点',erpFixed:'ERP 固定费用',taxFixed:'核算固定费用',fee6:'6 期息点',fee12:'12 期息点',fee24:'24 期息点'};
 const fieldNames={spu:'SPU',sku:'SKU',shortName:'简称',price:'到手价'};
 const fields=Object.keys(fieldNames);
+const largeShopSize=100;
 const filters=[['all','全部配置'],['loss','亏损预警'],['missing','资料缺失'],['fallback','ERP 成本代入']];
 const statusChoices=[['erp-loss','ERP 利润亏损预警'],['tax-loss','核算利润亏损预警'],['missing','资料缺失'],['fallback','ERP 成本代入'],['normal','正常']];
 // 与确认稿共用列序和列宽，配置简称及序号作为冻结列。
@@ -54,7 +55,10 @@ export function mountPriceProfit(root,api){
  const expanded=new Set();
  let moreColumns=false,range=null,rangePointer=null;
  let baseRows=new Map(),selectedRows=new Map(),removeRange=false,copyAligned=true;
- let renderedRows=new Map(),paintedCells=new Set(),paintedCurrent=null;
+ let renderedRows=new Map(),renderedLinks=new Map(),paintedCells=new Set(),paintedCurrent=null;
+ let pendingWrites=0,writeTail=Promise.resolve(),savedState=null,saving=false,fullDrawRequested=false;
+ const pendingInputs=new WeakSet(),dirtyRows=new Set();
+ let rowCache=new Map(),stockIndex=new Map(),linkScope=[];
  const focusClass=index=>index===0?' pp-frozen-number':index===3?' pp-frozen-config':'';
  const colClass=index=>(index>=15?' pp-extra':'')+focusClass(index);
  const $=selector=>root.querySelector(selector);
@@ -67,18 +71,23 @@ export function mountPriceProfit(root,api){
   for(const c of api.links()){const key=linkKey(c);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(c);}
   return groups;
  };
- const rows=(groups=groupedConfigs())=>{
+ const rows=(groups=groupedConfigs(),changedIds=null)=>{
   const terms=new Map(Array.from(groups,([key,list])=>[key,productInstallment(list)]));
-  return api.rows().filter(config=>shop==='all'||config.shopId===shop).map(config=>priceProfitRow(config,{...api.settings(config.shopId),linkInstallment:terms.get(linkKey(config))}));
+  return api.rows().filter(config=>shop==='all'||config.shopId===shop).map(config=>{
+   if(changedIds&&!changedIds.has(config.id)&&rowCache.has(config.id))return rowCache.get(config.id);
+   const row=priceProfitRow(config,{...api.settings(config.shopId),linkInstallment:terms.get(linkKey(config))});
+   return {...row,flags:flagsFor(row)};
+  });
  };
  const match=(row,needle)=>[row.config.name,row.config.shortName,row.config.product,row.config.productUrl,row.config.spu,row.config.skuId,shopName(row.config.shopId)].some(v=>String(v??'').toLowerCase().includes(needle));
  const currentPriceRow=id=>{const c=api.rows().find(c=>c.id===id);return c?priceProfitRow(c,{...api.settings(c.shopId),linkInstallment:productInstallment(api.links().filter(link=>linkKey(link)===linkKey(c)))}):null;};
 
  root.innerHTML=`
  <header class="pp-header">
-  <div><h1 id="price-profit-title">价格与利润</h1><p>简称可直接编辑 · 左侧箭头展开配件 · 点击商品链接行后可跳转编辑</p></div>
+  <div><h1 id="price-profit-title">价格与利润</h1><p>按店铺扣点、固定费用与分期规则核算，链接可设独立规则。配置总表使用独立核算口径。</p></div>
   <div class="pp-actions"><button id="pp-undo" disabled>撤销</button><button id="pp-redo" disabled>重做</button>
-   <details class="pp-menu"><summary>更多</summary><div><button id="pp-back">返回配置</button><button id="pp-save">保存到本机</button><button id="pp-shop-settings">店铺设置</button><button id="pp-new-link">新建链接</button><button id="pp-status-filter" aria-label="筛选状态">全部状态 ▾</button><button id="pp-batch" disabled>批量调价</button></div></details>
+   <button id="pp-batch" disabled>批量调价</button><button id="pp-save">保存到本机</button><span id="pp-save-count" role="status" hidden></span>
+   <details class="pp-menu"><summary>更多</summary><div><button id="pp-back">返回配置</button><button id="pp-shop-settings">店铺设置</button><button id="pp-new-link">新建链接</button><button id="pp-status-filter" aria-label="筛选状态">全部状态 ▾</button></div></details>
   </div>
  </header>
  <section class="pp-sheet" aria-label="价格与利润工作表">
@@ -91,10 +100,11 @@ export function mountPriceProfit(root,api){
    </div>
    <div class="pp-tools">
     <div class="pp-switcher" role="group" aria-label="表格视图"><button id="pp-grouped" aria-pressed="true">按链接</button><button id="pp-flat" aria-pressed="false">平铺</button></div>
+    <button id="pp-expand-links">全部展开链接</button><button id="pp-collapse-links">全部收起链接</button>
     <button id="pp-more" aria-pressed="false">显示更多列</button><button id="pp-close-expanded">收起配置</button><button id="pp-copy-range" disabled>复制选区</button>
    </div>
   </div>
-  <div class="pp-summary"><div id="pp-summary" role="group" aria-label="价格利润筛选"></div><div class="pp-tools"><button id="pp-alert">预警规则</button></div></div>
+  <div class="pp-summary"><div id="pp-summary" role="group" aria-label="价格利润筛选"></div><div class="pp-tools"><small class="pp-alert-hint">启用的利润口径低于亏损线即标记预警</small><button id="pp-alert">预警规则</button></div></div>
   <div class="pp-formula"><strong id="pp-address">—</strong><span aria-hidden="true">fx</span><input id="pp-formula-value" aria-label="当前值或公式" readonly><small id="pp-formula-hint"></small><button id="pp-formula-detail" disabled>查看公式</button></div>
   <div class="pp-grid" tabindex="0" aria-label="价格与利润表格区域">
    <table class="pp-table">
@@ -117,7 +127,7 @@ export function mountPriceProfit(root,api){
  const grid=$('.pp-grid');
  const selectAll=$('#pp-select-all');
  const announce=message=>{$('#pp-status').textContent=message;api.toast(message);};
- const inputFor=(id,key)=>id==null?null:body.querySelector('[data-pp-cell="'+key+'"][data-row-id="'+CSS.escape(id)+'"]');
+ const inputFor=(id,key)=>renderedRows.get(id)?.querySelector('[data-pp-cell="'+key+'"]');
  const focusCell=(id,key)=>{const el=inputFor(id,key);if(el){el.focus({preventScroll:true});el.select();el.scrollIntoView({block:'nearest',inline:'nearest'});}return !!el;};
  const isEdited=el=>el?.matches('[data-pp-cell]')&&el.value!==el.defaultValue;
  const partIdentity=part=>JSON.stringify([part.slot,part.goodsId||part.name]);
@@ -140,55 +150,75 @@ export function mountPriceProfit(root,api){
   $('#pp-part-clear').disabled=!partFilters.size;
   partPanel.querySelectorAll('[data-pp-match]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.ppMatch===partMatch)));
  }
+ function collectPartChoices(){
+  const partsByKey=new Map();
+  for(const {config} of linkScope){
+   const seen=new Set();
+   for(const part of actualParts(config)){
+    if(!part.name||part.qty<=0||isSpecialComponent(part))continue;
+    const key=partIdentity(part);if(seen.has(key))continue;
+    seen.add(key);
+    const option=partsByKey.get(key);
+    if(option)option.count++;
+    else partsByKey.set(key,{key,part,count:1});
+   }
+  }
+  filterChoices=Array.from(partsByKey.values()).sort((a,b)=>b.count-a.count);
+  drawPartFilter();
+ }
+ function updateLinkHeader(header,key,config){
+  if(!header)return;
+  const selected=activeLink===key,hidden=collapsed.has(key);
+  header.toggleAttribute('data-current-link',selected);
+  header.querySelector('[data-pp-select-link]').setAttribute('aria-pressed',String(selected));
+  header.querySelector('[data-pp-jump-link]').hidden=!selected;
+  header.querySelector('[data-pp-edit-link]').hidden=!selected;
+  const spu=header.querySelector('[data-pp-link-spu]');spu.hidden=hidden&&!selected;
+  if(config)spu.textContent='SPU '+(config.spu||'—');
+ }
 
- function refresh({force=false}={}){
-  if(!visible()||rendering||!force&&(isEdited(document.activeElement)||pointerDown))return;
+ function refresh({force=false,ids=null}={}){
+  if(!visible()||rendering)return;
+  if(pendingWrites){if(force)fullDrawRequested=true;return;}
+  if(!force&&(isEdited(document.activeElement)||pointerDown))return;
   const existingFocus=document.activeElement,focused=body.contains(existingFocus)&&existingFocus.matches('[data-pp-cell]')?[existingFocus.dataset.rowId,existingFocus.dataset.ppCell]:null;
   const activeSummary=existingFocus?.dataset.ppFilter;
+  const needle=$('#pp-search').value.trim().toLowerCase();
+  // 活跃筛选或排序可能改变可见行及其位置，普通编辑只替换受影响的行。
+  const patch=ids&&rowCache.size&&!sort&&filter==='all'&&!needle&&!statusFilter.size&&!partFilters.size;
   rendering=true;
   try{
-   const groups=groupedConfigs(),inShop=rows(groups);
-   const links=new Map(inShop.map(row=>[linkKey(row.config),row.config]));
-   // 空链接有编辑入口；没有实际配置的草稿不计入利润与批量选择。
-   const linkChoices=api.links().filter(c=>shop==='all'||c.shopId===shop);
-   for(const c of linkChoices)if(!links.has(linkKey(c)))links.set(linkKey(c),c);
+   const groups=groupedConfigs(),inShop=rows(groups,patch?ids:null);
+   rowCache=new Map(inShop.map(row=>[row.config.id,row]));
+   const links=new Map(Array.from(groups).filter(([,list])=>shop==='all'||list[0].shopId===shop).map(([key,list])=>[key,list[0]]));
    if(!links.has(product))product='';
-   $('#pp-shop').innerHTML=options([['all','全部店铺'],...api.shops.map(s=>[s.id,s.name])],shop);
-   $('#pp-product').innerHTML=options([['','全部链接'],...Array.from(links,([key,c])=>[key,(shop==='all'?shopName(c.shopId)+' · ':'')+(c.product||'未命名链接')])],product);
+   if(!patch){
+    const shops=api.shops.map(s=>[s.id,s.name]);
+    $('#pp-shop').innerHTML=options(api.nas?shops:[['all','全部店铺'],...shops],shop);
+    $('#pp-product').innerHTML=options([['','全部链接'],...Array.from(links,([key,c])=>[key,(shop==='all'?shopName(c.shopId)+' · ':'')+(c.product||'未命名链接')])],product);
+   }
    $('#pp-shop-settings').disabled=shop==='all';
    $('#pp-alert').disabled=shop==='all';
    $('#pp-shop-settings').title=shop==='all'?'请选择需要修改的店铺':'';
    $('#pp-alert').title=shop==='all'?'请选择需要修改的店铺':'';
-   const needle=$('#pp-search').value.trim().toLowerCase();
-   const linkScope=inShop.filter(r=>(!product||product===linkKey(r.config))&&match(r,needle));
-   // 筛选候选来自当前范围的实际型号，按配置去重计数。
-   const partsByKey=new Map();
-   for(const row of linkScope){
-    const seen=new Set();
-    for(const part of actualParts(row.config)){
-     if(!part.name||part.qty<=0||isSpecialComponent(part))continue;
-     const key=partIdentity(part);if(seen.has(key))continue;
-     seen.add(key);
-     const option=partsByKey.get(key);
-     if(option)option.count++;
-     else partsByKey.set(key,{key,part,count:1});
-    }
-   }
-   filterChoices=Array.from(partsByKey.values()).sort((a,b)=>b.count-a.count);
-   drawPartFilter();
+   linkScope=inShop.filter(r=>(!product||product===linkKey(r.config))&&match(r,needle));
+   if(partPanel.matches(':popover-open'))collectPartChoices();
    const scope=linkScope.filter(r=>matchesParts(r.config));
-   const flagged=scope.map(r=>({...r,flags:flagsFor(r)}));
-   const counts=Object.fromEntries(filters.map(([key])=>[key,key==='all'?scope.length:flagged.filter(r=>r.flags[key]).length]));
-   $('#pp-summary').innerHTML=filters.map(([key,label])=>'<button type="button" data-pp-filter="'+key+'" aria-pressed="'+String(filter===key)+'"><span>'+label+'</span><strong>'+counts[key]+'</strong></button>').join('');
-   if(activeSummary)$('#pp-summary').querySelector('[data-pp-filter="'+activeSummary+'"]')?.focus({preventScroll:true});
-   const filtered=flagged.filter(r=>(filter==='all'||r.flags[filter])&&(!statusFilter.size||statusKeys(r.flags).some(key=>statusFilter.has(key))));
+   const counts=Object.fromEntries(filters.map(([key])=>[key,key==='all'?scope.length:scope.filter(r=>r.flags[key]).length]));
+   if(patch){for(const [key] of filters)$(`[data-pp-filter="${key}"] strong`).textContent=counts[key];}
+   else{
+    $('#pp-summary').innerHTML=filters.map(([key,label])=>'<button type="button" data-pp-filter="'+key+'" aria-pressed="'+String(filter===key)+'"><span>'+label+'</span><strong>'+counts[key]+'</strong></button>').join('');
+    if(activeSummary)$('#pp-summary').querySelector('[data-pp-filter="'+activeSummary+'"]')?.focus({preventScroll:true});
+   }
+   const filtered=scope.filter(r=>(filter==='all'||r.flags[filter])&&(!statusFilter.size||statusKeys(r.flags).some(key=>statusFilter.has(key))));
    $('#pp-status-filter').textContent=(statusFilter.size?'已选 '+statusFilter.size+' 项':'全部状态')+' ▾';
    // 结果数量包含折叠组中的匹配配置；底部可见数量仍表示可操作行。
    $('#pp-result-count').textContent='筛选结果：'+filtered.length+' 套配置';
-   if(sort){
+   const sortRows=list=>{
+    if(!sort)return;
     const value=r=>sort.key==='arrival'?r.quote.arrival:r.metrics[sort.key];
-    filtered.sort((a,b)=>{const x=value(a),y=value(b);return x==null?+(y!=null):y==null?-1:(x-y)*sort.direction;});
-   }
+    list.sort((a,b)=>{const x=value(a),y=value(b);return x==null?+(y!=null):y==null?-1:(x-y)*sort.direction;});
+   };
    table.querySelectorAll('[data-pp-sort]').forEach(button=>{
     const active=sort?.key===button.dataset.ppSort;
     button.querySelector('span').textContent=active?(sort.direction===1?'↑':'↓'):'↕';
@@ -196,14 +226,18 @@ export function mountPriceProfit(root,api){
    });
    const displayLinks=new Map();
    for(const row of filtered){const key=linkKey(row.config);if(!displayLinks.has(key))displayLinks.set(key,[]);displayLinks.get(key).push(row);}
-   if(grouped&&filter==='all'&&!needle&&!statusFilter.size&&!partFilters.size)for(const [key] of links)if((!product||key===product)&&!displayLinks.has(key)&&linkChoices.some(c=>linkKey(c)===key&&c.emptyLinkDraft))displayLinks.set(key,[]);
+   const showEmpty=filter==='all'&&!needle&&!statusFilter.size&&!partFilters.size;
+   const displayedGroups=grouped?[...links].filter(([key])=>displayLinks.has(key)||
+    showEmpty&&(!product||key===product)&&groups.get(key).some(c=>c.emptyLinkDraft)):[];
    // 可销按实际配件及用量折算；缺少库存时显示未知。
-   const stocksById=new Map();
-   for(const part of api.costs?.()??[]){if(!stocksById.has(part.goodsId))stocksById.set(part.goodsId,[]);stocksById.get(part.goodsId).push(part);}
+   if(!patch){
+    stockIndex=new Map();
+    for(const part of api.costs?.()??[]){if(!stockIndex.has(part.goodsId))stockIndex.set(part.goodsId,[]);stockIndex.get(part.goodsId).push(part);}
+   }
    let sequence=0;
    const span=moreColumns?columns.length:15;
    table.style.setProperty('--pp-width',columns.slice(0,span).reduce((sum,col)=>sum+col[1],0)+'px');
-   const rowHTML=row=>{
+   const rowHTML=(row,number)=>{
     const {config:c,quote:p,metrics:t,flags:f}=row;
     const status=[...f.hits.loss.map(key=>['destructive',(key==='erp'?'ERP':'核算')+'亏损预警']),f.missing?['muted','资料缺失']:null,f.fallback?['warning','ERP 成本代入']:null].filter(Boolean);
     if(!status.length)status.push(['success','正常']);
@@ -211,20 +245,19 @@ export function mountPriceProfit(root,api){
     const editor=(key,value)=>'<input class="pp-cell '+(key==='price'?'pp-price-cell':key==='shortName'?'pp-name-cell':'pp-id-cell')+'" aria-label="'+esc(c.name)+' '+fieldNames[key]+'" data-row-id="'+id+'" data-pp-cell="'+key+'" inputmode="'+(key==='price'?'decimal':key==='shortName'?'text':'numeric')+'" autocomplete="off" spellcheck="false"'+(key==='price'?' data-pp-precise="'+esc(value)+'"':'')+' value="'+esc(key==='price'&&value!=null?whole(value):value)+'">';
     const cell=(col,text,classes='',profit)=>'<td data-pp-col="'+col+'" class="'+classes+colClass(col)+'"'+(profit!==undefined?' data-profit-tone="'+profitTone(profit)+'"':'')+'>'+text+'</td>';
     const numeric=(col,value,tone=false)=>cell(col,whole(value),'pp-number',tone?value:undefined);
-    const parts=actualParts(c).filter(part=>part.name||part.goodsId).map(part=>({part,stock:componentStockView(part,stocksById)}));
+    const parts=actualParts(c).filter(part=>part.name||part.goodsId).map(part=>({part,stock:componentStockView(part,stockIndex)}));
     const available=parts.filter(({part})=>!isSpecialComponent(part)).map(({part,stock})=>stock.value==null||!Number.isInteger(Number(part.qty))||part.qty<1?null:Math.floor(stock.value/part.qty));
     const stock=!available.length||available.some(v=>v==null)?(available.includes(0)?0:null):Math.min(...available);
-    const basePrice=planPriceBatch([row],{basis:'tax',mode:'target',input:0})[0].price;
-    const next99=basePrice==null?null:Math.ceil((basePrice-99)/100)*100+99;
+    const next99=priceTail99(row);
     const chassis=parts.find(({part})=>part.slot==='机箱')?.part;
     const badge=status.map(([kind,label])=>'<span class="pp-badge" data-variant="'+kind+'">'+esc(label)+'</span>').join('');
     const main='<tr data-pp-row="'+id+'"'+(picked?' data-selected':'')+(open?' data-expanded':'')+'>'+
-      cell(0,'<label class="pp-seq"><input type="checkbox" data-pp-pick="'+id+'" aria-label="勾选 '+esc(c.name)+'"'+(picked?' checked':'')+'><span>'+ ++sequence+'</span></label>')+
+      cell(0,'<label class="pp-seq"><input type="checkbox" data-pp-pick="'+id+'" aria-label="勾选 '+esc(c.name)+'"'+(picked?' checked':'')+'><span>'+number+'</span></label>')+
       cell(1,editor('spu',c.spu))+cell(2,editor('sku',c.skuId))+
       cell(3,'<div class="pp-config-cell"><button type="button" class="pp-config-link" aria-label="'+(open?'收起':'展开')+esc(c.name)+'实际配件" data-pp-expand="'+id+'" aria-expanded="'+open+'"><i class="pp-chevron" aria-hidden="true"></i></button>'+editor('shortName',c.shortName||c.name)+'</div>')+
       numeric(4,p.listPrice)+cell(5,editor('price',p.arrival))+
       numeric(6,t.taxProfitAfter,true)+numeric(7,t.erpProfitAfter,true)+cell(8,percent(t.taxMargin),'pp-number',t.taxProfitAfter)+cell(9,whole(stock),'pp-number'+(stock===0?' pp-out':'') )+numeric(10,t.tax)+numeric(11,t.erp)+
-      cell(12,badge,'pp-status-cell')+cell(13,esc(chassis?.name||'—'),'pp-chassis')+numeric(14,next99<=MAX_ARRIVAL?next99:null)+
+      cell(12,badge,'pp-status-cell')+cell(13,esc(chassis?.name||'—'),'pp-chassis')+numeric(14,next99)+
       cell(15,percent(t.erpMargin),'pp-number',t.erpProfitAfter)+numeric(16,t.taxDeduction)+numeric(17,t.erpDeduction)+numeric(18,p.fee)+'</tr>';
     if(!open)return main;
     const uniqueSlot=slot=>parts.filter(({part})=>part.slot===slot).length===1;
@@ -234,22 +267,42 @@ export function mountPriceProfit(root,api){
      const qty=editable?'<input type="number" min="1" max="1000" step="1" data-pp-qty="'+slot+'" data-pp-config="'+id+'" aria-label="'+slot+'实际数量" value="'+esc(part.qty)+'">':esc(part.qty);
      return '<tr><th scope="row">'+slot+'</th><td>'+name+'</td><td>'+qty+'</td><td>'+esc(stock.status==='special'?'—':stock.value??'未知')+'</td><td>'+whole(part.erp)+'</td><td>'+whole(part.tax)+'</td></tr>';
     }).join('');
-    return main+'<tr class="pp-expanded"><td colspan="'+span+'"><section class="pp-detail"><div class="pp-expanded-head"><strong>实际配件</strong><span>'+esc(c.shortName||c.name)+' · '+parts.length+' 项配件</span><button data-pp-expand="'+id+'">收起 ↑</button></div><div class="pp-detail-grid"><table aria-label="展开的实际配件"><colgroup><col style="width:82px"><col><col style="width:62px"><col style="width:92px"><col span="2" style="width:105px"></colgroup><thead><tr><th>槽位</th><th>实际配件 / 型号</th><th>数量</th><th>ERP 可销</th><th>ERP 单价</th><th>含税单价</th></tr></thead><tbody>'+details+'</tbody></table></div></section></td></tr>';
+    return main+'<tr data-pp-detail class="pp-expanded"><td colspan="'+span+'"><section class="pp-detail"><div class="pp-expanded-head"><strong>实际配件</strong><span>'+esc(c.shortName||c.name)+' · '+parts.length+' 项配件</span><button data-pp-expand="'+id+'">收起 ↑</button></div><div class="pp-detail-grid"><table aria-label="展开的实际配件"><colgroup><col style="width:82px"><col><col style="width:62px"><col style="width:92px"><col span="2" style="width:105px"></colgroup><thead><tr><th>槽位</th><th>实际配件 / 型号</th><th>数量</th><th>ERP 可销</th><th>ERP 单价</th><th>含税单价</th></tr></thead><tbody>'+details+'</tbody></table></div></section></td></tr>';
    };
+   $('#pp-expand-links').disabled=!grouped||!displayedGroups.some(([key])=>collapsed.has(key));
+   $('#pp-collapse-links').disabled=!grouped||!displayedGroups.some(([key])=>!collapsed.has(key));
+   if(patch){
+    for(const id of ids){
+     const row=rowCache.get(id);if(!row)continue;
+     const key=linkKey(row.config);
+     updateLinkHeader(renderedLinks.get(key),key,links.get(key));
+     const old=renderedRows.get(id);if(!old)continue;
+     const fragment=document.createRange();fragment.selectNode(old);
+     const replacement=fragment.createContextualFragment(rowHTML(row,old.querySelector('.pp-seq span').textContent));
+     const first=replacement.firstElementChild;
+     if(old.nextElementSibling?.hasAttribute('data-pp-detail'))old.nextElementSibling.remove();
+     old.replaceWith(replacement);renderedRows.set(id,first);
+    }
+    historyButtons();paintRange();
+    if(focused&&!existingFocus.isConnected)focusCell(...focused);
+    return;
+   }
    const shown=[];
    if(grouped){
-    body.innerHTML=Array.from(displayLinks,([key,group])=>{
-     const c=links.get(key),hidden=collapsed.has(key),k=esc(key);
+    body.innerHTML=displayedGroups.map(([key,c])=>{
+     const group=displayLinks.get(key)||[],hidden=collapsed.has(key),k=esc(key);
+     sortRows(group);
      if(!hidden)shown.push(...group);
      const term=productInstallment(groups.get(key)),hint=(c.pricingRule?'独立核算':'跟随店铺')+' · '+(term===null?'分期设置不一致':term?term+' 期免息':'不分期');
      const current=activeLink===key;
-     return '<tr class="pp-link-group"'+(current?' data-current-link':'')+'><td class="pp-frozen-number"></td><td colspan="3"><div class="pp-group-id"><button type="button" data-pp-collapse="'+k+'" aria-expanded="'+String(!hidden)+'" aria-label="'+(hidden?'展开':'收起')+esc(c.product||'未命名链接')+'"><i class="pp-chevron" aria-hidden="true"></i></button><button type="button" data-pp-select-link="'+k+'" aria-pressed="'+current+'"><strong>'+esc(c.product||'未命名链接')+'</strong><small>'+group.length+' 套</small></button>'+(current?'<button type="button" data-pp-jump-link="'+k+'">编辑配置</button>':'')+'</div></td><td colspan="'+(span-4)+'"><div class="pp-group-meta"><span>SPU '+esc(c.spu||'—')+'</span>'+(current?'<button type="button" data-pp-edit-link="'+k+'" title="'+esc(hint)+'">链接设置</button>':'')+'</div></td></tr>'+
-       (hidden?'':group.length?group.map(rowHTML).join(''):'<tr><td colspan="'+span+'" class="pp-empty">此链接尚无配置价格，可在配置页继续编辑。</td></tr>');
+     return '<tr class="pp-link-group" data-pp-group="'+k+'"'+(current?' data-current-link':'')+'><td class="pp-frozen-number"></td><td colspan="3"><div class="pp-group-id"><button type="button" data-pp-collapse="'+k+'" aria-expanded="'+String(!hidden)+'" aria-label="'+(hidden?'展开':'收起')+esc(c.product||'未命名链接')+'"><i class="pp-chevron" aria-hidden="true"></i></button><button type="button" data-pp-select-link="'+k+'" aria-pressed="'+current+'"><strong>'+esc(c.product||'未命名链接')+'</strong><small>'+group.length+' 套</small></button><button type="button" data-pp-jump-link="'+k+'"'+(current?'':' hidden')+'>编辑配置</button></div></td><td colspan="'+(span-4)+'"><div class="pp-group-meta"><span data-pp-link-spu'+(hidden&&!current?' hidden':'')+'>SPU '+esc(c.spu||'—')+'</span><button type="button" data-pp-edit-link="'+k+'" title="'+esc(hint)+'"'+(current?'':' hidden')+'>链接设置</button></div></td></tr>'+
+       (hidden?'':group.length?group.map(row=>rowHTML(row,++sequence)).join(''):'<tr><td colspan="'+span+'" class="pp-empty">此链接尚无配置价格，可在配置页继续编辑。</td></tr>');
     }).join('');
-   }else{shown.push(...filtered);body.innerHTML=filtered.map(rowHTML).join('');}
+   }else{sortRows(filtered);shown.push(...filtered);body.innerHTML=filtered.map(row=>rowHTML(row,++sequence)).join('');}
    if(!body.children.length)body.innerHTML='<tr><td colspan="'+span+'" class="pp-empty">没有符合条件的配置</td></tr>';
    drawnIds=shown.map(r=>r.config.id);
    renderedRows=new Map(Array.from(body.rows).filter(row=>row.hasAttribute('data-pp-row')).map(row=>[row.dataset.ppRow,row]));
+   renderedLinks=new Map(Array.from(body.rows).filter(row=>row.hasAttribute('data-pp-group')).map(row=>[row.dataset.ppGroup,row]));
    chosen=new Set(drawnIds.filter(id=>chosen.has(id)));
    syncSelection();historyButtons();paintRange();
    if(focused)focusCell(...focused);
@@ -259,18 +312,38 @@ export function mountPriceProfit(root,api){
   const [undo,redo]=api.history();
   $('#pp-undo').disabled=!undo;$('#pp-redo').disabled=!redo;
  }
- function syncSelection(){
+ function syncSelection(only=null){
   selectAll.disabled=!drawnIds.length;
   selectAll.checked=!!drawnIds.length&&chosen.size===drawnIds.length;
   selectAll.indeterminate=!!chosen.size&&!selectAll.checked;
   $('#pp-selection').textContent='可见 '+drawnIds.length+' 套 · 已选 '+chosen.size+' 套';
   $('#pp-batch').disabled=!chosen.size;
-  for(const tr of body.querySelectorAll('[data-pp-row]')){
+  for(const tr of only?[renderedRows.get(only)]:renderedRows.values()){
    const checked=chosen.has(tr.dataset.ppRow);
    tr.toggleAttribute('data-selected',checked);tr.querySelector('[data-pp-pick]').checked=checked;
   }
  }
+ // 按触发先后处理草稿写入和撤销重做，结算前保留当前单元格内容。
+ function mutate(operation){
+  const queued=pendingWrites++>0;
+  const run=queued?writeTail.then(operation):Promise.resolve().then(operation);
+  const result=run.finally(()=>{if(!--pendingWrites&&(deferredDraw||fullDrawRequested))scheduleRefresh();});
+  writeTail=result.catch(()=>{});
+  return result;
+ }
+ function flushRowRefresh(){
+  if(!visible()||pendingWrites||pointerDown||isEdited(document.activeElement))return;
+  const ids=fullDrawRequested?null:new Set(dirtyRows);
+  dirtyRows.clear();deferredDraw=false;fullDrawRequested=false;
+  if(!ids||ids.size)refresh({ids});
+ }
+ function scheduleRefresh(ids=[]){
+  ids.forEach(id=>dirtyRows.add(id));deferredDraw=true;
+  clearTimeout(renderTimer);
+  renderTimer=setTimeout(flushRowRefresh,0);
+ }
  function commitInput(el){
+  if(pendingInputs.has(el))return false;
   if(!isEdited(el))return true;
   const {ppCell:key,rowId:id}=el.dataset;
   try{
@@ -284,30 +357,40 @@ export function mountPriceProfit(root,api){
     if(!value||value.length>160)throw Error('简称须为 1–160 个字');
     plan=value===(current.config.shortName||current.config.name)?[]:[{id,fields:{shortName:value,shortNameAuto:false}}];
    }else plan=planIdEdit(api.allConfigs(),key,[id],[el.value],{allowBlank:true});
-   if(plan.length){
-    const pending=api.apply(plan,key==='price'?'调整到手价':'修改 '+fieldNames[key]);
-    if(api.nas){
-     const old=el.defaultValue;
-     pending.then(()=>refresh({force:true}),error=>{if(el.isConnected)el.value=el.defaultValue=old;announce(error.message);});
-    }
-   }
-   el.defaultValue=el.value;
-   return true;
+   if(!plan.length){el.value=el.defaultValue;return true;}
+   pendingInputs.add(el);el.readOnly=true;
+   return mutate(()=>api.apply(plan,key==='price'?'调整到手价':'修改 '+fieldNames[key])).then(()=>{
+    if(key==='price')el.dataset.ppPrecise=String(plan[0].fields.price??'');
+    el.defaultValue=el.value;
+    if(key==='price'&&document.activeElement!==el)formatPrice(el);
+    scheduleRefresh(plan.map(row=>row.id));return true;
+   },error=>{
+    el.value=el.defaultValue;
+    if(key==='price'&&document.activeElement!==el)formatPrice(el);
+    announce(error.message);return false;
+   }).finally(()=>{
+    pendingInputs.delete(el);el.readOnly=false;
+   });
   }catch(error){el.value=el.defaultValue;announce(error.message);return false;}
  }
- function scheduleRefresh(){
-  deferredDraw=true;
-  clearTimeout(renderTimer);
-  renderTimer=setTimeout(()=>{if(!pointerDown){deferredDraw=false;refresh();}},0);
+ function formatPrice(field){
+  const precise=field.dataset.ppPrecise;
+  field.value=field.defaultValue=precise===''?'':whole(Number(precise));
  }
  body.addEventListener('focusin',event=>{const field=event.target;if(field.matches('[data-pp-cell]')){
+  if(pendingInputs.has(field))return;
   if(field.dataset.ppCell==='price')field.value=field.defaultValue=field.dataset.ppPrecise;
   field.select();if(!pointerDown)markRange(cellPosition(field));
  }});
  body.addEventListener('focusout',event=>{
   const field=event.target;
-  if(!rendering&&field.isConnected&&isEdited(field)){commitInput(field);scheduleRefresh();}
-  else if(field.dataset.ppCell==='price'&&field.value!=='')field.value=field.defaultValue=whole(Number(field.dataset.ppPrecise));
+  if(rendering||pendingInputs.has(field))return;
+  const edited=field.isConnected&&isEdited(field);
+  if(edited){
+   const result=commitInput(field);
+   if(typeof result==='boolean'&&field.dataset.ppCell==='price')formatPrice(field);
+  }else if(field.dataset.ppCell==='price')formatPrice(field);
+  if(deferredDraw)scheduleRefresh();
  });
  function focusRange(){
   grid.focus({preventScroll:true});
@@ -347,16 +430,19 @@ export function mountPriceProfit(root,api){
    if(i<0)throw Error('当前行已改变，请重新选择单元格。');
    const ids=drawnIds.slice(i),plan=planIdEdit(api.allConfigs(),key,ids,values);
    if(plan.length){
-    const pending=api.apply(plan,'表格粘贴 '+fieldNames[key]);
-    if(api.nas){pending.then(()=>{refresh({force:true});announce('NAS 已确认粘贴修改。');},error=>announce(error.message));return;}
+    mutate(()=>api.apply(plan,'表格粘贴 '+fieldNames[key])).then(()=>{
+     scheduleRefresh(plan.map(row=>row.id));flushRowRefresh();
+     announce(key==='spu'?'SPU 已更新，同一链接的配置已同步。':'已粘贴 '+values.length+' 行 SKU。');
+    },error=>announce(error.message));
+    return;
    }
-   refresh({force:true});
-   announce(plan.length?(key==='spu'?'SPU 已更新，同一链接的配置已同步。':'已粘贴 '+values.length+' 行 SKU。'):'编号没有变化。');
+   announce('编号没有变化。');
   }catch(error){announce(error.message);}
  });
- body.addEventListener('keydown',event=>{
+ body.addEventListener('keydown',async event=>{
   const el=event.target,key=el.dataset.ppCell,id=el.dataset.rowId;
   if(!key||event.isComposing)return;
+  if(pendingInputs.has(el)){if(['Escape','Enter','Tab','ArrowUp','ArrowDown'].includes(event.key))event.preventDefault();return;}
   if(event.key==='Escape'){event.preventDefault();el.value=el.defaultValue;el.select();return;}
   if(!['Enter','Tab','ArrowUp','ArrowDown'].includes(event.key))return;
   const idx=drawnIds.indexOf(id),oldOrder=drawnIds.slice(),col=fields.indexOf(key);
@@ -367,15 +453,17 @@ export function mountPriceProfit(root,api){
    if(fieldIndex<0){row--;fieldIndex=fields.length-1;}
   }else row+=event.key==='ArrowUp'||event.key==='Enter'&&event.shiftKey?-1:1;
   event.preventDefault();
-  const didEdit=isEdited(el);if(!commitInput(el)){el.select();return;}
-  if(didEdit)refresh({force:true});
+  const result=commitInput(el),success=typeof result==='boolean'?result:await result;
+  if(document.activeElement!==el)return;
+  if(!success){el.select();return;}
+  flushRowRefresh();
   if(!oldOrder[row]&&event.key==='Tab'){(event.shiftKey?selectAll:$('#pp-batch').disabled?$('#pp-save'):$('#pp-batch')).focus();return;}
   if(!focusCell(oldOrder[Math.max(0,Math.min(oldOrder.length-1,row))],fields[fieldIndex]))focusCell(drawnIds[Math.min(row,drawnIds.length-1)],fields[fieldIndex]);
  });
  selectAll.onchange=()=>{chosen=new Set(selectAll.checked?drawnIds:[]);syncSelection();};
  body.addEventListener('change',event=>{
   const id=event.target.dataset.ppPick;
-  if(id){event.target.checked?chosen.add(id):chosen.delete(id);syncSelection();}
+  if(id){event.target.checked?chosen.add(id):chosen.delete(id);syncSelection(id);}
  });
  const reroute=()=>{chosen.clear();clearRange();refresh({force:true});};
  // 状态多选采用“任一匹配”，并与店铺、链接、搜索及汇总筛选叠加。
@@ -394,7 +482,7 @@ export function mountPriceProfit(root,api){
   const bounds=$('#pp-part-filter').getBoundingClientRect();
   partPanel.style.left=Math.max(8,Math.min(bounds.left,innerWidth-450))+'px';
   partPanel.style.top= bounds.bottom+5+'px';
-  drawPartFilter();
+  collectPartChoices();
  });
  partPanel.onclick=event=>{
   const button=event.target.closest('button');if(!button)return;
@@ -410,8 +498,10 @@ export function mountPriceProfit(root,api){
  };
  table.tHead.onclick=event=>{
   const key=event.target.closest('[data-pp-sort]')?.dataset.ppSort;
-  if(key){sort={key,direction:sort?.key===key?-sort.direction:1};reroute();}
+  if(key){sort=sort?.key!==key?{key,direction:1}:sort.direction===1?{key,direction:-1}:null;reroute();}
  };
+ $('#pp-expand-links').onclick=()=>{collapsed.clear();refresh({force:true});};
+ $('#pp-collapse-links').onclick=()=>{collapsed=new Set(groupedConfigs().keys());refresh({force:true});};
  $('#pp-more').onclick=()=>{moreColumns=!moreColumns;root.toggleAttribute('data-pp-more',moreColumns);$('#pp-more').setAttribute('aria-pressed',String(moreColumns));refresh({force:true});};
  $('#pp-close-expanded').onclick=()=>{expanded.clear();refresh({force:true});};
  $('#pp-summary').onclick=e=>{const key=e.target.closest('[data-pp-filter]')?.dataset.ppFilter;if(key){filter=key;reroute();}};
@@ -425,15 +515,20 @@ export function mountPriceProfit(root,api){
    collapsed.has(ppCollapse)?collapsed.delete(ppCollapse):collapsed.add(ppCollapse);refresh({force:true});
    Array.from(body.querySelectorAll('[data-pp-collapse]')).find(el=>el.dataset.ppCollapse===ppCollapse)?.focus();
   }
-  if(ppSelectLink){activeLink=ppSelectLink;refresh({force:true});Array.from(body.querySelectorAll('[data-pp-select-link]')).find(el=>el.dataset.ppSelectLink===ppSelectLink)?.focus({preventScroll:true});}
+  if(ppSelectLink){
+   const previous=activeLink;activeLink=ppSelectLink;
+   updateLinkHeader(renderedLinks.get(previous),previous);
+   updateLinkHeader(renderedLinks.get(activeLink),activeLink);
+  }
   if(ppJumpLink){const c=api.rows().find(row=>linkKey(row)===ppJumpLink);if(c){hide();api.locate(c);}else{const link=api.links().find(row=>linkKey(row)===ppJumpLink);if(link)api.editLink(link);}}
   if(ppEditLink){const c=api.links().find(c=>linkKey(c)===ppEditLink);if(c)api.editLink(c);}
-  if(ppExpand){expanded.has(ppExpand)?expanded.delete(ppExpand):expanded.add(ppExpand);refresh({force:true});body.querySelector('[data-pp-expand="'+CSS.escape(ppExpand)+'"]')?.focus({preventScroll:true});}
+  if(ppExpand){expanded.has(ppExpand)?expanded.delete(ppExpand):expanded.add(ppExpand);refresh({force:true,ids:new Set([ppExpand])});body.querySelector('[data-pp-expand="'+CSS.escape(ppExpand)+'"]')?.focus({preventScroll:true});}
   if(ppPickPart)openPartPicker(ppConfig,ppPickPart);
  });
  body.addEventListener('change',async event=>{
   const input=event.target,{ppQty,ppConfig}=input.dataset;if(!ppQty)return;
-  try{await api.applyActual(ppConfig,ppQty,{qty:input.valueAsNumber});refresh({force:true});}
+  const qty=input.valueAsNumber;
+  try{await mutate(()=>api.applyActual(ppConfig,ppQty,{qty}));scheduleRefresh([ppConfig]);}
   catch(error){input.value=input.defaultValue;announce(error.message);}
  });
  body.addEventListener('keydown',event=>{if(event.target.matches('[data-pp-qty]')&&event.key==='Enter'){event.preventDefault();event.target.blur();}});
@@ -442,8 +537,15 @@ export function mountPriceProfit(root,api){
  $('#pp-alert').onclick=()=>openAlert();
  $('#pp-new-link').onclick=()=>api.newLink(shop==='all'?api.activeShop():shop);
  $('#pp-batch').onclick=()=>openBatch();
- $('#pp-undo').onclick=()=>{api.undo();if(api.nas)refresh({force:true});};
- $('#pp-redo').onclick=()=>{api.redo();if(api.nas)refresh({force:true});};
+ const replay=async operation=>{
+  try{
+   await mutate(operation);
+   fullDrawRequested=true;
+   flushRowRefresh();
+  }catch(error){announce(error.message);}
+ };
+ $('#pp-undo').onclick=()=>replay(api.undo);
+ $('#pp-redo').onclick=()=>replay(api.redo);
  function cellPosition(target){
   const cell=target.closest('[data-pp-col]'),row=cell?.closest('[data-pp-row]');
   return row?{id:row.dataset.ppRow,col:Number(cell.dataset.ppCol)}:null;
@@ -578,11 +680,11 @@ export function mountPriceProfit(root,api){
  };
  formulaEditor.onblur=()=>{
   const price=inputFor(formulaRowId,'price');formulaRowId=null;
-  if(!price){paintRange();return;}
+  if(!price||pendingInputs.has(price)){paintRange();return;}
   price.defaultValue=price.dataset.ppPrecise;
   price.value=formulaEditor.value;
-  if(commitInput(price))scheduleRefresh();
-  else{price.value=price.defaultValue=whole(Number(price.dataset.ppPrecise));paintRange();}
+  const result=commitInput(price);
+  if(typeof result==='boolean'){formatPrice(price);paintRange();}
  };
  formulaEditor.onkeydown=event=>{
   if(!formulaRowId||!['Enter','Escape'].includes(event.key))return;
@@ -601,7 +703,9 @@ export function mountPriceProfit(root,api){
    if(start<0||ids.length!==lines.length||lines.some(line=>line.trim().includes('\t')))throw Error('请粘贴到手价单列，且行数不得超出当前表格');
    const plan=lines.map((value,index)=>({id:ids[index],fields:{price:parseArrival(value.trim().replace(/[,，]/g,''))}}));
    if(event.target===formulaEditor){formulaRowId=null;formulaEditor.blur();}
-   Promise.resolve(api.apply(plan,'粘贴到手价')).then(()=>refresh({force:true}),error=>announce(error.message));
+   mutate(()=>api.apply(plan,'粘贴到手价')).then(()=>{
+    scheduleRefresh(ids);flushRowRefresh();
+   },error=>announce(error.message));
   }catch(error){announce(error.message);}
   return true;
  }
@@ -619,16 +723,26 @@ export function mountPriceProfit(root,api){
   results.onclick=async event=>{
    const choice=event.target.closest('[data-pp-source]');if(!choice)return;
    choice.disabled=true;
-   try{await api.applyActual(id,slot,{sourceId:choice.dataset.ppSource});api.closeDialog();refresh({force:true});}
+   try{await mutate(()=>api.applyActual(id,slot,{sourceId:choice.dataset.ppSource}));api.closeDialog();scheduleRefresh([id]);}
    catch(error){panel.querySelector('#pp-part-error').textContent=error.message;choice.disabled=false;}
   };
  }
  const saveButton=$('#pp-save');
+ const saveCount=$('#pp-save-count');
+ function saveStatus(next=savedState){
+  savedState=next;
+  saveButton.disabled=saving||Boolean(next?.disabled);
+  if(!next)return;
+  saveButton.textContent=next.label;
+  saveCount.hidden=false;
+  saveCount.textContent=next.count?`${next.count} 套待保存`:'无待保存';
+ }
  saveButton.onclick=async()=>{
-  if(saveButton.disabled)return;saveButton.disabled=true;
-  try{await api.save();if(api.nas)refresh({force:true});}
+  if(saveButton.disabled)return;
+  saving=true;saveStatus();
+  try{await mutate(api.save);if(api.nas)refresh({force:true});}
   catch(error){announce(error.message);}
-  finally{saveButton.disabled=false;}
+  finally{saving=false;saveStatus();}
  };
  if(api.nas){
   saveButton.textContent='保存到服务端';
@@ -640,7 +754,7 @@ export function mountPriceProfit(root,api){
     old.map(row=>'<li>'+esc(api.allConfigs().find(c=>c.id===row.id)?.name||row.id)+' · '+esc(JSON.stringify(row.fields))+'</li>').join('')+
     '</ul><button id="pp-drop-old" type="button">放弃旧版草稿</button>');
    dialog().querySelector('#pp-drop-old').onclick=()=>{api.discard();api.closeDialog();refresh({force:true});};
-  };saveButton.after(discard);
+  };$('#pp-status-filter').after(discard);
  }
 
  function openDetail(id){
@@ -708,17 +822,24 @@ export function mountPriceProfit(root,api){
    const plan=read().filter(x=>x.price!=null&&x.price!==x.from).map(x=>({id:x.id,fields:{price:x.price}}));
    apply.disabled=true;
    try{
-    const outcome=api.apply(plan,'批量调价');if(api.nas)await outcome;
-    if(apply.isConnected)api.closeDialog();refresh({force:true});announce(api.nas?'已暂存 '+plan.length+' 套工作台价格，点击“保存表内草稿到 NAS”后提交。':'已调整 '+plan.length+' 套价格，可撤销。');
+    await mutate(()=>api.apply(plan,'批量调价'));
+    if(apply.isConnected)api.closeDialog();
+    scheduleRefresh(plan.map(row=>row.id));flushRowRefresh();
+    announce(api.nas?'已暂存 '+plan.length+' 套工作台价格，点击“保存到服务端”后提交。':'已调整 '+plan.length+' 套价格，可撤销。');
    }catch(failure){if(apply.isConnected)error.textContent=failure.message;}
    finally{if(apply.isConnected)apply.disabled=false;}
   };
  }
  function show(){
-  // 默认列出所有链接的配置，单套配件明细按需打开。
+  // 大店保留完整筛选范围，首次只在当前链接下创建配置行。
   if(!visible()){
-   shop=api.activeShop();product='';chosen.clear();clearRange();collapsed.clear();expanded.clear();
+   shop=api.activeShop();product='';sort=null;grouped=true;activeLink='';chosen.clear();clearRange();collapsed.clear();expanded.clear();
+   $('#pp-grouped').setAttribute('aria-pressed','true');$('#pp-flat').setAttribute('aria-pressed','false');
    const config=api.currentConfig?.();
+   if(api.rows().filter(c=>c.shopId===shop).length>=largeShopSize){
+    collapsed=new Set(groupedConfigs().keys());
+    if(config)collapsed.delete(linkKey(config));
+   }
    if(config&&!config.emptyLinkDraft){range={start:{id:config.id,col:5},end:{id:config.id,col:5}};}
   }
   root.hidden=false;workspace.classList.add('price-profit-active');
@@ -730,5 +851,5 @@ export function mountPriceProfit(root,api){
   if(root.contains(document.activeElement)&&isEdited(document.activeElement))commitInput(document.activeElement);
   root.hidden=true;workspace.classList.remove('price-profit-active');pointerDown=false;rangePointer=null;api.onClose();
  }
- return {show,hide,visible,refresh,historyButtons};
+ return {show,hide,visible,refresh,historyButtons,saveStatus};
 }

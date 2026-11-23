@@ -28,15 +28,16 @@ try{
    const rows=[make('a','p',0,1999,true),make('b','p',24,2000,false),make('other','other-link',0,3333)];
    window.priceFixture={configs:rows,before:structuredClone(rows),plan:null};
    const ids=new Set(selected),chosen=()=>rows.filter(c=>ids.has(c.id));
-   const apply=new Function('state','activeShopId','checkpointConfig','changed','closeDialog','renderAll','plan','message',applyBody);
+   const apply=new Function('state','activeShopId','nasMain','checkpointConfig','changed','closeDialog','renderAll','plan','message',applyBody);
    window.pricingUi.openBatchProfitPrice({openDialog:(_title,html)=>{document.querySelector('#dialog').innerHTML=html;},
     esc:value=>String(value),toast:()=>{},settings:()=>({}),scopes:[{key:'chosen',label:'指定范围',count:ids.size,links:1,preferred:true,configs:chosen,related:()=>rows}],
-    apply:(plan,message)=>{window.priceFixture.plan=structuredClone(plan);apply(window.priceFixture,'intel',()=>{},()=>{},()=>{},()=>{},plan,message);}});
+    apply:(plan,message)=>{window.priceFixture.plan=structuredClone(plan);apply(window.priceFixture,'intel',false,()=>{},()=>{},()=>{},()=>{},plan,message);}});
   },{selected,applyBody});
   await page.locator('input[name="bpp-kind"][value="erp"]').check();
   await page.locator('#bpp-target').fill('100');
   await page.locator('#bpp-installment').selectOption(installment);
   await page.locator('#bpp-99').selectOption(price99);
+  await page.waitForFunction(()=>!document.querySelector('#bpp-apply').disabled);
  };
  const apply=async()=>{await page.locator('#bpp-apply').click();return page.evaluate(()=>structuredClone(window.priceFixture));};
 
