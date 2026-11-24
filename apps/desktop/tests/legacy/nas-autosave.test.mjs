@@ -89,3 +89,23 @@ test('保存进行中暂停或卸载不会再安排下一次保存',async()=>{
  clock.advance(interval);assert.equal(await scheduler.checkDue(),false);
  assert.equal(clock.count(),0);
 });
+
+// 定时器使用实际草稿保存器，验证依赖重试成功不会进入冲突跳过名单。
+test('自动保存自动刷新成本依赖成功，下轮仍可继续保存同一套配置',async()=>{
+ const {createNasDraftController}=await import('../../public/workbench/nas-draft-controller.js');
+ const {submitNasDraftSet}=await import('../../public/workbench/nas-main-workspace.js');
+ const storage=memoryStorage(),values=new Map(),draftStorage={get length(){return values.size;},key:i=>[...values.keys()][i],getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ let version='1',cost='1',writes=0,document={id:'c',shopId:'intel',name:'配置',parts:[{lineId:'p',goodsId:'1'}],actualParts:[],addons:[]};
+ const dependencies=()=>({sources:{},costs:{'1':cost}});
+ const client={me:async()=>({uid:'A',workspace_id:'w',data_source:'intel_live',configuration_writes:true,shops:[{shop_id:'intel',role:'operations'}]}),
+  detail:async()=>({version,document,dependencies:dependencies()}),resource:async()=>({version:cost}),
+  async save(action,id,body){writes++;if(body.dependencies.costs['1']!==cost)throw Object.assign(Error('依赖已更新'),{code:'DEPENDENCY_CONFLICT',status:409});
+   document=body.document;version=String(Number(version)+1);return {operation_id:body.operation_id,configuration_id:id,shop_id:'intel',version,archived:false};}};
+ const controller=createNasDraftController({client,storage:draftStorage,endpointId:'autosave'});
+ await controller.open('c');controller.edit({...document,name:'第一轮文案'});cost='2';
+ const {scheduler,clock}=setup({storage,drafts:()=>controller.drafts(),submit:rows=>submitNasDraftSet(rows,{isPending:()=>!!controller.read().pending,submit:()=>controller.save()})});
+ clock.advance(interval);assert.equal(await scheduler.checkDue(),true);assert.equal(document.name,'第一轮文案');assert.equal(writes,2);
+ controller.edit({...document,name:'第二轮文案'});clock.advance(interval);assert.equal(await scheduler.checkDue(),true);
+ assert.equal(document.name,'第二轮文案');assert.equal(writes,3);assert.equal(storage.getItem('diy-nas-autosave:["formal",["shop","operator"]]:conflicts'),null);
+ scheduler.dispose();
+});

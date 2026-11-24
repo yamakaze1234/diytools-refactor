@@ -1,5 +1,6 @@
 /** NAS 试验入口草稿：按服务和成员隔离，保留服务器版本、提交编号和完整原提交正文。 */
 import {NasApiError,nasOperationsCapability,receiptNotFound,receiptLookupError,originalVersionRejected} from './nas-api-client.js';
+import {effectiveNasAddons} from './addon-data.js';
 const clone=value=>structuredClone(value);
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const knownRejection=new Set(['VALIDATION_FAILED','VERSION_CONFLICT','DEPENDENCY_CONFLICT','INVALID_DEPENDENCY',
@@ -35,15 +36,27 @@ const dependencyParts=document=>{
 /** 已见依赖版本保留；只读取新引用，避免准备批处理时把已过时的版本换成新版本。 */
 export async function nasDependencies(client,document,prior={sources:{},costs:{}},memo=new Map()){
  const result=clone(prior),parts=dependencyParts(document);
+ // 跟随组的商品由来源实时展开，必须与服务端核算使用相同规则；404 来源交由保存接口判断是否有效。
+ const resource=(type,id)=>{
+  const key=JSON.stringify([type,id]);
+  if(!memo.has(key))memo.set(key,client.resource(type,id).catch(error=>{
+   if(error.status===404)return null;
+   throw error;
+  }));
+  return memo.get(key);
+ };
+ const sources=new Map();
+ for(const id of new Set(document.addons.filter(addon=>addon.followPolicy==='follow'&&addon.sourceId).map(addon=>addon.sourceId))){
+  const value=await resource('sources',id);
+  if(value)sources.set(id,value.document);
+ }
+ parts.push(...dependencyParts({parts:[],actualParts:[],addons:effectiveNasAddons(document.addons,sources).filter(row=>row.available).map(row=>row.addon)}));
  for(const [type,field] of [['sources','sourceId'],['costs','goodsId']]){
   const known=result[type];
   for(const id of new Set(parts.map(x=>x[field]).filter(Boolean)))if(!Object.hasOwn(known,id)){
-   const key=JSON.stringify([type,id]);
-   if(!memo.has(key))memo.set(key,client.resource(type,id).catch(error=>{
-    if(type==='costs'&&error.status===404)return null;
-    throw error;
-   }));
-   const value=await memo.get(key);
+   const value=await resource(type,id);
+   // 原配件的归档来源可由详情提供权威版本；新选的无效来源仍交给服务端明确拒绝。
+   if(!value&&type==='sources')throw new NasApiError('INVALID_DEPENDENCY',400,{field:'sources.sourceId'});
    if(value)Object.defineProperty(known,id,{value:value.version,writable:true,enumerable:true,configurable:true});
   }
  }
@@ -186,8 +199,29 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
     body.document=ensureNasPartLineIds(clone(record.document),record.base);
     body.dependencies=await nasDependencies(client,body.document,record.dependencies);
    }
-   persist({...record,pending:{action,body}});
-   return await submitPending();
+   for(let refreshed=0;;refreshed++){
+    persist({...record,pending:{action,body:clone(body)}});
+    try{
+     const result=await submitPending();
+     return refreshed?{...result,dependenciesRefreshed:true}:result;
+    }catch(error){
+     // 仅重建明确拒绝且已清除 pending 的请求；未知回执和 retry() 永远保留原编号、原正文。
+     if(error.code!=='DEPENDENCY_CONFLICT'||error.status!==409||record.pending||refreshed>=2||
+        !['create','replace'].includes(action))throw error;
+     let freshBase={sources:{},costs:{}};
+     if(action==='replace'){
+      if(typeof record.version!=='string'||!/^[1-9]\d{0,18}$/.test(record.version))throw error;
+      const detail=await client.detail(record.id,{archived:remote?.archived===true});
+      if(detail?.document?.id!==record.id||detail.document.shopId!==shopId)throw new NasApiError('INVALID_API_RESPONSE');
+      // 不推进配置基线；同一套配置被别人保存时必须转回人工处理。
+      if(detail.version!==record.version)throw new NasApiError('VERSION_CONFLICT',409,{current_version:detail.version});
+      freshBase=detail.dependencies;
+     }else if(record.version!==null)throw error;
+     body.dependencies=await nasDependencies(client,body.document,freshBase);
+     persist({...record,dependencies:clone(body.dependencies)});
+     body.operation_id=uuid();
+    }
+   }
   }finally{working=false;}
  }
  async function receipt(){

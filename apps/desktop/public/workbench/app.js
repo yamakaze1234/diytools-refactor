@@ -1,6 +1,7 @@
 import {mountPriceProfit,pricingRuleFields,readPricingRuleFields} from './price-profit-ui.js';
 import {installNasWorkspace} from './nas-workspace-ui.js';
 import {createNasMainWorkspace,nasMainMode,nasErrorText,nasTimeStamp,projectNasEdits,sameNasDocument,submitNasDraftSet,visibleNasAddons} from './nas-main-workspace.js';
+import {nasConfigConflictHtml} from './nas-conflict-view.js';
 import {buildNasOperationPlan,acknowledgeNasPriceDraft} from './nas-operation-plan.js';
 import {prepareLegacyNasImport} from './nas-legacy-import.js';
 import {createSharedSourcePreview} from './nas-shared-source-preview.js';
@@ -2034,7 +2035,7 @@ let nasOverviewActions;
 const overviewNas=()=>nasOverviewActions??=createNasOverviewActions({
  workspace:nasWorkspace,openDialog,closeDialog,esc,toast,
  currentDocument:id=>nasWorkspace.documentFor(state.configs.find(c=>c.id===id)),
- saveCurrent:async()=>{const c=current();if(c&&nasWorkspace.drafts().some(row=>row.id===c.id)){const receipt=await nasWorkspace.submit(c);nasSavedVersions.set(c.id,receipt.version);nasStageFailures.delete(c.id);nasDraftFailure=nasStageFailures.values().next().value||null;acceptedState.configs=acceptedState.configs.map(row=>row.id===c.id?nasWorkspace.documentFor(c):row);await readNasIndex();syncNasControls();}},
+ saveCurrent:async()=>{const c=current();if(c&&nasWorkspace.drafts().some(row=>row.id===c.id)){const receipt=await nasWorkspace.submit(c);nasSavedVersions.set(c.id,receipt.version);nasStageFailures.delete(c.id);nasDraftFailure=nasStageFailures.values().next().value||null;acceptedState.configs=acceptedState.configs.map(row=>row.id===c.id?nasWorkspace.documentFor(c):row);await readNasIndex();if(receipt.dependenciesRefreshed)await refreshNasSavedDependencies([c.id]);syncNasControls();}},
  saveCosts:changes=>startNasPlan('costs',changes,{title:'总表三店全局核算价'}),
  refresh:async()=>{await acceptNasPlan({kind:'costs',batches:[]});await loadNasCatalog('sources');renderAll();},
  lock:()=>{const root=$('.workspace'),previous=root.inert;root.inert=true;nasBusy=true;return()=>{nasBusy=false;root.inert=previous;syncNasControls();};},
@@ -2068,6 +2069,23 @@ const openNasGlobalTax=(...args)=>overviewNas().tax(...args);
 const openNasUpgradeScope=(...args)=>overviewNas().upgrade(...args);
 function catalogRows(kind){return [...(nasCatalogRows.get(kind)?.values()||[])];}
 function catalogRow(kind,id){return nasCatalogRows.get(kind)?.get(id);}
+// 保存成功后的目录刷新与配置草稿分开，只更新来源/成本展示和数据时间。
+async function refreshNasSavedDependencies(ids){
+ try{
+  const metadata=await nasWorkspace.refreshDependencies();
+  state.sourceCatalog=metadata.sourceCatalog;state.costSource=metadata.costSource;
+  catalog=sourceCatalog(state.sourceCatalog);nasCatalogRows.delete('sources');
+  const unsaved=new Set(nasWorkspace.drafts().map(row=>row.id)),saved=new Set(ids);
+  const costs=new Map(state.costSource.map(row=>[row.goodsId,row])),sources=new Map(catalog.map(row=>[row.sourceId,row]));
+  const refreshed=[];
+  for(const config of state.configs)if(saved.has(config.id)&&!unsaved.has(config.id)){
+   // 同步展示投影基线与页面值，后续编辑不会把本次刷新误当成用户改动。
+   nasWorkspace.applyPresentation(config,row=>{withCurrentSharedSource(row,sources);visibleNasCosts(row,costs);});refreshed.push(config.id);
+  }
+  rememberDisplayParts(refreshed);renderAll();
+ }catch(error){toast('配置已保存，目录刷新失败：'+nasErrorText(error));}
+ finally{void refreshNasDataTime();}
+}
 function applyNasCatalog(kind,rows){
  nasCatalogRows.set(kind,new Map(rows.map(row=>[row.id,row])));
  const documents=rows.map(row=>clone(row.document));
@@ -3072,21 +3090,21 @@ function syncNasControls(){
  else $('#save-status').textContent=drafts.length?`本机有 ${drafts.length} 套配置待保存`:!nasWorkspace.canWrite()?'NAS 只读':nasSavedVersions.has(c?.id)?'NAS 已保存 · 版本 '+nasSavedVersions.get(c.id):'已载入服务端配置';
  drawNasServerStatus();
 }
-async function compareNasConfig(){
- const c=current();if(!c||nasBusy)return;
- const id=c.id;
+async function compareNasConfig(id=current()?.id){
+ if(!id||nasBusy)return;
  try{
-  const value=await nasWorkspace.compare(id);if(current()?.id!==id)return;
+  // 弹窗关闭时总表会恢复单元格焦点；冲突处理始终绑定显式目标，不随当前行漂移。
+  const value=await nasWorkspace.compare(id);
   drawNasServerStatus();
   openDialog('处理配置冲突',`<p class="hint">服务器版本 v${esc(value.remote.version)}。本机草稿仍保留，关闭即可继续查看草稿。</p>
    <div class="list-card"><div><strong>服务端配置</strong><small>${esc(value.remote.document.name||id)}</small></div>
    <div><strong>本机草稿</strong><small>${esc(value.draft.name||id)}</small></div></div>
+   ${nasConfigConflictHtml(value,esc)}
    <div class="actions"><button id="nas-use-server" ${nasWorkspace.pending(id)?'disabled':''}>放弃草稿并载入服务器版本</button></div>`);
   $('#nas-use-server').onclick=async()=>{
-   if(nasBusy||current()?.id!==id||nasWorkspace.pending(id)||!confirm('确定放弃这套配置的本机草稿？'))return;
+   if(nasBusy||nasWorkspace.pending(id)||!confirm('确定放弃这套配置的本机草稿？'))return;
    try{
     const raw=nasWorkspace.useServer(id),[prepared]=await prepareDetails([raw]);
-    if(current()?.id!==id)return;
     state.configs=state.configs.map(row=>row.id===id?prepared:row);
     acceptedState={...acceptedState,configs:acceptedState.configs.map(row=>row.id===id?raw:row)};
     lazyWorkspace.confirm(state.revision,state.updatedAt,[raw]);displayBaseline.delete(id);rememberDisplayParts([id]);
@@ -3116,7 +3134,7 @@ function showNasSaveResults(results){
   if(!lazyWorkspace.index().summaries.some(row=>row.id===id))return toast('这套配置不在当前列表中，原草稿仍保留。');
   closeDialog();
   if(current()?.id!==id)await activate(id);
-  if(current()?.id===id&&button.hasAttribute('data-compare'))await compareNasConfig();
+  if(button.hasAttribute('data-compare'))await compareNasConfig(id);
  };
 }
 async function runNasDraftSaves(rows,{retry=false,automatic=false}={}){
@@ -3138,6 +3156,7 @@ async function runNasDraftSaves(rows,{retry=false,automatic=false}={}){
     return saved;
    }
   });
+  if(results.some(row=>row.status==='saved'&&row.receipt.dependenciesRefreshed))await refreshNasSavedDependencies(results.filter(row=>row.status==='saved').map(row=>row.id));
   nasSaveSummary=(automatic?'自动保存 · ':'')+nasSaveReport(results);
  }catch(error){
   nasSaveSummary=nasErrorText(error);

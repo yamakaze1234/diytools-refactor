@@ -260,3 +260,50 @@ test('删除编号回执接续重开后未打开的价格草稿及独立价格�
  const loaded=await attach(newer);assert.equal(loaded.name,'配置1');assert.equal(loaded.price,123);
  await newer.submit(loaded);assert.equal(t.remote().name,'配置1');assert.equal(t.remote().price,123);
 });
+
+// 用真实 API 客户端协议验证工作区所有保存入口共用依赖重试，并保留其它配置草稿。
+function dependencyFixture(){
+ const values=new Map(),storage={get length(){return values.size;},key:i=>[...values.keys()][i],getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};
+ let dependency='1',version='1',document={...raw,parts:[{lineId:'p',slot:'CPU',sourceId:'s',goodsId:'1'}]},writes=[];
+ const dependencies=()=>({sources:{s:dependency},costs:{'1':dependency,'2':dependency}});
+ const nativeRequest=async(path,options={})=>{
+  const route=new URL(path,'https://fixture.invalid').pathname,reply=(status,data)=>new Response(JSON.stringify(data),{status});
+  const ok=data=>reply(200,{ok:true,data});
+  if(route==='/settings')return reply(200,{configured:true,main_editor:true,endpoint_id:'dependency-fixture'});
+  if(route.endsWith('/me'))return reply(200,{ok:true,uid:'owner',workspace_id:'w',data_source:'intel_live',shops:[{shop_id:'intel',role:'operations'}],configuration_writes:true});
+  if(route.endsWith('/workspace-index'))return ok({revision:version,summaries:[{...document,nasVersion:version,parts:[]}]});
+  if(route.endsWith('/workspace-catalog'))return ok({shopSettings:{intel:{}},costVersions:{'1':dependency},sourceCatalog:[{sourceId:'s',addonText:'升级',addonGoodsId:'2'}],costSource:[{goodsId:'1',tax:Number(dependency)}]});
+  if(route.endsWith('/configurations/c')&&options.method==='GET')return ok({version,document,dependencies:dependencies()});
+  if(route.includes('/sources/'))return ok({version:dependency,document:{sourceId:'s',addonText:'升级',addonGoodsId:'2'}});
+  if(route.includes('/costs/'))return ok({version:dependency,document:{}});
+  if(route.endsWith('/configurations/c')&&options.method==='PUT'){
+   const body=JSON.parse(options.body);writes.push(body);
+   if(body.expected_version!==version)return reply(409,{ok:false,error:'VERSION_CONFLICT',details:{current_version:version}});
+   if(body.dependencies.sources.s!==dependency||body.dependencies.costs['1']!==dependency)return reply(409,{ok:false,error:'DEPENDENCY_CONFLICT'});
+   document=body.document;version=String(Number(version)+1);
+   return ok({configuration_id:'c',shop_id:'intel',version,operation_id:body.operation_id,archived:false});
+  }
+  throw Error(route);
+ };
+ return {main:()=>createNasMainWorkspace({nativeRequest,storage}),values,writes,advance:()=>{dependency='2';},document:()=>document};
+}
+
+test('工作区单套与旧持久草稿保存自动接续依赖；目录刷新不覆盖草稿',async()=>{
+ for(const reopened of [false,true]){
+  const t=dependencyFixture(),first=t.main(),view=await attach(first);view.name='当前配置文案';first.stage(view);t.advance();
+  const main=reopened?t.main():first;if(reopened)await main.initialize();
+  const result=await main.submitDraft('c',reopened?{}:{config:view});
+  assert.equal(result.dependenciesRefreshed,true);assert.equal(result.version,'2');assert.equal(t.writes.length,2);
+  assert.equal(t.document().name,'当前配置文案');assert.equal(t.values.size,0);
+  const edited=await attach(main);edited.name='另一个未保存修改';main.stage(edited);
+  const stored=[...t.values];const catalog=await main.refreshDependencies();assert.equal(catalog.costSource[0].tax,2);
+  assert.deepEqual([...t.values],stored);assert.equal(main.documentFor(edited).name,'另一个未保存修改');assert.equal(main.costVersion('1'),'2');
+ }
+});
+
+test('批量配置计划补齐来源跟随加购成本，既有队列仍只准备计划不发送',async()=>{
+ const t=dependencyFixture(),main=t.main(),view=await attach(main);
+ view.addons=[{sourceId:'s',text:'旧方案',items:[],followPolicy:'follow',followAll:true}];
+ const [change]=await main.configurationChanges([{id:'c',action:'replace',document:view}]);
+ assert.equal(change.dependencies.costs['2'],'1');assert.equal(change.expected_version,'1');assert.equal(t.writes.length,0);
+});

@@ -196,6 +196,13 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
     Array.isArray(catalog?.sourceCatalog)&&Array.isArray(catalog?.costSource));
   index=head;meta={...catalog,dataVersion:3};return {...head,metadata:meta};
  }
+ // 依赖自动刷新后只重读目录；不重开详情、不覆盖其它配置的显示态和持久草稿。
+ async function refreshDependencies(){
+  ready();
+  const catalog=await call(()=>client.workspaceCatalog());
+  guard('INVALID_API_RESPONSE',catalog?.shopSettings?.[shopId]&&Array.isArray(catalog.sourceCatalog)&&Array.isArray(catalog.costSource));
+  meta={...catalog,dataVersion:3};return dup(meta);
+ }
  async function request(path,options={}){
   if(path==='/api/workspace/index')return refresh();
   if(path==='/catalog.json')return [];
@@ -414,7 +421,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   if(changed)priceDraft(prices);
   return accepted;
  }
- return {initialize,request,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,release,close,documentFor,acceptRenumber,
+ return {initialize,request,refreshDependencies,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,release,close,documentFor,acceptRenumber,
   acceptSourceVersions:(ids,versions)=>{ready();for(const id of ids)if(!controllers.get(id)?.acceptSourceVersions(versions))throw new NasApiError('UNSAVED_DRAFT');},
   acceptObservedDependencies:versions=>{ready();let count=0;for(const ctrl of controllers.values())if(ctrl.acceptObservedDependencies(versions))count++;return count;},
   agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],

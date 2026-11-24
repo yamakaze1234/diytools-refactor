@@ -404,3 +404,8 @@ html.dark .source-shared-field-state .source-shared-override{color:#ffc680}
 .part-formula-controls select{min-width:125px}
 #dialog-body #part-formula-input{min-height:80px;resize:vertical;white-space:pre-wrap}
 #part-export-formula-settings .actions{justify-content:flex-start;align-items:center;flex-wrap:wrap;margin-top:8px}
+
+/* NAS 冲突明细沿用现有对比表，五列在窄窗口内横向滚动。 */
+.nas-config-conflict .cloud-conflict-table table{min-width:820px;table-layout:fixed}
+.nas-config-conflict .cloud-conflict-table th,.nas-config-conflict .cloud-conflict-table td{width:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.nas-config-conflict tr[data-nas-diff="conflict"] td:nth-child(2){font-weight:700;color:var(--ef-warning-ink,#805700)}
