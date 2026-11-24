@@ -55,7 +55,7 @@ import {linkCardHeading,bindLinkCardMenus,closeLinkCardMenu,cardDisplayColor} fr
 import {mountPartSort} from './part-sort.js';
 import {bindModuleDrag} from './module-drag.js';
 import {bindConfigDrag,moveConfig} from './config-drag.js';
-import {insertConfigAfter,planConfigRenumber,configAfterRemoval} from './config-order.js';
+import {insertConfigAfter,planConfigRenumber,applyConfigRenumber,configAfterRemoval} from './config-order.js';
 import './font-choice.js';
 import {bindScrollPreview,syncScrollHighlight} from './scroll-spy.js';
 import {openBatchProfitPrice} from './batch-profit-price.js';
@@ -1474,20 +1474,24 @@ function openCopyFull(configs=chosen()){
 function openRenumberFull(){
  const product=currentProduct();if(!product)return toast('请先选择一个商品链接');
  const shopId=activeShopId,productId=product.id,plan=planConfigRenumber(product.configs);
- const edits=plan.filter(row=>row.before!==row.after),skipped=plan.filter(row=>row.skipped).length;
- openDialog('一键重新编号',`<p class="hint">${esc(product.name)}：按当前链接全部配置的排列顺序，从配置1开始连续编号，不受搜索或勾选影响。保留编号后的文字，跳过特殊名称。应用后可撤销。</p><p>将修改 ${edits.length} 套，跳过 ${skipped} 套特殊名称。</p><div class="global-list">${plan.map(row=>`<div class="list-card"><span>${esc(row.before)}</span><span>→ ${esc(row.after)}${row.skipped?'（跳过）':row.before===row.after?'（不变）':''}</span></div>`).join('')}</div><div class="actions"><button id="renumber-apply" class="primary" ${edits.length?'':'disabled'}>应用重新编号</button></div>`);
+ const edits=plan.filter(row=>row.before!==row.after||row.shortNameChanged),skipped=plan.filter(row=>row.skipped).length;
+ openDialog('一键重新编号',`<p class="hint">${esc(product.name)}：按当前链接全部配置的排列顺序，从配置1开始连续编号，不受搜索或勾选影响。同步更新配置简称与海报摘要中的编号，保留编号后的文字，跳过特殊名称。应用后可撤销。</p><p>将修改 ${edits.length} 套，跳过 ${skipped} 套特殊名称。</p><div class="global-list">${plan.map(row=>`<div class="list-card"><span>${esc(row.before)}</span><span>→ ${esc(row.after)}${row.skipped?'（跳过）':row.before===row.after?(row.shortNameChanged?'（同步简称编号）':'（不变）'):''}</span></div>`).join('')}</div><div class="actions"><button id="renumber-apply" class="primary" ${edits.length?'':'disabled'}>应用重新编号</button></div>`);
   const apply=async()=>{
   if(nasMain){
    try{
-    if(await replaceNasFields(edits.map(row=>({id:row.id,fields:{name:row.after}})),'重新编号',nasGroup(product)))closeDialog();
+    const ids=edits.map(row=>row.id),byId=new Map(edits.map(row=>[row.id,row]));
+    await loadNasScope(ids);
+    const docs=new Map(state.configs.filter(c=>ids.includes(c.id)).map(c=>[c.id,clone(c)]));
+    for(const id of ids)applyConfigRenumber(docs.get(id),byId.get(id),suggestedName);
+    if(await commitNasConfigs(ids.map(id=>({id,action:'replace',document:docs.get(id)})),{title:'重新编号',group:nasGroup(product)}))closeDialog();
    }catch(error){toast(nasErrorText(error));}
    return;
   }
   const live=currentProduct();
   if(activeShopId!==shopId||live?.id!==productId||JSON.stringify(planConfigRenumber(live.configs))!==JSON.stringify(plan))return toast('链接配置、名称或顺序已变化，请重新打开编号预览');
-  const ids=edits.map(row=>row.id),names=new Map(edits.map(row=>[row.id,row.after]));
+  const ids=edits.map(row=>row.id),byId=new Map(edits.map(row=>[row.id,row]));
   checkpointConfig(ids);
-  for(const config of live.configs)if(names.has(config.id))config.name=names.get(config.id);
+  for(const config of live.configs)if(byId.has(config.id))applyConfigRenumber(config,byId.get(config.id),suggestedName);
   changed(`重新编号 ${ids.length} 套配置`,ids);closeDialog();renderAll();toast(`已重新编号 ${ids.length} 套配置，可点击“撤销”恢复`);
  };
  $('#renumber-apply').onclick=nasMain?apply:fullAction(apply);

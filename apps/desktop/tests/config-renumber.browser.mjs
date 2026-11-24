@@ -12,7 +12,7 @@ const configs=Array.from({length:250},(_,i)=>{
  const c=blankConfig(null,product,`配置${i}`);c.id=`c${i}`;c.price=5000;return c;
 });
 let state=normalizeWorkspaceState({revision:1,updatedAt:new Date().toISOString(),configs,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{intel:{coupon:0}},logs:[]},[]);
-state.configs[0].name='配置1';state.configs[1].name='颜值升级包';state.configs[2].name='配置五：16G / 1T';state.configs[3].name='配置9 · 32G';
+state.configs[0].name='配置1';state.configs[1].name='颜值升级包';state.configs[2].name='配置五：16G / 1T';state.configs[2].shortName='配置五：270K+无卡+16G+1T | 豪华版';state.configs[2].shortNameAuto=false;state.configs[3].name='配置9 · 32G';state.configs[3].shortName='配置9：270K+5060+32G+1T丨进阶版';state.configs[3].shortNameAuto=false;
 const original=structuredClone(state);
 const errors=[],requests=[],browser=await chromium.launch({channel:'msedge',headless:true});
 try{
@@ -45,13 +45,16 @@ try{
  assert.match(await page.locator('#dialog-body').innerText(),/颜值升级包（跳过）/);
  await page.locator('#renumber-apply').click();await page.evaluate(()=>window.memoryProbe.save());
  assert.equal(state.configs[2].name,'配置2：16G / 1T');assert.equal(state.configs[3].name,'配置3 · 32G');
+ assert.equal(state.configs[2].shortName,'配置2：270K+无卡+16G+1T | 豪华版');assert.equal(state.configs[3].shortName,'配置3：270K+5060+32G+1T丨进阶版');
  assert.equal(state.configs[1].name,'颜值升级包');assert.equal(state.configs[24].name,'配置24');
  assert.deepEqual(state.configs.slice(25),original.configs.slice(25));
  assert.deepEqual(state.configs.map(c=>c.id),original.configs.map(c=>c.id));
  await page.evaluate(()=>window.memoryProbe.undo());await page.evaluate(()=>window.memoryProbe.save());
  assert.deepEqual(state.configs.map(c=>c.name),original.configs.map(c=>c.name));
+ assert.equal(state.configs[2].shortName,'配置五：270K+无卡+16G+1T | 豪华版');
  await page.evaluate(()=>window.memoryProbe.redo());await page.evaluate(()=>window.memoryProbe.save());
  assert.equal(state.configs[2].name,'配置2：16G / 1T');
+ assert.equal(state.configs[2].shortName,'配置2：270K+无卡+16G+1T | 豪华版');
  if(!await page.locator('.heading-actions .action-menu').evaluate(n=>n.open))await page.locator('.heading-actions .action-menu > summary').click();await page.locator('#renumber').click();assert.equal(await page.locator('#renumber-apply').isDisabled(),true);
  await page.evaluate(()=>window.memoryProbe.close());
  await page.reload();await page.waitForFunction(()=>window.workbenchReady);

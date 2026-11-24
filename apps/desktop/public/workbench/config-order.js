@@ -32,15 +32,53 @@ export function insertConfigAfter(configs,sourceId,duplicate){
  const result=[...ordered];result.splice(index+1,0,{...duplicate,workspaceOrder:value});return result;
 }
 
+const CONFIG_NUMBER_PREFIX=/^配置\s*(?:[0-9]+|[一二三四五六七八九十百零〇两]+)(?=$|[\s：:·\-—_（(丨|])/;
+
+/** 按新序号替换文本开头的“配置N”编号，保留其余文案；无编号前缀时原样返回。 */
+export function renumberConfigPrefix(text,ordinal){
+ const raw=String(text??'');
+ if(!Number.isInteger(ordinal)||ordinal<1)return raw;
+ const match=CONFIG_NUMBER_PREFIX.exec(raw);
+ return match?`配置${ordinal}${raw.slice(match[0].length)}`:raw;
+}
+
 /** 按链接现有顺序连续编号；只替换明确的配置编号，保留容量、型号及特殊名称。 */
 export function planConfigRenumber(configs){
  let ordinal=0;
  return configs.filter(c=>!c.deletedAt).map(c=>{
   const before=String(c.name||'');
-  const match=/^配置\s*(?:[0-9]+|[一二三四五六七八九十百零〇两]+)(?=$|[\s：:·\-—_（(丨|])/.exec(before);
-  const after=match?`配置${++ordinal}${before.slice(match[0].length)}`:before;
-  return {id:c.id,before,after,skipped:!match};
+  const match=CONFIG_NUMBER_PREFIX.exec(before);
+  const nextOrdinal=match?++ordinal:null;
+  const after=match?`配置${nextOrdinal}${before.slice(match[0].length)}`:before;
+  const shortNameBefore=String(c.shortName||'');
+  const shortNameAfter=nextOrdinal?renumberConfigPrefix(shortNameBefore,nextOrdinal):shortNameBefore;
+  return {id:c.id,ordinal:nextOrdinal,before,after,shortNameBefore,shortNameAfter,shortNameChanged:shortNameBefore!==shortNameAfter,skipped:!match};
  });
+}
+
+/** 应用重新编号到单套完整配置，同步更新简称及海报副标题中的配置编号。 */
+export function applyConfigRenumber(config,row,autoShortName=null){
+ if(!config||!row)return config;
+ const oldShortName=config.shortName;
+ config.name=row.after;
+ if(!Number.isInteger(row.ordinal)||row.ordinal<1)return config;
+ if(config.shortNameAuto===true&&typeof autoShortName==='function'){
+  config.shortName=autoShortName(config,config.nameFormat||'compact');
+ }else if(typeof config.shortName==='string'&&config.shortName){
+  config.shortName=renumberConfigPrefix(config.shortName,row.ordinal);
+ }
+ const shortNameUpdated=config.shortName!==oldShortName;
+ if(typeof config.posterSubtitle==='string'){
+  if(shortNameUpdated&&config.posterSubtitle===oldShortName)delete config.posterSubtitle;
+  else config.posterSubtitle=renumberConfigPrefix(config.posterSubtitle,row.ordinal);
+ }
+ for(const styles of [config.textStyles,config.skuTextStyles]){
+  if(typeof styles?.['header.subtitle']?.text==='string'){
+   if(shortNameUpdated&&styles['header.subtitle'].text===oldShortName)delete styles['header.subtitle'].text;
+   else styles['header.subtitle'].text=renumberConfigPrefix(styles['header.subtitle'].text,row.ordinal);
+  }
+ }
+ return config;
 }
 
 /** 删除后接续本链接下一套或上一套；整链移除时才转到相邻链接。 */
