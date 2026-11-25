@@ -1,4 +1,6 @@
 import {chargeCents,moneyCents,pricing,readInstallment} from './pricing.js';
+import {overviewFeeRate,overviewTableTotals,PROFIT_FORMULA_VERSION} from './overview-table-model.js';
+import {isSpecialComponent,normalizeSpecialComponent} from './special-components.js';
 
 const MAX=BigInt(Number.MAX_SAFE_INTEGER);
 const bounded=value=>value>=-MAX&&value<=MAX?Number(value):null;
@@ -41,20 +43,21 @@ export function buildNasProfitReport({shopId,configIds,configs,settings,linkConf
   const c=byId.get(id),rawParts=c.actualParts??c.parts;
   if(!Array.isArray(rawParts)||rawParts.some(part=>!part||typeof part!=='object'||Array.isArray(part)))
    throw Error('实际成本配件格式无效，请刷新配置再试。');
-  const parts=rawParts.flatMap(part=>{
+  const parts=rawParts.flatMap(raw=>{
+   const part=normalizeSpecialComponent(raw);
    const goodsId=identity(part.goodsId),name=text(part.name),slot=text(part.slot);
-   if((!name&&!goodsId)||part.specialComponent===true)return [];
+   if(!name&&!goodsId&&!isSpecialComponent(part))return [];
    // 独立核算价只在同一商品行生效，真实零价与缺失严格分开。
-   const override=part.taxOverride?.goodsId===goodsId&&typeof part.taxOverride.value==='number'?moneyCents(part.taxOverride.value):null;
-   const quantity=qty(part.qty),taxCents=override??moneyCents(part.tax);
+   const override=!isSpecialComponent(part)&&part.taxOverride?.goodsId===goodsId&&typeof part.taxOverride.value==='number'?moneyCents(part.taxOverride.value):null;
+   const quantity=isSpecialComponent(part)?1:qty(part.qty),taxCents=override??moneyCents(part.tax);
    const costCents=quantity===null||taxCents===null?null:bounded(BigInt(quantity)*BigInt(taxCents));
    return [{slot,name,goodsId,qty:quantity,taxCents,costCents}];
   });
   const termSet=terms.get(linkKey(c)),term=readInstallment(c);
   const quote=pricing(c,{...settings,linkInstallment:termSet?.size===1&&term!==null?term:null});
-  const commissionCents=chargeCents(quote.priceCents,quote.rule.taxRate),taxFixedCents=moneyCents(quote.rule.taxFixed);
+  const rate=overviewFeeRate(c),taxFixedCents=10000;
   const snapshot={product:text(c.product),name:text(c.name)||id,spu:identity(c.spu),parts,priceCents:quote.priceCents,
-   installment:quote.term,feeCents:quote.feeCents,commissionCents,taxFixedCents};
+   installment:quote.term,feeCents:quote.feeCents,overviewFeeRate:rate,formulaVersion:PROFIT_FORMULA_VERSION,taxFixedCents};
   let reason='',costCents=null,profitCents=null;
   if(quote.priceCents===null||quote.feeCents===null)reason='到手价或分期无效';
   else if(!parts.length)reason='没有实际成本配件';
@@ -68,7 +71,11 @@ export function buildNasProfitReport({shopId,configIds,configs,settings,linkConf
     costCents=bounded(sum);
     if(costCents===null)reason='成本金额超过核算范围';
     else{
-     profitCents=bounded(BigInt(quote.priceCents)-sum-BigInt(commissionCents)-BigInt(taxFixedCents)-BigInt(quote.feeCents));
+     // 与价格页及配置总表共用公式，快照冻结费率和口径版本，旧基准自然产生不同指纹。
+     const summary=overviewTableTotals(c,{tax:costCents/100,erp:null},quote);
+     snapshot.commissionCents=chargeCents(costCents,rate);
+     snapshot.rateCostCents=moneyCents(summary.fee);
+     profitCents=bounded(BigInt(quote.priceCents)-sum-BigInt(snapshot.commissionCents)-BigInt(taxFixedCents)-BigInt(quote.feeCents));
      if(profitCents===null)reason='利润金额超过核算范围';
     }
    }

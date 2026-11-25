@@ -18,7 +18,7 @@ const configs=Array.from({length:4},(_,i)=>{
 let state=normalizeWorkspaceState({revision:1,updatedAt:new Date().toISOString(),configs,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{intel:{coupon:0}},logs:[]},[]);
 state.configs.forEach((c,i)=>c.name='配置'+(i+1));
 state.sourceCatalog=[{shopId:'intel',sourceId:'s-cpu',goodsId:'1001',name:'验收CPU',erp:800,tax:850},{shopId:'intel',sourceId:'s-memory',goodsId:'1002',name:'验收内存',erp:220,tax:240}];
-state.sourceCatalog.push(...Array.from({length:5000},(_,i)=>({shopId:'intel',sourceId:'perf-'+i,goodsId:String(50000+i),name:'性能样本 CPU '+i,erp:100,tax:120})));
+state.sourceCatalog.push(...Array.from({length:5000},(_,i)=>({shopId:'intel',sourceId:'perf-'+i,goodsId:String(50000+i),name:'性能样本 CPU '+i,erpName:'性能样本 CPU '+i,erp:100,tax:120})));
 state.costSource=state.sourceCatalog.map(p=>({...p,stockAvailable:12}));
 for(const c of state.configs){Object.assign(c.parts[0],state.sourceCatalog[0]);Object.assign(c.actualParts[0],state.sourceCatalog[0]);}
 let host,callStore,storeDirectory;
@@ -41,7 +41,7 @@ try{
  await page.route('**/workbench/renumber-fixture',r=>r.fulfill({contentType:'text/html',body:html}));
  let source=await fs.readFile(new URL('../public/workbench/app.js',import.meta.url),'utf8');
  source=source.replace('render:(container,model)=>reactWorkbench.continuous(container,model)', 'render:(container,model)=>{window.continuousDraws=(window.continuousDraws||0)+1;const t=performance.now();const result=reactWorkbench.continuous(container,model);(window.renderTimes??=[]).push(performance.now()-t);return result}');
- await page.route('**/workbench/app.js',r=>r.fulfill({contentType:'text/javascript',body:source+`\nwindow.memoryProbe={historyState:()=>({undo:history.length,redo:redoHistory.length,counter:changeCounter}),snapshot:()=>structuredClone(state),redraw:()=>continuousWorkbench.draw(),updateCatalog:()=>{state.sourceCatalog.find(r=>r.sourceId==='perf-42').name='更新后的配件';state.costSource.find(r=>r.goodsId==='50042').stockAvailable=0;continuousWorkbench.draw();},};`}));
+ await page.route('**/workbench/app.js',r=>r.fulfill({contentType:'text/javascript',body:source+`\nwindow.memoryProbe={historyState:()=>({undo:history.length,redo:redoHistory.length,counter:changeCounter}),snapshot:()=>structuredClone(state),redraw:()=>continuousWorkbench.draw(),updateCatalog:()=>{Object.assign(state.sourceCatalog.find(r=>r.sourceId==='perf-42'),{name:'更新后的配件',erpName:'更新后的配件'});Object.assign(state.costSource.find(r=>r.goodsId==='50042'),{name:'更新后的配件',erpName:'更新后的配件',stockAvailable:0});continuousWorkbench.draw();},};`}));
  await page.route('**/catalog.json',r=>r.fulfill({json:[]}));
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname,payload=req.method()==='POST'?req.postDataJSON():null;requests.push({method:req.method(),path,ids:payload?.ids});let value={};
@@ -81,8 +81,8 @@ try{
  await textSelection(field,2);await field.dispatchEvent('compositionstart',{data:''});
  await page.evaluate(()=>window.memoryProbe.redraw());await page.waitForTimeout(100);
  assert.deepEqual(await textOffsets(original),{connected:true,active:true,start:2,end:2});
- await field.dispatchEvent('compositionend',{data:'畅'});await field.press('Tab');await page.waitForFunction(()=>window.memoryProbe.snapshot().configs.find(c=>c.id==='c0').parts[0].displayName==='顺畅输入ABC');assert.equal(await field.innerText(),'顺畅输入ABC');
- const price=page.locator('[data-continuous-config="c0"] input[aria-label$="到手价"]:visible');await price.fill('6888');await price.press('Tab');await page.waitForFunction(()=>window.memoryProbe.snapshot().configs.find(c=>c.id==='c0').price===6888);assert.equal(await price.inputValue(),'6,888');
+ await field.dispatchEvent('compositionend',{data:'畅'});await field.press('Tab');await page.waitForFunction(()=>window.memoryProbe.snapshot().configs.find(c=>c.id==='c0').parts[0].displayName==='顺畅输入ABC');await page.waitForFunction(()=>document.querySelector('[data-continuous-config="c0"] [aria-label="CPU展示明细"]').innerText==='顺畅输入ABC');
+ const price=page.locator('[data-continuous-config="c0"] input[aria-label$="到手价"]:visible');await price.fill('6888');await price.press('Tab');await page.waitForFunction(()=>window.memoryProbe.snapshot().configs.find(c=>c.id==='c0').price===6888);await page.waitForFunction(()=>[...document.querySelectorAll('[data-continuous-config="c0"] input[aria-label$="到手价"]')].some(el=>el.offsetWidth&&el.value==='6,888'));
  let picker=await actualPicker(page,'c0','CPU');await picker.fill('50042');await page.getByRole('option').filter({hasText:'性能样本 CPU 42'}).click();
  await page.waitForFunction(()=>window.memoryProbe.snapshot().configs.find(c=>c.id==='c0').actualParts[0].goodsId==='50042');
  await saveUi(page);assert.equal(state.configs.find(c=>c.id==='c0').price,6888);assert.equal(state.configs.find(c=>c.id==='c0').parts[0].displayName,'顺畅输入ABC');

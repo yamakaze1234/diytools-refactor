@@ -1,5 +1,7 @@
 import {totals} from './core.js';
 import {pricing,moneyCents,chargeCents,DEFAULT_PROFIT_ALERT,PROFIT_ALERT_BASES,normalizeProfitAlerts} from './pricing.js';
+import {priceForTarget,snap99} from './batch-profit-price.js';
+import {readOverviewFeeRate} from './overview-table-model.js';
 
 export const linkKey=config=>JSON.stringify([config.shopId,config.productId]);
 export const MAX_ARRIVAL=1000000;
@@ -54,6 +56,48 @@ export function planIdEdit(configs,field,ids,values,{allowBlank=false}={}){
  });
 }
 
+/** 矩阵粘贴先构造最终身份，整批验证后才返回一次提交计划（允许同批交换编号）。 */
+export function planPriceMatrix(configs,ids,keys,matrix,settingsFor){
+ if(!matrix.length||matrix.length>ids.length)throw Error('粘贴内容超过当前单元格后可见行数。');
+ const live=configs.filter(c=>!c.deletedAt),copies=new Map(live.map(c=>[c.id,{...c}])),links=new Map();
+ matrix.forEach((cells,index)=>{
+  if(cells.length>keys.length)throw Error('粘贴列数超过当前表格。');
+  const c=copies.get(ids[index]);if(!c)throw Error('当前行已改变，请重新选择。');
+  cells.forEach((value,col)=>{
+   const key=keys[col];if(!key)return;
+   if(key==='spu'){
+    const spu=parseId(value,'SPU',true),link=linkKey(c);
+    if(links.has(link)&&links.get(link)!==spu)throw Error('同一链接的 SPU 必须一致。');
+    links.set(link,spu);
+   }else if(key==='sku')c.skuId=parseId(value,'SKU',true);
+   else if(key==='shortName'){
+    const name=String(value).trim();if(!name||name.length>160)throw Error('简称须为 1–160 个字');
+    c.shortName=name;c.shortNameAuto=false;
+   }else if(key==='rate')c.overviewFeeRate=readOverviewFeeRate(value);
+   else if(key==='price'){c.price=parseArrival(String(value).replace(/[,，]/g,''));if(c.price!=null&&c.overviewPrice99)c.price=snap99(c.price);}
+  });
+ });
+ for(const c of copies.values())if(links.has(linkKey(c)))c.spu=links.get(linkKey(c));
+ // 成本及费率都已应用后，再按既有总表函数反推目标利润。
+ matrix.forEach((cells,index)=>cells.forEach((value,col)=>{
+  const key=keys[col];if(!['taxTarget','erpTarget'].includes(key))return;
+  const text=String(value).normalize('NFKC').replace(/[,，\s]/g,'').replace(/^[−–]/,'-'),target=Number(text);
+  if(!/^-?(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(text)||!Number.isFinite(target))throw Error('请输入有效目标利润，可为负数，最多两位小数');
+  const c=copies.get(ids[index]),price=priceForTarget(c,settingsFor(c.shopId),key==='taxTarget'?'tax':'erp',target);
+  if(price==null)throw Error('成本或分期不完整，无法反推到手价');
+  c.price=parseArrival(price);
+ }));
+ const identities=new Map();
+ for(const c of copies.values()){
+  if(!c.spu||!c.skuId)continue;
+  const identity=JSON.stringify([c.shopId,c.spu,c.skuId]);
+  if(identities.has(identity))throw Error('同一店铺已有配置使用此 SPU + SKU。');
+  identities.set(identity,c.id);
+ }
+ const attrs=['spu','skuId','shortName','shortNameAuto','price','overviewFeeRate'];
+ return live.flatMap(c=>{const next=copies.get(c.id),fields=Object.fromEntries(attrs.filter(k=>next[k]!==c[k]).map(k=>[k,next[k]]));return Object.keys(fields).length?[{id:c.id,fields}]:[];});
+}
+
 export function priceProfitRow(config,settings){
  const quote=pricing(config,settings),metrics=totals(config,settings,quote);
  return {config,quote,metrics,alerts:normalizeProfitAlerts(settings.profitAlert)};
@@ -74,9 +118,10 @@ export function flagsFor(row){
 
 /** 用实际舍入后的利润验算目标。至少有 1 分净额浮动空间的保守候选覆盖双重手续费舍入。 */
 function targetPrice(row,basis,mode,amount){
- const {quote,metrics}=row,cost=metrics[basis],term=quote.percent;
+ const {quote,metrics,config}=row,cost=metrics[basis],term=basis==='erp'?0:quote.percent;
  if(cost==null||term==null)return {reason:'缺少成本或分期设置'};
- const rate=quote.rule[basis+'Rate'],fixed=quote.rule[basis+'Fixed'],margin=mode==='margin'?amount/100:0;
+ const rate=basis==='erp'?2:0,margin=mode==='margin'?amount/100:0;
+ const fixed=basis==='erp'?0:metrics.basis-cost;
  const net=1-(rate+term)/100-margin,target=mode==='target'?amount:0,base=cost+fixed+target;
  if(!(net>0))return {reason:'目标利润率过高'};
  const step=1,first=Math.max(step,Math.ceil(base/net-1e-8));

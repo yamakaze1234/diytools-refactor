@@ -17,6 +17,7 @@ use std::{
 use tauri::{Emitter, Manager};
 pub(crate) mod access;
 mod gitea;
+pub(crate) mod component;
 mod recovery;
 pub(crate) mod retention;
 
@@ -78,6 +79,28 @@ struct Inner {
 #[derive(Default)]
 pub struct UpdaterState(Mutex<Inner>);
 
+// 与检查、下载和安装共用互斥锁；不接收前端传入的磁盘路径。
+#[tauri::command]
+pub async fn workbench_clear_cache(app:tauri::AppHandle,window:tauri::WebviewWindow)->Result<crate::cache_cleanup::CleanupReport,String>{
+    tauri::async_runtime::spawn_blocking(move||{
+        let state=app.state::<UpdaterState>();
+        let inner=state.0.try_lock().map_err(|_|"正在处理更新，请稍后再清理缓存。")?;
+        let root=executable_root()?.1;
+        #[cfg(windows)] {
+            let session = app.state::<crate::erp_session::ErpSessionState>();
+            let mut report = tauri::async_runtime::block_on(session.when_idle(false, |data| {
+                let mut report = crate::cache_cleanup::recycle_old_packages(&root, CURRENT,
+                    inner.pending.as_ref().map(|p| p.directory.as_path()), crate::cache_cleanup::recycle)?;
+                crate::cache_cleanup::matching_receipts(data, &mut report, crate::cache_cleanup::recycle)?;
+                Ok(report)
+            }))?;
+            match crate::cache_cleanup::clear_browser(window){Ok(())=>report.browser_cache_cleared=true,Err(error)=>report.warnings.push(error)}
+            Ok(report)
+        }
+        #[cfg(not(windows))] {let _=(root,inner,window);Err("当前平台不支持安全清理缓存。".into())}
+    }).await.map_err(|_|"缓存清理任务未完成".to_owned())?
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CheckReport {
@@ -113,12 +136,8 @@ fn public_key() -> Result<VerifyingKey, String> {
     VerifyingKey::from_bytes(&bytes).map_err(|_| "更新公钥无效".into())
 }
 
-// 先验证签名覆盖的原始载荷，再核对产品、平台、版本和下载契约。
-fn verify_envelope(
-    envelope: &Envelope,
-    key: &VerifyingKey,
-    current: &str,
-) -> Result<Manifest, String> {
+// 主程序和可选组件共用同一公钥和签名信封，分别校验各自的用途与平台。
+fn verified_payload(envelope: &Envelope, key: &VerifyingKey) -> Result<Vec<u8>, String> {
     if envelope.payload.len() as u64 > MAX_METADATA || envelope.signature.len() > 128 {
         return Err("更新清单超过长度限制".into());
     }
@@ -131,6 +150,16 @@ fn verify_envelope(
     let signature = Signature::from_slice(&sig).map_err(|_| "更新签名长度无效")?;
     key.verify_strict(&bytes, &signature)
         .map_err(|_| "更新清单签名验证失败")?;
+    Ok(bytes)
+}
+
+// 先验证签名覆盖的原始载荷，再核对产品、平台、版本和下载契约。
+fn verify_envelope(
+    envelope: &Envelope,
+    key: &VerifyingKey,
+    current: &str,
+) -> Result<Manifest, String> {
+    let bytes = verified_payload(envelope, key)?;
     let manifest: Manifest = serde_json::from_slice(&bytes).map_err(|_| "更新清单格式无效")?;
     if manifest.schema != 1
         || manifest.app_id != APP_ID
@@ -761,6 +790,8 @@ pub async fn updater_download(app: tauri::AppHandle) -> Result<DownloadReport, S
         })();
         if let Err(error) = outcome {
             let _ = write_status(&directory, "download-failed", &error);
+            // 标注失败下载的目标版本，日后手动清理仍能保护当前版本及更新候选。
+            let _=fs::write(directory.join("status.json"),serde_json::to_vec(&serde_json::json!({"phase":"download-failed","message":error,"version":checked.manifest.version,"at":chrono::Utc::now().to_rfc3339()})).unwrap_or_default());
             return Err(error);
         }
         let report = DownloadReport {

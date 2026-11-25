@@ -244,6 +244,11 @@ async function install(targetWindow: WorkbenchWindow, options: WorkbenchBridgeOp
     if (typeof targetWindow.setInterval === 'function') installAgentBridge(targetWindow, invoke);
     // 导出不排队等待同步锁，卡住时仍能保存当前运行阶段。
     targetWindow.workbenchExportDiagnostics = () => exportDiagnostics(invoke);
+    // 仅通过固定原生会话协议访问本机 ERP，页面不能指定适配器路径或远端地址。
+    (targetWindow as Window & {workbenchErpRequest?: (input:unknown)=>Promise<unknown>}).workbenchErpRequest = input => invoke('erp_session_request',{input});
+    // 工作台只能检查或安装受信任通道的组件，下载位置由原生层决定。
+    (targetWindow as Window & {workbenchErpRuntime?: (action:'check'|'install')=>Promise<unknown>}).workbenchErpRuntime =
+      action => action === 'check' ? invoke('erp_runtime_check') : action === 'install' ? invoke('erp_runtime_install') : Promise.reject(Error('未知组件操作'));
     targetWindow.workbenchDiagnosticText = () => diagnosticText();
     targetWindow.workbenchRecordDiagnostic = (stage, error) => { diagnostics.begin(stage)(error); };
     targetWindow.pywebview = { api: {

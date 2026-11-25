@@ -4,6 +4,7 @@ import WorkbenchThemeToggle from './WorkbenchThemeToggle';
 import {Button} from '@/components/ui/button';
 import './reui.css';
 import DiagnosticExport from './DiagnosticExport';
+import CacheCleanupDialog from './CacheCleanupDialog';
 /** 桌面 React 宿主：组织启动登录、工作台导航和更新流程，统一阻止未完成保存时的切换。 */
 import { useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -30,10 +31,16 @@ export default function App() {
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState("");
   const [updateOpen, setUpdateOpen] = useState(false);
+  const [cacheOpen,setCacheOpen]=useState(false);
   const [startupRelease, setStartupRelease] = useState<UpdateCheck|null>(null);
   const [startupOffer, setStartupOffer] = useState<UpdateCheck|null>(null);
   const startupCheck = useRef<Promise<UpdateCheck>|null>(null);
   const startupChecking = useRef(false);
+  const runtimeCheck = useRef<Promise<{status:string;hasLocal:boolean}>|null>(null);
+  const [runtimeOffer,setRuntimeOffer]=useState(false);
+  const [runtimeBusy,setRuntimeBusy]=useState(false);
+  const [runtimeMessage,setRuntimeMessage]=useState('');
+
   const startupNoticeDismissed = useRef(false);
   const [updateFrozen, setUpdateFrozen] = useState(false);
   const [nasMain,setNasMain]=useState(false);
@@ -59,6 +66,11 @@ export default function App() {
             startupChecking.current=true;
             startupCheck.current=invoke<UpdateCheck>('updater_check').finally(()=>{startupChecking.current=false;});
           }
+          // 私有组件有独立的签名清单，启动检查只提醒已有组件的用户。
+          runtimeCheck.current??=startupCheck.current.catch(()=>null).then(()=>invoke('erp_runtime_check'));
+          void runtimeCheck.current.then(result=>{
+            if(!disposed&&result?.hasLocal&&result.status==='outdated')setRuntimeOffer(true);
+          },()=>{});
           void startupCheck.current.then(release=>{
             if(!disposed&&!startupNoticeDismissed.current&&release.available&&release.version)setStartupRelease(release);
           },()=>{});
@@ -114,6 +126,17 @@ export default function App() {
     startupNoticeDismissed.current = true;
     setStartupRelease(null);
   }
+  async function installRuntime(){
+    setRuntimeBusy(true);setRuntimeMessage('正在下载并校验 ERP 组件…');
+    try{
+      const result=await invoke<{status:string;message:string}>('erp_runtime_install');
+      if(result.status!=='ready')throw Error(result.message||'组件尚未就绪');
+      const frame=document.querySelector<HTMLIFrameElement>('.legacy-workbench-frame');
+      frame?.contentWindow?.dispatchEvent(new Event('erp-runtime-installed'));
+      setRuntimeOffer(false);setNotice('ERP 匹配组件已更新。');
+    }catch(error){setRuntimeMessage(String(error));}
+    finally{setRuntimeBusy(false);}
+  }
   const connectionDialog=connectionOpen?<ConnectionSettings firstUse={connectionRequired} onClose={()=>setConnectionOpen(false)} onSave={saveConnection}/>:null;
   function navigate(next: Page) {
     if(nasMain&&next!=='workbench')return;
@@ -144,14 +167,21 @@ export default function App() {
       {!acceptance&&<Button type="button" variant="outline"
         onClick={event => { dismissStartupNotice();setUpdateOpen(true);event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}
       <DiagnosticExport />
+      <Button type="button" variant="outline" onClick={event=>{setCacheOpen(true);event.currentTarget.closest('details')?.removeAttribute('open');}}>清理缓存</Button>
     </div></details>
   </header>;
   return <main className={`app-shell ${page === "workbench" ? "app-shell-workbench" : ""}`}>
     {page === "workbench" && headerTarget ? createPortal(hostHeader, headerTarget) : hostHeader}
     {Boolean(login.migrationMissingImages) && <p className="notice" role="status">旧资料中有 {login.migrationMissingImages} 张原图未找到，配置已保留。云端同步将尝试补齐，仍缺失时请重新选择原图。</p>}
+    {runtimeOffer&&!startupRelease&&!updateOpen&&!cacheOpen&&!connectionOpen&&<aside className="notice" aria-live="polite">
+      <span>{runtimeMessage||'本机 ERP 匹配组件有新版。'}</span>
+      <Button type="button" disabled={runtimeBusy} onClick={()=>void installRuntime()}>一键更新组件</Button>
+      <Button type="button" variant="outline" disabled={runtimeBusy} onClick={()=>setRuntimeOffer(false)}>稍后</Button>
+    </aside>}
     {notice && <p className="notice" role="alert">{notice}<Button type="button" variant="outline" className="text-button" onClick={() => setNotice("")}>知道了</Button></p>}
     <div ref={content} inert={updateFrozen} className="app-content">{page === "workbench" ? <LegacyWorkbench nasMain={nasMain} onDirty={setDirty} onHeaderTarget={setHeaderTarget} /> : page === "configs" ? <ConfigWorkspace onDirty={setDirty} /> : page === "migration" ? <LegacyMigration onDirty={setDirty} /> : <ErpEnvironment />}</div>
     {connectionDialog}
+    {cacheOpen&&<CacheCleanupDialog onClose={()=>setCacheOpen(false)} onFreeze={freezeForUpdate}/>}
     {startupRelease && !updateOpen && !connectionOpen && (
       <StartupUpdateNotice release={startupRelease} onDismiss={dismissStartupNotice} onUpdate={() => {
         setStartupOffer(startupRelease);

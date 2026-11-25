@@ -9,8 +9,8 @@ test('涨幅边界、零旧价、首次与缺失分离',()=>{
 });
 test('实际BOM、数量和分期利润与现有口径一致',()=>{
  const c={price:1000,installment:12,parts:[{name:'展示',erp:999,tax:999,qty:1}],actualParts:[{name:'实际',goodsId:'1',erp:100,tax:110,qty:2}]};
- assert.deepEqual(trackedProfit(c),{tax:58000,erp:72000,fallback:false});
- c.actualParts[0].erpUnknown=true;assert.deepEqual(trackedProfit(c),{tax:58000,erp:70000,fallback:true});
+ assert.deepEqual(trackedProfit(c),{tax:61120,erp:78000,fallback:false});
+ c.actualParts[0].erpUnknown=true;assert.deepEqual(trackedProfit(c),{tax:61120,erp:76000,fallback:true});
  c.actualParts[0].tax=null;assert.equal(trackedProfit(c).tax,null);assert.equal(trackedProfit(c).erp,null);
  c.actualParts=[];assert.equal(trackedProfit(c).tax,null);
 });

@@ -13,21 +13,25 @@ type Position={row:number;col:0|1};
 type RowSelection={slots:string[];anchor:string|null};
 
 /** 编辑以回车或失焦提交，取消或无效输入恢复最后一次已确认的值。 */
-function CommitInput({value,label,className='',fallback='',numeric=false,onCommit,onDraft}:
- {value:unknown;label:string;className?:string;fallback?:string;numeric?:boolean;onCommit:(value:string)=>unknown;onDraft?:(value:number|null)=>void}){
+function CommitInput({value,label,className='',fallback='',numeric=false,onCommit,onDraft,onAdvance}:
+ {value:unknown;label:string;className?:string;fallback?:string;numeric?:boolean;onCommit:(value:string)=>unknown;onDraft?:(value:number|null)=>void;onAdvance?:(direction:number)=>void}){
  const node=useRef<HTMLInputElement>(null),before=useRef(''),cancelled=useRef(false),mouseSelect=useRef(false);
  const text=String(value??'');
+ const advance=useRef(0);
  const displayed=numeric?(value==null?'':amount(Number(value))):text;
+ const latestDisplay=useRef(displayed);latestDisplay.current=displayed;
  useLayoutEffect(()=>{if(node.current&&node.current!==document.activeElement)node.current.value=displayed;},[displayed]);
  return <input ref={node} className={className} aria-label={label} placeholder={fallback} inputMode={numeric?'decimal':undefined} defaultValue={displayed}
   onPointerDown={e=>{mouseSelect.current=e.currentTarget!==document.activeElement;}}
   onMouseUp={e=>{if(mouseSelect.current){e.preventDefault();e.currentTarget.select();mouseSelect.current=false;}}}
   onFocus={e=>{cancelled.current=false;before.current=text;e.currentTarget.value=text;e.currentTarget.select();}}
   onChange={e=>{const changed=normalize(e.currentTarget.value);onDraft?.(/^\d+(?:\.\d*)?$|^\.\d+$/.test(changed)&&Number.isFinite(Number(changed))?Number(changed):null);}}
-  onKeyDown={e=>{if(e.nativeEvent.isComposing||!['Enter','Escape'].includes(e.key))return;e.preventDefault();cancelled.current=e.key==='Escape';e.currentTarget.blur();}}
-  onBlur={e=>{const next=e.currentTarget.value.trim();onDraft?.(null);
-   if(!cancelled.current&&next!==before.current)onCommit(numeric?normalize(next):next);
-   e.currentTarget.value=displayed;
+  onKeyDown={e=>{if(e.nativeEvent.isComposing||!['Enter','Escape'].includes(e.key))return;e.preventDefault();cancelled.current=e.key==='Escape';advance.current=e.key==='Enter'?(e.shiftKey?-1:1):0;e.currentTarget.blur();}}
+  onBlur={async e=>{const input=e.currentTarget,next=input.value.trim(),direction=advance.current;advance.current=0;onDraft?.(null);
+   const result=!cancelled.current&&next!==before.current?await onCommit(numeric?normalize(next):next):true;
+   input.value=latestDisplay.current;
+   // 等异步写入和 React 局部绘制完成后，再进入同列下一条普通配件。
+   if(result!==false&&direction&&onAdvance)requestAnimationFrame(()=>onAdvance(direction));
   }} />;
 }
 
@@ -191,6 +195,15 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
  const [copied,setCopied]=useState<{top:number;bottom:number;left:number;right:number}|null>(null);
  const [picker,setPicker]=useState<{row:number;input:string}|null>(null);
  const dragging=useRef(false),table=useRef<HTMLTableElement>(null);
+ const advance=(index:number,column:string,direction:number)=>{
+  const rows=table.current?.tBodies[0]?.rows;if(!rows)return;
+  for(let next=index+direction;next>=0&&next<rows.length;next+=direction){
+   const part=c.rows[next].actual;
+   if(!part||part.specialComponent||!part.name&&!part.goodsId&&!part.sourceId)continue;
+   const input=rows[next].querySelector<HTMLInputElement>(column);
+   if(input){input.focus({preventScroll:true});input.select();input.scrollIntoView({block:'nearest'});return;}
+  }
+ };
  const position=(target:HTMLElement)=>{const td=target.closest<HTMLElement>('[data-ov-cell]');return td?{row:Number(td.dataset.ovRow),col:Number(td.dataset.ovCell) as 0|1}:null;};
  const bounds=range&&{top:Math.min(range.anchor.row,range.end.row),bottom:Math.max(range.anchor.row,range.end.row),left:Math.min(range.anchor.col,range.end.col),right:Math.max(range.anchor.col,range.end.col)};
 
@@ -227,6 +240,9 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
   const move=delta[e.key];
   if(move){e.preventDefault();const next={row:Math.max(0,Math.min(c.rows.length-1,pos.row+move[0])),col:Math.max(actual?0:1,Math.min(1,pos.col+move[1])) as 0|1};
    setRange(old=>({anchor:e.shiftKey&&old?old.anchor:next,end:next}));focusCell(next);
+  }else if(e.key==='Process'&&pos.col===0){
+   // 中文输入法起笔：先打开搜索框，让拼音直接落进框里。
+   startEditing(pos,'');
   }else if(e.key==='Enter'||e.key==='F2'||e.key.length===1&&(pos.col===0||/^\d$/.test(e.key))){
    e.preventDefault();startEditing(pos,e.key.length===1?e.key:undefined);
   }
@@ -250,14 +266,22 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
    setCopied({...bounds});
   }
  }
+ // 粘贴文本：工作台内部复制带输出源 ID 时按 ID 精确对应，外部（Excel / WPS）按文本匹配。
+ function pasteText(e:ClipboardEvent,row:number,col:number){
+  e.preventDefault();let text=e.clipboardData.getData('text/plain');
+  try{const cells=JSON.parse(e.clipboardData.getData('application/x-diy-workbench-cells'));if(cells.text===text&&typeof cells.sourceText==='string')text=cells.sourceText;}catch{}
+  model.pasteActual(c.id,row,col,text);
+ }
  function paste(e:ClipboardEvent){
   const target=e.target as HTMLElement;
   if(target.matches('input,textarea,select'))return;
   const pos=position(target),row=target.closest<HTMLElement>('[data-row-slot]');
-  if(pos){e.preventDefault();let text=e.clipboardData.getData('text/plain');try{const cells=JSON.parse(e.clipboardData.getData('application/x-diy-workbench-cells'));if(cells.text===text&&typeof cells.sourceText==='string')text=cells.sourceText;}catch{}model.pasteActual(c.id,pos.row,pos.col,text);}
+  if(pos)pasteText(e,pos.row,pos.col);
   else if(row){
    const raw=e.clipboardData.getData('application/x-diy-workbench-rows');
    if(raw){e.preventDefault();try{model.paste(c.id,Number(row.dataset.rowSlot),JSON.parse(raw));}catch{model.notice('剪贴板配件数据无效');}}
+   // 配件标题格按型号格处理：单列粘型号，两列粘型号和数量。
+   else if(e.clipboardData.getData('text/plain'))pasteText(e,Number(row.dataset.rowSlot),0);
   }
  }
  // 逻辑列顺序为型号、数量，画面顺序相反；配件标题属于两者之间的连续选区。
@@ -272,6 +296,10 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
  const benefits=model.configurationBenefits?.(c)??[];
  return <section className="ov-config" data-continuous-config={c.id} data-active={model.active===c.id||undefined}
   onFocusCapture={()=>model.activate(c.id)} onCopy={copy} onPaste={paste}>
+  {/* 单套提醒和价格页使用相同明细，恢复也回到原业务检查点。 */}
+  {c.taxOverrides?.length>0&&<div className="ov-tax-reminder"><strong>本套单独核算价：{c.taxOverrides.length} 项</strong>
+   <span>{c.taxOverrides.map((line:any)=>`${line.slot} ${line.value} / 共用 ${line.base??'待补基准'}`).join('；')}</span>
+   <button type="button" onClick={()=>model.restoreTaxes(c.id)}>恢复本套共用价</button></div>}
   <HeadLine c={c} model={model} draft={draft} onDraft={setDraft} actual={actual} mobile/>
   {benefits.length>0&&<section className="addon-pack-overview"><strong>福利点</strong>
    {benefits.map((text:string,i:number)=><p key={i}>{text}</p>)}
@@ -304,7 +332,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
     // 单价和乘数分开排，含税单价复用原输入框和提交逻辑。
     const multiplier=<span>× {qty}</span>;
     const taxUnit=part?.goodsId&&stock?.status!=='special'?<CommitInput className="ov-tax-input" value={part.tax} label={label+'含税单价'} numeric
-       onCommit={value=>model.tax(c.id,row.slot,value)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.tax);
+       onCommit={value=>model.tax(c.id,row.slot,value)} onAdvance={direction=>advance(index,'.ov-tax-input',direction)} onDraft={value=>setDraft(value==null?null:{field:'tax',index,value})}/>:amount(part?.specialComponent?0:part?.tax);
     return <tr key={row.slot} className={[row.slot==='风扇'?'ov-divider':'',subtotal?'ov-multiple-qty':''].filter(Boolean).join(' ')}>
      <td className="ov-number" data-metric="ERP 单价">{subtotal?<><span className="ov-line-total">{amount(typeof part?.erp==='number'?part.erp*qty:null)}</span><span className="ov-line-calc"><span>{amount(part?.erp)}</span>{multiplier}</span></>:amount(part?.erp)}</td>
      <td className={'ov-number ov-tax'+(taxDifferent||global||manualTax?' ov-tax-changed':'')+(global?' ov-tax-global-changed':'')} data-metric="含税单价" title={manualTax?'店铺手动核算价，同步成本表时保留':global?'全局改价：原价 '+amount(global.base)+' → '+amount(global.value)+' · '+new Date(global.at).toLocaleString('zh-CN'):taxDifferent?'原含税单价 '+(baseline==null?'—':precise.format(baseline)):undefined}>
@@ -314,9 +342,9 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
       {(taxDifferent||global)&&<div className="ov-tax-actions">{taxDifferent&&<><button className="ov-tax-global" onClick={()=>model.taxGlobal(c.id,row.slot)}>全局</button><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxReset(c.id,row.slot)}>恢复</button></>}{global&&<><span className="ov-tax-global-tag">全局</span><button className="ov-tax-global ov-tax-reset" onClick={()=>model.taxGlobalRestore(c.id,row.slot)}>全局恢复</button></>}</div>}
      </td>
      <td className="ov-number" data-metric="GoodID">{part?.goodsId||'—'}</td>
-     <td className={'ov-number'+(stock?.status==='out'?' ov-stock-out':'')} data-metric="库存" title={stock?.detail}>{stock?.status==='special'?'—':stock?.value==null?(stock?'未知':'—'):amount(stock.value)}</td>
+     <td className={'ov-number'+(stock?.status==='out'&&!stock.incomingLabel?' ov-stock-out':'')} data-metric="库存" title={stock?.detail}>{stock?.status==='special'?'—':stock?.value==null?(stock?'未知':'—'):amount(stock.value)}{stock?.incomingLabel&&<small className="ov-stock-incoming">{stock.incomingLabel}</small>}</td>
      <td className="ov-number ov-quantity" data-metric="数量" {...gridProps(index,1)}>
-      <CommitInput value={part?.qty??1} label={label+'实际数量'} numeric onCommit={value=>model.partField(c.id,row.slot,true,'qty',value)}/>
+      <CommitInput value={part?.qty??1} label={label+'实际数量'} numeric onCommit={value=>model.partField(c.id,row.slot,true,'qty',value)} onAdvance={direction=>advance(index,'.ov-quantity input',direction)}/>
      </td>
      <th scope="row" {...selectionProps(index,2)}><button type="button" data-row-slot={row.index} aria-pressed={selected.includes(row.index)} onClick={e=>{
       const anchor=c.rows.find((item:Row)=>item.slot===rowAnchor.current)?.index??row.index;
@@ -324,7 +352,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
       if(!e.shiftKey){rowAnchor.current=row.slot;const saved=selections.get(c.id);if(saved)saved.anchor=row.slot;}
      }}>{row.slot}</button></th>
      {actual&&<td className="ov-actual" aria-label={label+' 实际配件'} {...gridProps(index,0)}>
-      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>setPicker(null)}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}><ErpPartName info={model.describePart(part,row.part,row.slot)}/></span>}
+      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>{setPicker(null);requestAnimationFrame(()=>{const active=document.activeElement;if(!active||active===document.body)focusCell({row:index,col:0});});}}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}><ErpPartName info={model.describePart(part,row.part,row.slot)}/></span>}
      </td>}
      <td className="ov-display"><DisplayPart row={row} c={c} model={model} addons={addons}/></td>
     </tr>;
@@ -342,6 +370,13 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
   {c.hardwareIssues?.map((issue:Row,index:number)=><p key={index} className="ov-notice">{issue.label}：{issue.message}</p>)}
  </section>;
 });
+
+/** 价格展开区挂载的就是总表卡片，选择记录随该 React root 一起释放。 */
+export function ConfigurationCard({model}:{model:Row}){
+ const selections=useRef(new Map<string,RowSelection>());
+ const c=model.configs.find((c:Row)=>c.id===model.cardId);
+ return <div className="reui-continuous">{c&&!c.loading&&<ConfigTable c={c} model={model} actual addons selections={selections.current}/>}</div>;
+}
 
 export function ContinuousWorkbench({model}:{model:Row}){
  const sheet=useRef<HTMLDivElement>(null);
@@ -389,7 +424,7 @@ export function ContinuousWorkbench({model}:{model:Row}){
    <label title={model.term===null?'当前链接分期设置不一致':'整链开启按 24 期、到手价 10% 计算'}><input type="checkbox" disabled={model.loading} checked={model.term>0} onChange={e=>model.installment(e.currentTarget.checked)}/>整链分期（10%）</label>
    <label className="ov-price99"><input type="checkbox" disabled={model.loading} checked={model.price99On} onChange={e=>model.price99(e.currentTarget.checked)}/>整链取 99</label>
   </div>
-  <p className="ov-hint">实际配件和数量可双击或键入编辑，删空型号即清除。用 <kbd>Shift</kbd> 选区，两列粘贴从实际配件格开始，顺序为型号、数量。</p>
+  <p className="ov-hint">实际配件和数量可双击或键入编辑，删空型号即清除。用 <kbd>Shift</kbd> 选区，两列粘贴点数量格、配件格或实际配件格均可。</p>
   {model.error&&<p role="alert">{model.error} <button onClick={()=>model.retry()}>重试加载</button></p>}
   {!list.length&&<p>没有匹配的配置 <button onClick={()=>setQuery('')}>清空搜索</button></p>}
   <div ref={sheet} className="ov-sheet-scroll" data-product-id={model.productId} data-last-configuration={list.at(-1)?.id} aria-label="连续配置表" tabIndex={0}

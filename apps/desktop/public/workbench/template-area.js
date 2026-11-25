@@ -115,6 +115,7 @@ export function renderTemplateSheet(root,options){
   </div></details>
  </div>
  <div class="host-template-scroll"><table aria-label="主机模板配置">
+  <colgroup><col class="col-pick"><col class="col-no"><col class="col-short">${templateSlots.map(slot=>`<col data-template-col="${slot}">`).join('')}<col class="col-actions"></colgroup>
   <thead><tr><th scope="col">勾选</th><th scope="col">序号</th><th scope="col">短名称</th>${templateSlots.map(slot=>`<th scope="col">${slot}</th>`).join('')}<th scope="col">操作</th></tr></thead>
   <tbody>${rows.map((config,index)=>{
    const [cpu,gpu,ram,ssd]=templateShort(config),issues=templateIssues(config);
@@ -206,8 +207,12 @@ export function renderTemplateSheet(root,options){
   const input=document.createElement('input'),list=document.createElement('datalist');
   list.id='host-inline-options';input.setAttribute('list',list.id);input.autocomplete='off';
   input.className='host-template-inline';input.value=part?.name||'';input.setAttribute('aria-label',button.getAttribute('aria-label'));
-  input.oninput=()=>optionsTo(list,input.value.trim()?inputMatches(items,input.value):[]);
   let cancelled=false;
+  input.oninput=event=>{
+   // 从下拉候选里点选（不是手打）时直接确认，不必再按回车或点别处。
+   if(event.inputType==='insertReplacementText'||!event.inputType&&items.some(row=>row.name===input.value)){finish();return;}
+   optionsTo(list,input.value.trim()?inputMatches(items,input.value):[]);
+  };
   const finish=()=>{
    if(!input.isConnected)return;
    const value=input.value.trim();input.onblur=null;input.replaceWith(button);list.remove();
@@ -278,10 +283,13 @@ export function renderTemplateSheet(root,options){
  root.onkeydown=event=>{
   const target=event.target;
   if(event.isComposing||!canEdit||view.busy||target.matches('input,select,textarea'))return;
+  // 重绘会替换格子按钮；把焦点放回同一格，紧接着的 Ctrl+Z / 方向操作才能继续生效。
+  const row=target.closest('[data-host-template-row]')?.dataset.hostTemplateRow,cell=target.dataset.templateCell;
+  const refocus=()=>{if(row!=null&&cell)root.querySelector(`[data-host-template-row="${row}"] [data-template-cell="${cell}"]`)?.focus({preventScroll:true});};
   if((event.ctrlKey||event.metaKey)&&['z','y'].includes(event.key.toLowerCase())){
-   event.preventDefault();event.stopPropagation();templateHistory(draft,event.shiftKey||event.key.toLowerCase()==='y');redraw();
-  }else if(target.dataset.templateCell&&['Delete','Backspace'].includes(event.key)){
-   event.preventDefault();changePart(Number(target.closest('[data-host-template-row]').dataset.hostTemplateRow),target.dataset.templateCell,null);
+   event.preventDefault();event.stopPropagation();templateHistory(draft,event.shiftKey||event.key.toLowerCase()==='y');redraw();refocus();
+  }else if(cell&&['Delete','Backspace'].includes(event.key)){
+   event.preventDefault();changePart(Number(row),cell,null);refocus();
   }
  };
  // 控件和文案已就绪后才恢复滚动，避免过程中触发一次错误样式计算。

@@ -48,7 +48,8 @@ try{
    await openWorkbenchEditor(page,name);
    assert.equal(await button.getAttribute('aria-selected'),'true',`主编辑页签 ${name} 应能切换`);
    assert.equal(await mainTabs.evaluateAll(nodes=>nodes.filter(n=>n.classList.contains('active')).length),1);
-   if(name==='parts'){assert.ok(await page.locator('#continuous-workbench:visible [data-continuous-config]').count());continue;}
+   // 页签选中后 React 才挂载总表卡片，等待卡片可见再继续通知测试。
+   if(name==='parts'){await page.locator('#continuous-workbench:visible [data-continuous-config]').first().waitFor();continue;}
    assert.equal(await page.locator('#editor [data-react-editor]').getAttribute('data-react-editor'),name==='display'?'parts':name);
    assert.ok((await page.locator('#editor').textContent()).trim(),`主编辑页签 ${name} 应有内容`);
   }

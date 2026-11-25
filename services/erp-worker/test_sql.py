@@ -17,21 +17,14 @@ SECRET = "isolated-test-private-password"
 CONFIG = {"server": "test.invalid", "database": "isolated", "user": "fake"}
 
 
-def warehouse(**updates):
-    row = {"goods_id": "9007199254740993123", "库房": "公司大库", "商品编码": "sku", "商品名称": "机箱",
-           "分库数": 10, "分库可销数": 8, "分库待入": None, "库存成本": 20}
-    row.update(updates)
-    return row
-
-
 def catalog(**updates):
-    row = {"goods_id": "9007199254740993123", "商品编码": "sku", "商品名称": "机箱", "总数量": 10, "可销数": 8, "待入": None}
+    row = {"goods_id": "9007199254740993123", "商品编码": "sku", "商品名称": "机箱", "总数量": 10, "可销数": 8, "待入": 7, "最终可销": 8, "待入可销": 15, "单价成本": 20, "encoding_probe": "中文"}
     row.update(updates)
     return row
 
 
 def bundle():
-    return {"warehouses": [warehouse()], "catalog": [catalog()]}
+    return {"catalog": [catalog()]}
 
 
 # 模拟固定 SQL 查询与分页读取，记录执行语句并检查关闭资源。
@@ -49,8 +42,22 @@ class FakeConnection:
         self.closed = True
 
 
-# 合成两张库存视图验证身份、编码和未知值规则，同时检查查询仅使用固定 SELECT。
+# 合成库存目录验证身份、编码和未知值规则，同时检查查询仅使用固定 SELECT。
 class SqlTests(unittest.TestCase):
+    def test_native_sellable_fields_and_zero_stock_cost(self):
+        for cost, final, incoming in [(33, 0, 9), (0, -8, -2), (None, None, None)]:
+            with self.subTest(cost=cost, final=final, incoming=incoming):
+                result = sql.normalize({'catalog': [catalog(单价成本=cost, 最终可销=final, 待入可销=incoming)]})[0]
+                self.assertEqual((result['erp'], result['stockAvailable'], result['stockIncomingAvailable']),
+                                 (cost, final, incoming))
+                self.assertEqual(result['goodsId'], "9007199254740993123")
+
+    def test_cost_invalid_is_unknown_without_affecting_stock(self):
+        for value in [-1, float('nan'), float('inf'), True, '', 'bad']:
+            row = sql.normalize({'catalog': [catalog(单价成本=value)]})[0]
+            self.assertIsNone(row['erp'])
+            self.assertEqual(row['stockAvailable'], 8)
+
     def test_settings_validation_and_normalization(self):
         normalized = sql.settings({**CONFIG, "port": "1433", "server": " test.invalid "})
         self.assertEqual(normalized, {**CONFIG, "port": 1433, "encrypt": True, "trustServerCertificate": False})
@@ -60,48 +67,34 @@ class SqlTests(unittest.TestCase):
                 sql.settings({**CONFIG, **change})
             self.assertEqual(raised.exception.code, "INVALID_REQUEST")
 
-    def test_exact_identity_company_warehouse_and_unknown(self):
-        rows = sql.normalize({"warehouses": [warehouse(), warehouse(goods_id="2", 商品编码="b", 库房="外库")],
-                              "catalog": [catalog(), catalog(goods_id="2", 商品编码="b"), catalog(goods_id="3", 商品编码="c")]})
-        self.assertEqual(rows[0], {"goodsId": "9007199254740993123", "sku": "sku", "name": "机箱", "stockAvailable": 8.0, "erp": 20.0})
-        self.assertIsNone(rows[1]["erp"])
-        self.assertIsNone(rows[1]["stockAvailable"])
-        self.assertIsNone(rows[2]["stockAvailable"])
-        nulls = sql.normalize({"warehouses": [warehouse(分库可销数=None, 库存成本=None)], "catalog": [catalog()]})
-        self.assertIsNone(nulls[0]["erp"])
-        zeros = sql.normalize({"warehouses": [warehouse(分库可销数=0, 库存成本=0)], "catalog": [catalog()]})
-        self.assertEqual((zeros[0]["stockAvailable"], zeros[0]["erp"]), (0, 0))
-
     def test_integrity_failures_never_produce_rows(self):
-        invalid = [None, {"warehouses": [], "catalog": []}, {"warehouses": [None], "catalog": [catalog()]},
-                   {"warehouses": [warehouse(), warehouse()], "catalog": [catalog()]},
-                   {"warehouses": [], "catalog": [catalog(), catalog()]},
-                   {"warehouses": [warehouse()], "catalog": [catalog(商品编码="other")]},
-                   {"warehouses": [warehouse(goods_id=1.5)], "catalog": [catalog()]},
-                   {"warehouses": [warehouse(库存成本=-1)], "catalog": [catalog()]},
-                   {"warehouses": [warehouse(分库可销数=float('nan'))], "catalog": [catalog()]},
-                   {"warehouses": [warehouse(分库可销数=True)], "catalog": [catalog()]},
-                   {"warehouses": [warehouse(商品名称=b'\xff')], "catalog": [catalog()]}]
-        for value in invalid:
-            with self.subTest(value=value), self.assertRaises(sql.SqlError):
-                sql.normalize(value)
+        invalid = [[], [None], [catalog(), catalog()], [catalog(), catalog(goods_id='2')],
+                   [catalog(goods_id=1.5)], [catalog(最终可销=float('nan'))],
+                   [catalog(待入可销=True)], [catalog(商品名称=b'\xff')],
+                   [{k:v for k,v in catalog().items() if k!='待入可销'}]]
+        for rows in invalid:
+            with self.subTest(rows=rows), self.assertRaises(sql.SqlError):
+                sql.normalize({'catalog': rows})
 
     def test_legacy_encoding_is_preserved(self):
-        raw = warehouse()
-        for key in ('库房', '商品名称'):
-            raw[key] = raw[key].encode('gb18030').decode('latin1')
-        result = sql.normalize({"warehouses": [raw], "catalog": [catalog()]})
-        self.assertEqual(result[0]['name'], '机箱')
-        self.assertEqual(result[0]['stockAvailable'], 8)
+        legacy = lambda s: s.encode('gb18030').decode('latin1')
+        row = catalog(商品编码=legacy('板-1'), 商品名称=legacy('机箱'), encoding_probe=legacy('中文'))
+        result = sql.normalize({'catalog': [row]})[0]
+        self.assertEqual((result['name'], result['sku']), ('机箱', '板-1'))
+        del row['encoding_probe']
+        self.assertEqual(sql.normalize({'catalog': [row]})[0]['name'], '机箱')
+        self.assertEqual(sql.normalize({'catalog': [catalog(商品名称='Café') ]})[0]['name'], 'Café')
 
     def test_only_fixed_readonly_selects_and_close(self):
-        connection = FakeConnection([[[warehouse()]], [[catalog()]]])
+        connection = FakeConnection([[[catalog()]]])
         captured = {}
         def connector(**values):
             captured.update(values)
             return connection
         self.assertEqual(sql.read_bundle(CONFIG, SECRET, connector), bundle())
-        self.assertEqual(connection.queries, sql.QUERIES)
+        self.assertEqual(connection.queries, [sql.CATALOG_QUERY])
+        self.assertIn('FROM [库存].[库存查询]', connection.queries[0])
+        self.assertNotIn('分库库存', connection.queries[0])
         self.assertTrue(all(query.startswith('SELECT TOP (100001)') for query in connection.queries))
         self.assertTrue(captured['readonly'])
         self.assertTrue(captured['autocommit'])
@@ -112,9 +105,9 @@ class SqlTests(unittest.TestCase):
         self.assertFalse(sql._tls_settings.trust)
 
     def test_exact_limit_and_sentinel_rejected(self):
-        connection = FakeConnection([[[warehouse()] * 100000], [[catalog()]]])
-        self.assertEqual(len(sql.read_bundle(CONFIG, SECRET, lambda **_: connection)['warehouses']), 100000)
-        connection = FakeConnection([[[warehouse()] * 100001], [[catalog()]]])
+        connection = FakeConnection([[[catalog()] * 100000]])
+        self.assertEqual(len(sql.read_bundle(CONFIG, SECRET, lambda **_: connection)['catalog']), 100000)
+        connection = FakeConnection([[[catalog()] * 100001]])
         with self.assertRaises(sql.SqlError) as raised:
             sql.read_bundle(CONFIG, SECRET, lambda **_: connection)
         self.assertEqual(raised.exception.code, 'SQL_TOO_MANY_RESULTS')
@@ -141,7 +134,7 @@ class SqlTests(unittest.TestCase):
         observed = []
         def connector(**values):
             observed.append((sql._tls_settings.trust, values['validate_host'], values['cafile']))
-            return FakeConnection([[[warehouse()]], [[catalog()]]])
+            return FakeConnection([[[catalog()]]])
         sql.read_bundle({**CONFIG, 'trustServerCertificate': True, 'encrypt': False}, SECRET, connector)
         sql.read_bundle(CONFIG, SECRET, connector)
         self.assertEqual(observed[0], (True, False, None))
@@ -219,7 +212,7 @@ class VaultAndProtocolTests(unittest.TestCase):
             with self.assertRaises(WorkerError):
                 Session(version='offline').handle(request)
             read.side_effect = None
-            read.return_value = {'warehouses': [], 'catalog': []}
+            read.return_value = {'catalog': []}
             with self.assertRaises(WorkerError):
                 Session(version='offline').handle(request)
             save.assert_not_called()

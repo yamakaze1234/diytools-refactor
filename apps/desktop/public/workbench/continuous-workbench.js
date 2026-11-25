@@ -11,6 +11,8 @@ import {replaceSourcePart} from './source.js';
 import {markSourceFieldManual} from './source-follow.js';
 import {componentStockView} from './component-stock-view.js';
 import {erpDescription} from './erp-part-description.js';
+import {isSpecialComponent} from './special-components.js';
+import {taxOverrideLines} from './tax-override-model.js';
 import {changeOverviewTax,differentTax,overviewTableTotals,overviewTaxDifferenceCount,readOverviewFeeRate} from './overview-table-model.js';
 const blank=(slot,lineId)=>({slot,lineId:lineId||crypto.randomUUID(),name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''});
 const ensure=(c,slot,actual)=>{const key=actual?'actualParts':'parts';c[key]??=actual?structuredClone(actualParts(c)):[];let i=c[key].findIndex(p=>p.slot===slot);if(i<0){i=c[key].length;c[key].push(blank(slot));}return i;};
@@ -59,7 +61,7 @@ export function createContinuousWorkbench(api){
  let renderedCanUndo,renderedCanRedo,historySyncQueued=false;
  // 11-19：总表显示时，在页面任意位置按 Ctrl/⌘+Z 撤销、Ctrl+Y 或 Ctrl/⌘+Shift+Z 重做；输入框里交给浏览器自己处理。
  host.ownerDocument.addEventListener('keydown',event=>{
-   if(disposed||host.hidden&&api.current()||document.body.classList.contains('host-template-mode')||event.defaultPrevented||event.isComposing||event.altKey||!(event.ctrlKey||event.metaKey))return;
+   if(disposed||host.hidden||document.querySelector('.workspace.price-profit-active')||document.body.classList.contains('host-template-mode')||event.defaultPrevented||event.isComposing||event.altKey||!(event.ctrlKey||event.metaKey))return;
   const target=event.target;if(target instanceof HTMLElement&&(target.isContentEditable||target.closest('input, textarea, select')))return;
   const key=event.key.toLowerCase(),redo=key==='y'||key==='z'&&event.shiftKey;
   if(key!=='z'&&key!=='y')return;
@@ -69,9 +71,9 @@ export function createContinuousWorkbench(api){
  });
  const configs=()=>api.available().filter(c=>c.productId===api.current()?.productId);
  const find=id=>api.configs().find(c=>c.id===id);
- const safe=fn=>{try{const result=fn();return result?.then?result.catch(e=>{api.toast(e.message);return false;}):result;}catch(e){api.toast(e.message);return false;}};
+ const safe=fn=>{try{const result=fn();return result?.then?result.catch(e=>{api.toast(api.errorText?.(e)||e.message);return false;}):result;}catch(e){api.toast(api.errorText?.(e)||e.message);return false;}};
  function pickSource(id,slot,actual,sourceId){
-  const row=api.catalog().find(p=>p.sourceId===sourceId&&!p.deletedAt);
+  const row=api.catalog(find(id)?.shopId).find(p=>p.sourceId===sourceId&&!p.deletedAt);
   if(!row)throw Error('配件来源已变化，请重新搜索');
   api.update(id,c=>{if(actual)changeActual(c,slot,row);else replaceSourcePart(c,ensure(c,slot,false),row);},
    actual?'更换实际配件':'更换展示配件',actual);
@@ -83,15 +85,16 @@ export function createContinuousWorkbench(api){
  let catalogVersion,catalogRows=[],stockCosts=new Map(),sourcesById=new Map();const projections=new Map();
  const project=(summary,settings,term)=>{const c=find(summary.id);if(!c)return {id:summary.id,name:summary.name,loading:true};const selected=api.selected().has(c.id),version=JSON.stringify([c,settings,selected,term]),cached=projections.get(c.id);if(cached?.version===version)return cached.value;const rows=projectedRows(c),raw=totals(c,settings),quote=pricing(c,{...settings,linkInstallment:term===null?null:undefined}),value={...c,hardwareIssues:configHardwareIssues(c),rows,extras:rows.extras,raw,totals:overviewTableTotals(c,raw,quote),pricing:quote,selected};projections.set(c.id,{version,value});return value;};
  // 一次构建库存索引和共享候选；每个输入框不再复制整份目录或逐条扫描成本表。
- const pickerCatalog=()=>{const version=api.catalogVersion();if(catalogVersion===version)return catalogRows;const costs=new Map();for(const row of api.costs()){if(!costs.has(row.goodsId))costs.set(row.goodsId,[]);costs.get(row.goodsId).push(row);}stockCosts=costs;catalogRows=api.catalog().map(p=>({...p,value:p.sourceId,label:p.name,searchText:[p.name,p.goodsId,p.erpName,costs.get(p.goodsId)?.[0]?.name].filter(Boolean).join(' ').normalize('NFKC').toLowerCase(),stock:componentStockView(p,costs)}));sourcesById=new Map(catalogRows.map(row=>[row.sourceId,row]));catalogVersion=version;return catalogRows;};
+ const pickerCatalog=shop=>{const version=api.catalogVersion()+':'+shop;if(catalogVersion===version)return catalogRows;const costs=new Map();for(const row of api.costs()){if(!costs.has(row.goodsId))costs.set(row.goodsId,[]);costs.get(row.goodsId).push(row);}stockCosts=costs;catalogRows=api.catalog(shop).map(p=>({...p,value:p.sourceId,label:p.name,searchText:[p.name,p.goodsId,p.erpName,costs.get(p.goodsId)?.[0]?.name].filter(Boolean).join(' ').normalize('NFKC').toLowerCase(),stock:componentStockView(p,costs)}));sourcesById=new Map(catalogRows.map(row=>[row.sourceId,row]));catalogVersion=version;return catalogRows;};
  // 读取当前来源的人工字段，包括清空后为空，避免旧配置副本盖回原颜色。
- const withLiveHardware=part=>{
-  const source=sourcesById.get(part?.sourceId);
+ const withLiveHardware=(part,sources=sourcesById)=>{
+  const source=sources.get(part?.sourceId);
   return source&&source.goodsId===part?.goodsId?{...part,hardwareOverrides:source.hardwareOverrides,hardwareFacts:source.hardwareFacts}:part;
  };
- const model=()=>{const visible=configs(),details=visible.map(c=>find(c.id)).filter(Boolean),term=details.length===visible.length?productInstallment(details):undefined,settings=api.settings(),ids=new Set(visible.map(c=>c.id));for(const id of projections.keys())if(!ids.has(id))projections.delete(id);const catalog=pickerCatalog();const cost=part=>stockCosts.get(String(part?.goodsId??''))?.[0];const editing=api.current();return {portalContainer:host.ownerDocument.body,active:editing?.id,productId:editing?.productId,loading,error:lastError,retry:()=>render(),configs:visible.map(c=>project(c,settings,term)),
- catalog,manualTax:part=>cost(part)?.nasManualTax===true,stock:part=>componentStockView(part,stockCosts),different:part=>differentTax(part,cost(part)),globalTax:part=>cost(part)?.globalTax||null,baseTax:part=>cost(part)?.tax??part.taxOverride?.base??null,
- describePart:(part,shown,slot)=>erpDescription(withLiveHardware(part),withLiveHardware(shown),
+ const model=(cardId=null)=>{const editing=cardId?find(cardId):api.current(),visible=cardId?(api.cardAvailable?.()??api.available()).filter(c=>c.productId===editing?.productId&&c.shopId===editing?.shopId):configs(),details=visible.map(c=>find(c.id)).filter(Boolean),term=details.length===visible.length?productInstallment(details):undefined,settings=api.settings(editing?.shopId),ids=new Set(visible.map(c=>c.id));const catalog=pickerCatalog(editing?.shopId),cardCosts=stockCosts,cardSources=sourcesById,sharedIndex=new Map([...cardCosts].map(([id,rows])=>[id,rows[0]]));const cost=part=>isSpecialComponent(part)?null:cardCosts.get(String(part?.goodsId??''))?.[0];return {portalContainer:host.ownerDocument.body,cardId,active:editing?.id,productId:editing?.productId,loading,error:lastError,retry:()=>render(),configs:visible.map(c=>({...project(c,settings,term),taxOverrides:find(c.id)?taxOverrideLines(find(c.id),sharedIndex):[]})),
+ restoreTaxes:id=>safe(()=>api.restoreTaxes(taxOverrideLines(find(id),sharedIndex).map(line=>({configId:id,lineKey:line.lineKey})))),
+ catalog,manualTax:part=>cost(part)?.nasManualTax===true,stock:part=>componentStockView(part,cardCosts),different:part=>differentTax(part,cost(part)),globalTax:part=>cost(part)?.globalTax||null,baseTax:part=>cost(part)?.tax??part.taxOverride?.base??null,
+ describePart:(part,shown,slot)=>erpDescription(withLiveHardware(part,cardSources),withLiveHardware(shown,cardSources),
   cost(part)?.nasErpOverride?cost(part).name:part?.erpName||cost(part)?.erpName||cost(part)?.name,slot),
  erpSearch:lookupErp,
  adoptErp:(id,slot,item)=>safe(async()=>pickSource(id,slot,true,await api.adoptErp(id,slot,item))),
@@ -99,9 +102,9 @@ export function createContinuousWorkbench(api){
  canUndo:api.canUndo(),canRedo:api.canRedo(),undo:api.undo,redo:api.redo,
  diffCount:overviewTaxDifferenceCount(details,new Map([...stockCosts].map(([id,rows])=>[id,rows[0]]))),
  manualTaxConfigCount:details.filter(config=>actualParts(config).some(part=>cost(part)?.nasManualTax===true)).length,term,
- installment:enabled=>safe(()=>{if(details.length!==visible.length)throw Error('请等当前链接加载完成');api.updateMany([...ids],c=>{c.installment=enabled?24:0;},enabled?'开启整链分期':'关闭整链分期');}),
- fee:(id,value,all=false)=>safe(()=>{const rate=readOverviewFeeRate(value);if(all&&details.length!==visible.length)throw Error('请等当前链接加载完成');const selected=(all?details:details.filter(c=>c.id===id)).filter(c=>c.overviewFeeRate!==rate);if(selected.length)api.updateMany(selected.map(c=>c.id),c=>{c.overviewFeeRate=rate;},all?'应用全部运营费率':'修改运营费率');}),
- activate:id=>{if(api.current()?.id!==id)api.activate(id);},
+ installment:enabled=>safe(async()=>{await api.loadScope?.([...ids]);return api.updateMany([...ids],c=>{c.installment=enabled?24:0;},enabled?'开启整链分期':'关闭整链分期');}),
+ fee:(id,value,all=false)=>safe(async()=>{const rate=readOverviewFeeRate(value);await api.loadScope?.(all?[...ids]:[id]);const selected=(all?[...ids]:[id]).map(find).filter(c=>c&&c.overviewFeeRate!==rate);if(selected.length)return api.updateMany(selected.map(c=>c.id),c=>{c.overviewFeeRate=rate;},all?'应用全部运营费率':'修改运营费率');}),
+ activate:id=>{if(!cardId&&api.current()?.id!==id)api.activate(id);},
  select:(id,value)=>{api.select(id,value);draw();},
  removeRow:(id,slot)=>safe(()=>{const c=find(id);if(!c)throw Error('目标配置已变化');const after=planRemoveRow(c,slot);api.update(id,target=>Object.assign(target,after),'删除配件行',true);api.toast('配件已移除，可撤销');return true;}),
  addRow:id=>safe(()=>api.update(id,c=>appendAccessoryRow(c),'增加配件行')),
@@ -114,7 +117,7 @@ export function createContinuousWorkbench(api){
  // 11-19：到手价 ±100、取 99 结尾。
  priceStep:(id,delta)=>safe(()=>{const c=find(id);if(!c)throw Error('配置已变化');const now=Number(c.price);if(c.price==null||c.price===''||!Number.isFinite(now))throw Error('请先填写到手价');let next=now+delta;if(c.overviewPrice99)next=snap99(next);if(next<0)throw Error('到手价不能小于 0');api.update(id,x=>{x.price=next;},delta>0?'到手价 +100':'到手价 −100');}),
  // 整链取 99：和整链分期一样，一开整个链接的配置都按 99 结尾。
- price99:enabled=>safe(()=>{if(details.length!==visible.length)throw Error('请等当前链接加载完成');api.updateMany([...ids],c=>{c.overviewPrice99=!!enabled;if(enabled&&c.price!=null&&Number.isFinite(Number(c.price))&&c.price!=='')c.price=snap99(Number(c.price));},enabled?'整链到手价取 99 结尾':'取消整链取 99');}),
+ price99:enabled=>safe(async()=>{await api.loadScope?.([...ids]);return api.updateMany([...ids],c=>{c.overviewPrice99=!!enabled;if(enabled&&c.price!=null&&Number.isFinite(Number(c.price))&&c.price!=='')c.price=snap99(Number(c.price));},enabled?'整链到手价取 99 结尾':'取消整链取 99');}),
  price99On:details.length>0&&details.every(c=>c.overviewPrice99===true),
  field:(id,key,value)=>safe(()=>{if(!['name','version','price'].includes(key))throw Error('不支持的配置字段');let next=key==='price'?parseArrival(String(value).replace(/[,，]/g,'')):value;if(key==='price'&&next!=null&&find(id)?.overviewPrice99&&Number.isFinite(Number(next)))next=snap99(Number(next));if(find(id)?.[key]!==next)api.update(id,c=>{c[key]=next;},'连续编辑配置');}),
  partField:(id,slot,actual,key,value)=>safe(()=>{if(!find(id)||!continuousSlotsFor(find(id)).includes(slot)||!['qty','displayName','upgrade','posterVisible','overviewAddonHidden'].includes(key))throw Error('不支持的配件字段');if(key==='qty'&&(!Number.isInteger(Number(value))||Number(value)<1||Number(value)>1000))throw Error('数量必须为 1–1000 的整数');api.update(id,c=>{if(actual&&key==='qty'){changeQuantity(c,slot,Number(value));return;}const i=ensure(c,slot,actual),p=c[actual?'actualParts':'parts'][i];// 新增加购时清除旧描述遗留的隐藏状态，两项记录在同一次编辑里。
@@ -139,12 +142,14 @@ export function createContinuousWorkbench(api){
  pasteActual:(id,start,column,text)=>safe(()=>{
   const target=find(id);if(!target||!text)throw Error('请先复制有效的型号或数量');
   const lines=text.replace(/^\uFEFF/,'').replace(/\r\n?/g,'\n').split('\n');if(lines.at(-1)==='')lines.pop();
-  const slots=continuousSlotsFor(target),sources=api.catalog().filter(row=>!row.deletedAt);
+  const slots=continuousSlotsFor(target),sources=api.catalog(target.shopId).filter(row=>!row.deletedAt);
   const clean=value=>value.normalize('NFKC').trim().toLowerCase();
   const plan=lines.map((line,index)=>{
-   const slot=slots[start+index],cells=line.split('\t');if(!slot||column+cells.length>2)throw Error('粘贴区域超出本套配置');
+   const slot=slots[start+index],cells=line.split('\t');
+   const startCol=cells.length===2?0:column;
+   if(!slot||startCol+cells.length>2)throw Error('粘贴区域超出本套配置');
    return cells.map((value,offset)=>{
-    const col=column+offset,typed=clean(value);
+    const col=startCol+offset,typed=clean(value);
     if(col===1){const qty=typed===''?1:Number(typed);if(!/^\d*$/.test(typed)||!Number.isInteger(qty)||qty<1||qty>1000)throw Error(slot+'数量必须为 1–1000 的整数');return {slot,qty};}
     if(!typed)return {slot,clear:true};
     // 11-19：工作台内部复制会带上输出源 ID，先按 ID 精确对应（价格、GoodID 随之带过去）；外部粘贴再按 GoodID 或名称匹配。
@@ -179,10 +184,10 @@ export function createContinuousWorkbench(api){
  }),
  };};
  // 反推公式与 overviewTableTotals 同口径：
- // 核算利润 = 到手价 − 核算成本 − 分期费；ERP 利润 = 到手价 × 98% − ERP 总价 − 分期费；分期费 = 到手价 × 分期费率。
+ // 核算利润 = 到手价 − 核算成本 − 分期费；ERP 利润 = 到手价 × 98% − ERP 总价（不扣分期）；分期费 = 到手价 × 分期费率。
  function priceForProfit(c,kind,target){
   if(!c||!Number.isFinite(target))return null;
-  return priceForTarget(c,api.settings(),kind,target);
+  return priceForTarget(c,api.settings(c.shopId),kind,target);
  }
  function draw(){
   if(disposed||!api.current()||api.tab()!=='parts')return;
@@ -214,7 +219,8 @@ export function createContinuousWorkbench(api){
   });
  }
  // 加购福利页沿用总表外壳，只展示文字编辑区，不重复出现身份和核算表单。
- async function render(){const hasConfig=!!api.current(),tab=api.tab(),visible=hasConfig&&tab==='parts';document.body.classList.toggle('overview-mode',hasConfig&&(visible||['style','perks','addon-packs','benefits'].includes(tab)));document.body.classList.toggle('continuous-mode',visible);host.hidden=!visible;if(!visible)return;const token=++epoch;loading=configs().some(c=>!find(c.id));lastError='';draw();try{for(const c of configs()){await api.load(c.id);if(token!==epoch||disposed)return;}loading=false;draw();}catch(e){if(token===epoch){loading=false;lastError=e.message;draw();}}}
+ async function render(){const hasConfig=!!api.current(),tab=api.tab(),visible=hasConfig&&tab==='parts';document.body.classList.toggle('overview-mode',hasConfig&&(visible||['style','perks','addon-packs','benefits'].includes(tab)));document.body.classList.toggle('continuous-mode',visible);host.hidden=!visible;if(!visible)return;const token=++epoch;loading=configs().some(c=>!find(c.id));lastError='';draw();try{for(const c of configs()){await api.load(c.id);if(token!==epoch||disposed)return;}loading=false;draw();}catch(e){if(token===epoch){loading=false;lastError=api.errorText?.(e)||e.message;draw();}}}
  const locate=id=>host.dispatchEvent(new CustomEvent('workbench-locate-config',{detail:id}));
- return {render,draw,syncHistory,locate,host,dispose(){disposed=true;epoch++;api.release(host);host.remove();}};
+ // 单卡与写配置总表共用模型、组件和所有领域写入动作，根由调用方按配置身份释放。
+ return {render,draw,syncHistory,locate,host,renderCard:(container,id)=>api.renderCard(container,model(id)),releaseCard:container=>api.release(container),dispose(){disposed=true;epoch++;api.release(host);host.remove();}};
 }

@@ -189,11 +189,13 @@ Windows 独立包使用 `tauri.nas-intel-production.conf.json` 和 `--features f
 
 ### 三店成本表与 ERP 同步
 
-迁移 `027-quotation-identity-invalidation.sql` 与 `028-cross-shop-cost-sync.sql` 要在三店 NAS 库由管理员安装，随后部署支持相应接口的 API，再更新客户端。重复执行只更新函数及授权。旧库的配置换码仍沿用原报价保护，缺少三店同步函数时新 API 返回 `NAS_COST_SYNC_NOT_INSTALLED`。
+迁移 `027-quotation-identity-invalidation.sql`、`028-cross-shop-cost-sync.sql`、`029-manual-tax-protection.sql` 与 `030-incoming-stock.sql` 要在三店 NAS 库由管理员依次安装，随后部署支持相应接口的 API，再更新客户端。重复执行只更新函数及授权。旧库的配置换码仍沿用原报价保护，缺少三店同步函数时新 API 返回 `NAS_COST_SYNC_NOT_INSTALLED`。
 
-工作台先通过 `GET /api/v1/operations/workspace/costs/sync-preview` 获取三店成本版本，再读取 Excel 或 ERP。发起店的在用运营账号即可确认。成本表动作 `tax_sync` 同步已有共用来源及三店核算价，手动核算价保留并固定为该店的覆盖。ERP 动作 `erp_sync` 统一三店的库存及 ERP 成本字段。每批最多 100 个货号，批内三店同时提交审计、价格历史及回执。版本冲突回滚当批并返回冲突货号，已确认的其他批次可从原回执核对。
+030 依赖已安装的 026 ERP 建源函数，扩展三店 ERP 成本同步快照、写入及 ERP 建源以支持待入可销。该迁移只更新函数，历史数据缺少该字段时显示未知。
 
-隔离验收运行 `node test/cost-sync-quotation.integration.mjs <合成三店SQL目录>`。
+工作台先通过 `GET /api/v1/operations/workspace/costs/sync-preview` 获取三店成本版本，再读取 Excel 或 ERP。发起店的在用运营账号即可确认。成本表动作 `tax_sync` 同步已有共用来源及三店核算价，手动核算价保留并固定为该店的覆盖。安装 `029-manual-tax-protection.sql` 后，在「输出源维护」中修改数字核算价以及在总表中执行「应用到全局核算价」均等效于在「维护 → 当前店铺核算价」手动改价，自动标记 `nasManualTax:true`，避免被后续成本表同步覆盖；单店点「重新同步核算价」、恢复跟随非手动共用价或执行「全局恢复」时按原状态解除保护。ERP 动作 `erp_sync` 统一三店的库存及 ERP 成本字段。每批最多 100 个货号，批内三店同时提交审计、价格历史及回执。版本冲突回滚当批并返回冲突货号，已确认的其他批次可从原回执核对。
+
+隔离验收运行 `node test/cost-sync-quotation.integration.mjs <合成三店SQL目录>` 验证成本同步、待入可销及旧报价保护；运行 `node test/manual-tax-protection.integration.mjs <合成三店SQL目录>` 验证手动核算价在同步时保留、恢复后重新跟随成本表。
 
 ## 本链接与三店全局加购
 

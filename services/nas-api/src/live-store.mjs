@@ -12,8 +12,9 @@ import {applyCostSync,costSyncSnapshot,crossShopCostAction,validateCostSync} fro
 import {addonItems,choiceAddon,effectiveNasAddons} from '../../../apps/desktop/public/workbench/addon-data.js';
 import {DEFAULT_PRICING_RULE,normalizePricingRule,normalizeProfitAlert,normalizeProfitAlerts} from '../../../apps/desktop/public/workbench/pricing.js';
 import {applyNameFormatPlan,nameFormatPlan} from '../../../apps/desktop/public/workbench/name-format-batch.js';
-import {planConfigRenumber} from '../../../apps/desktop/public/workbench/config-order.js';
+import {renumberProduct} from './config-renumber.mjs';
 import {validAddonPack} from '../../../apps/desktop/public/workbench/link-addon-packs.js';
+import {normalizeErpDefaultExtras} from '../../../apps/desktop/public/workbench/erp-default-extras.js';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 const plain=o=>o!==null&&typeof o==='object'&&!Array.isArray(o);
@@ -530,11 +531,9 @@ export class LiveStore extends Store{
    }
    const reordered=[];
    for(const productId of [...products].sort()){
-    const {rows}=await db.query('SELECT configuration_id AS id,name,version::text FROM intel_live.configurations WHERE shop_id=$1 AND product_id=$2 AND archived_at IS NULL ORDER BY workspace_order,configuration_id FOR UPDATE',[shop,productId]);
-    for(const row of planConfigRenumber(rows).filter(row=>row.before!==row.after)){
-     const previous=rows.find(r=>r.id===row.id),{rows:[saved]}=await db.query('UPDATE intel_live.configurations SET name=$3,version=version+1 WHERE shop_id=$1 AND configuration_id=$2 RETURNING version::text',[shop,row.id,row.after]);
-     reordered.push({configuration_id:row.id,before:row.before,name:row.after,previous_version:previous.version,version:saved.version});
-     if(byId.has(row.id))byId.get(row.id).result.version=saved.version;
+    for(const row of await renumberProduct(db,shop,productId)){
+     reordered.push(row);
+     if(byId.has(row.configuration_id))byId.get(row.configuration_id).result.version=row.version;
     }
    }
    if(reordered.length)byId.get(items[0].id).result.reordered=reordered;
@@ -687,21 +686,26 @@ export class LiveStore extends Store{
     const f=row.fields;
     failure(/^\d{1,20}$/.test(row.id)&&plain(f)&&safeValue(f)&&Object.keys(f).length&&['erp_snapshot','tax_edit','tax_file','tax_resume'].includes(row.action),'changes.costs');
     const erp=row.action==='erp_snapshot';
-    failure(Object.keys(f).every(k=>(erp?['erp','stockAvailable','name','sku','stockUpdatedAt']:['tax','taxUpdatedAt']).includes(k))&&
+    failure(Object.keys(f).every(k=>(erp?['erp','stockAvailable','stockIncomingAvailable','name','sku','stockUpdatedAt']:['tax','taxUpdatedAt']).includes(k))&&
      (erp?own(f,'erp')&&own(f,'stockAvailable'):own(f,'tax')),'changes.cost_fields');
     for(const k of ['erp','tax'])if(own(f,k))failure(f[k]===null||(typeof f[k]==='number'&&Number.isFinite(f[k])&&f[k]>=0&&f[k]<=Number.MAX_SAFE_INTEGER/100),'changes.'+k);
     if(row.action==='tax_resume')failure(f.tax!==null,'changes.tax');
-    if(own(f,'stockAvailable'))failure(f.stockAvailable===null||(typeof f.stockAvailable==='number'&&Number.isFinite(f.stockAvailable)&&Math.abs(f.stockAvailable)<=Number.MAX_SAFE_INTEGER),'changes.stockAvailable');
+    // 两种可销都可能为负，null 表示未取得该观察值。
+    for(const key of ['stockAvailable','stockIncomingAvailable'])if(own(f,key))
+     failure(f[key]===null||Number.isFinite(f[key])&&Math.abs(f[key])<=Number.MAX_SAFE_INTEGER,'changes.'+key);
     for(const k of ['name','sku','stockUpdatedAt','taxUpdatedAt'])if(own(f,k))failure(goodText(f[k],512),'changes.'+k);
    }else if(kind==='settings'){
     validated(row,['fields']);
     const f=row.fields;
     failure(row.id===shop&&row.action==='replace'&&plain(f)&&safeValue(f)&&Object.keys(f).length&&
-     Object.keys(f).every(k=>['coupon','serviceText','erpShopId','erpShopName','pricingRule','profitAlert','posterView','addonPackChange'].includes(k)),'changes.settings');
+     Object.keys(f).every(k=>['coupon','serviceText','erpShopId','erpShopName','erpDefaultExtras','pricingRule','profitAlert','posterView','addonPackChange'].includes(k)),'changes.settings');
     if(own(f,'coupon'))failure(price(f.coupon),'changes.coupon');
     if(own(f,'serviceText'))failure(typeof f.serviceText==='string'&&f.serviceText.length<=1000,'changes.serviceText');
     if(own(f,'erpShopId'))failure(typeof f.erpShopId==='string'&&/^(?:|\d{1,20})$/.test(f.erpShopId),'changes.erpShopId');
     if(own(f,'erpShopName'))failure(goodText(f.erpShopName,200),'changes.erpShopName');
+    if(own(f,'erpDefaultExtras')){
+     try{f.erpDefaultExtras=normalizeErpDefaultExtras(f.erpDefaultExtras);}catch{failure(false,'changes.erpDefaultExtras');}
+    }
     if(own(f,'pricingRule'))failure(pricingRuleOk(f.pricingRule),'changes.pricingRule');
     if(own(f,'profitAlert'))failure(profitAlertOk(f.profitAlert),'changes.profitAlert');
     if(own(f,'posterView'))failure(plain(f.posterView)&&Object.keys(f.posterView).length===2&&['long','square'].includes(f.posterView.layout)&&['padded','dedicated'].includes(f.posterView.skuMode),'changes.posterView');

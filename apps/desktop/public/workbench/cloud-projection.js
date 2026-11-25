@@ -12,7 +12,7 @@ import {sha256} from './cloud-sha256.js';
 import {equal,recordKey,mergeRecord} from './cloud-protocol.js';
 const copy=v=>structuredClone(v);
 export const hash=v=>sha256(typeof v==='string'?v:JSON.stringify(v));
-const derived=['erp','tax','stockAvailable','stockUpdatedAt','erpUpdatedAt','erpMissing','erpUnknown','taxUpdatedAt'];
+const derived=['erp','tax','stockAvailable','stockIncomingAvailable','stockUpdatedAt','erpUpdatedAt','erpMissing','erpUnknown','taxUpdatedAt'];
 const strip=row=>{const r=stripLocalErp(row);for(const k of derived)delete r[k];return r;};
 const cents=v=>v==null?null:Math.round(v*100);
 const configurationLocalFields=['deletionSessionId','updatedAt','taxUpdatedAt','erpImportedAt'];

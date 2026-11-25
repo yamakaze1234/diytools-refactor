@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import {spawn} from 'node:child_process';
 import {createInterface} from 'node:readline';
 import {fileURLToPath} from 'node:url';
+import {join} from 'node:path';
 import {createRequire} from 'node:module';
 import {blankConfig} from '../public/workbench/core.js';
 import {normalizeWorkspaceState} from '../public/workbench/shops.js';
@@ -44,20 +45,22 @@ try{
   await route.fulfill({json:value});
  });
  if(true){
-  await topPage.route('**/workbench/reui-host',r=>r.fulfill({contentType:'text/html',body:`<!doctype html><script src="/workbench/endfield-init.js"></script><link rel="stylesheet" href="/workbench/endfield/endfield.css"><link rel="stylesheet" href="/workbench/endfield-workbench.css"><script type="module" src="/workbench/endfield-theme.js"></script><style>body{margin:0}html,body,#root{height:100%;margin:0}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const React=(await import('/node_modules/.vite/deps/react.js')).default;const {createRoot}=(await import('/node_modules/.vite/deps/react-dom_client.js')).default;window.isTauri=true;window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(command)=>command==='cloud_native_json_request'?{status:200,body:JSON.stringify({configured:false})}:1};const {default:App}=await import('/src/App.tsx');window.installWorkbenchBridge=async()=>{};const host=document.createElement('div');host.id='root';document.body.append(host);createRoot(host).render(React.createElement(App));</script>`}));
+  await topPage.route('**/workbench/reui-host',r=>r.fulfill({contentType:'text/html',body:`<!doctype html><script src="/workbench/endfield-init.js"></script><link rel="stylesheet" href="/workbench/endfield/endfield.css"><link rel="stylesheet" href="/workbench/endfield-workbench.css"><script type="module" src="/workbench/endfield-theme.js"></script><style>body{margin:0}html,body,#root{height:100%;margin:0}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const React=(await import('/node_modules/.vite/deps/react.js')).default;const {createRoot}=(await import('/node_modules/.vite/deps/react-dom_client.js')).default;window.isTauri=true;window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(command)=>command==='nas_native_request'?{status:200,body:JSON.stringify({main_editor:false})}:command==='cloud_native_json_request'?{status:200,body:JSON.stringify({configured:false})}:1};const {default:App}=await import('/src/App.tsx');window.installWorkbenchBridge=async()=>{};const host=document.createElement('div');host.id='root';document.body.append(host);createRoot(host).render(React.createElement(App));</script>`}));
   await topPage.goto(base+'/workbench/reui-host');await topPage.locator('iframe').waitFor();page=await topPage.locator('iframe').elementHandle().then(h=>h.contentFrame());
  }else await page.goto(base+'/workbench/renumber-fixture');await page.waitForFunction(()=>window.workbenchReady);
- await page.locator('[data-product-toggle="p0"]').click();await page.locator('[data-id="c0"]').click();
+ // 点击链接箭头只展开左侧列表，链接标题用于进入整链环境。
+ if(!await page.locator('[data-id="c0"]').isVisible())await page.locator('[data-product-toggle="p0"] .link-arrow').click();
+ await page.locator('[data-id="c0"]').click();
  await page.locator('[data-continuous-config="c3"]').waitFor();
 
- const screenshots=new URL('../../../docs/screenshots/',import.meta.url);await fs.mkdir(screenshots,{recursive:true});
+ const screenshots=process.env.WORKBENCH_SCREENSHOTS||fileURLToPath(new URL('../../../docs/screenshots/',import.meta.url));await fs.mkdir(screenshots,{recursive:true});
  await page.waitForFunction(()=>document.querySelector('#poster-object-select').options.length>3);
  for(const theme of ['light','dark']){
   if(await page.evaluate(()=>document.documentElement.dataset.workbenchTheme)!==theme)await page.locator('#workbench-theme-toggle').click();
   await page.waitForFunction(()=>!document.documentElement.hasAttribute('data-workbench-theme-changing'));await page.waitForTimeout(150);
-  await topPage.screenshot({path:fileURLToPath(new URL('workbench-'+theme+'.png',screenshots))});
+  await topPage.screenshot({path:join(screenshots,'workbench-'+theme+'.png')});
  }
  await page.locator('#preview-expand').click();await page.locator('.canvas-tools>summary').click();await page.locator('#poster-object-select').selectOption({index:2});await page.locator('#poster-text-content').waitFor();
- await topPage.screenshot({path:fileURLToPath(new URL('free-editor.png',screenshots))});
+ await topPage.screenshot({path:join(screenshots,'free-editor.png')});
  assert.deepEqual(errors,[]);console.log('Three public UI examples captured from synthetic data.');
 }finally{await browser.close();}

@@ -11,7 +11,7 @@ const api=await startSourceAcceptance({fixture,root:join(fixture,'dependency-bro
 const base=process.env.REACT_TEST_URL||'http://127.0.0.1:5243';
 let browser;
 try{
- for(const name of ['027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql'])await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+name,import.meta.url),'utf8'));
+ for(const name of ['027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql','030-incoming-stock.sql'])await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+name,import.meta.url),'utf8'));
  await api.db.exec(`INSERT INTO intel_live.configurations(configuration_id,shop_id,product_id,name,sku,spu,workspace_order,workbench_price_cents,fields,design)
   SELECT 'dependency-other',shop_id,product_id,'对照配置','','',workspace_order+1,workbench_price_cents,fields,design FROM intel_live.configurations WHERE configuration_id='fixture-overlap';
  INSERT INTO intel_live.parts(configuration_id,part_kind,position,line_id,slot,goodsid,name,qty,source_id,attrs)

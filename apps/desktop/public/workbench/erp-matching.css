@@ -1,0 +1,66 @@
+/* 匹配窗口的标题、工具栏和确认区固定；只滚动结果表。 */
+#dialog[open]:has(#erp-match-panel) {width:min(980px,94vw);max-width:94vw;max-height:84vh;padding:0;overflow:hidden;}
+#dialog:has(#erp-match-panel) > form {flex:none;padding:0;}
+#dialog:has(#erp-match-panel) .dialog-title {margin:0;padding:12px 18px;align-items:center;}
+#dialog:has(#erp-match-panel) #dialog-title {display:flex;align-items:baseline;flex-wrap:wrap;gap:10px;font-size:17px;}
+#dialog:has(#erp-match-panel) #dialog-title small {font-size:12px;font-weight:400;}
+#dialog #dialog-body:has(#erp-match-panel) {display:flex;min-height:0;padding:0;overflow:hidden;scrollbar-gutter:auto;}
+#erp-match-panel,.erp-runtime-banner {--erp-soft:var(--ef-paper,#f5f5f1);--erp-panel:var(--ef-panel,#fff);--erp-line:var(--ef-rule,#dcdcd6);--erp-ink:var(--ef-ink,#181817);--erp-muted:var(--ef-ink-2,#5d5d57);--erp-ok:#145b3a;--erp-ok-bg:#e7f6ed;--erp-warn:#754900;--erp-warn-bg:#fff3cf;--erp-error:#992a32;--erp-error-bg:#fdecec;--erp-info:#20558c;--erp-info-bg:#edf4fc;}
+:is(.dark,[data-workbench-theme=dark]) :is(#erp-match-panel,.erp-runtime-banner) {--erp-ok:#9ee4be;--erp-ok-bg:#19392c;--erp-warn:#f6d392;--erp-warn-bg:#41331c;--erp-error:#ffb3ba;--erp-error-bg:#442629;--erp-info:#b4d9ff;--erp-info-bg:#25384e;}
+#erp-match-panel {display:flex;flex-direction:column;min-height:0;min-width:0;width:100%;color:var(--erp-ink);font-size:12px;}
+#erp-match-panel button,.erp-runtime-banner button {width:auto;white-space:nowrap;min-height:28px;}
+.erp-controls,.erp-footer {flex:none;padding:10px 18px;background:var(--erp-soft);}
+.erp-controls {border-bottom:1px solid var(--erp-line);}
+.erp-control-row,.erp-footer,.erp-footer-actions,.erp-summary,#erp-match-progress,.erp-runtime-banner {display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.erp-control-row #erp-match-summary {margin-inline-end:auto;color:var(--erp-muted);font-size:12px;font-weight:400;}
+.erp-account {display:inline-flex;align-items:center;gap:7px;border:1px solid currentColor;border-radius:4px;padding:3px 8px;color:var(--erp-warn);background:var(--erp-warn-bg);}
+.erp-account:has([data-connected=true]) {background:var(--erp-ok-bg);color:var(--erp-ok);}
+.erp-account::before {content:'';width:7px;height:7px;border-radius:50%;background:currentColor;}
+#erp-match-login:not([open]) {display:none;}
+#erp-match-login summary {display:none;}
+#erp-match-login-form {display:flex;flex-wrap:wrap;align-items:end;gap:8px;margin:10px 0 0;}
+#erp-match-login-form label {display:grid;gap:3px;max-width:38%;font-size:12px;}
+.erp-runtime-banner {justify-content:space-between;gap:8px;margin:0 0 8px;padding:8px 12px;background:var(--erp-warn-bg);border:1px solid var(--erp-warn);border-radius:4px;color:var(--erp-warn);}
+.erp-runtime-banner[hidden] {display:none;}
+.erp-summary {flex:none;justify-content:space-between;padding:8px 18px;border-bottom:1px solid var(--erp-line);}
+.erp-summary:has(#erp-filters:empty):has(#erp-match-progress:empty) {display:none;}
+#erp-filters {display:flex;flex-wrap:wrap;gap:6px;}
+#erp-filters button {font-size:12px;padding:3px 9px;}
+#erp-match-progress,#erp-match-pager,#erp-match-message {color:var(--erp-muted);font-size:12px;}
+#erp-match-progress progress {width:115px;height:7px;accent-color:var(--erp-ink);}
+#erp-match-panel .erp-match-scroll {flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain;}
+#erp-match-panel table {table-layout:fixed;width:100%;font-size:12px;border-collapse:collapse;}
+#erp-match-panel th {position:sticky;top:0;z-index:1;background:#292927;color:#fff;}
+#erp-match-panel :is(th,td) {text-align:left;padding:8px 12px;border-bottom:1px solid var(--erp-line);vertical-align:top;}
+#erp-match-panel td {overflow-wrap:anywhere;}
+#erp-match-panel .erp-action-cell,#erp-match-panel th:nth-child(2) {white-space:nowrap;word-break:normal;overflow-wrap:normal;}
+.erp-badge {display:inline-block;padding:3px 8px;border:1px solid currentColor;border-radius:4px;font-weight:650;}
+.erp-badge.create,.erp-badge.reuse {background:var(--erp-info-bg);color:var(--erp-info);}
+.erp-badge.update,.erp-diff.change {background:var(--erp-warn-bg);color:var(--erp-warn);}
+.erp-badge.already,.erp-diff.add {background:var(--erp-ok-bg);color:var(--erp-ok);}
+.erp-badge.conflict,.erp-reason,.erp-diff.del {background:var(--erp-error-bg);color:var(--erp-error);}
+.erp-identities {display:grid;margin-top:4px;gap:2px;color:var(--erp-muted);font:11.5px/1.35 Consolas,monospace;}
+#erp-match-panel small {display:inline;color:var(--erp-muted);font-size:11px;}
+#erp-match-panel .erp-action-cell small {display:block;margin-top:5px;}
+.erp-reason,.erp-diff {padding:5px 8px;margin-bottom:5px;border-radius:3px;}
+.erp-reason {border-inline-start:3px solid currentColor;}
+.erp-diff {display:flex;align-items:baseline;justify-content:space-between;gap:5px;}
+.erp-diff strong {white-space:nowrap;}
+.erp-bom {border:1px solid var(--erp-line);border-radius:4px;}
+#erp-match-panel .erp-bom summary {cursor:pointer;padding:5px 8px;color:var(--erp-muted);}
+.erp-bom > div {padding:4px 8px;border-top:1px solid var(--erp-line);}
+.erp-bom-line {display:grid;grid-template-columns:1fr auto auto;align-items:baseline;gap:8px;padding:3px 0;}
+.erp-bom-line + .erp-bom-line {border-top:1px dashed var(--erp-line);}
+.erp-bom-line code {color:var(--erp-muted);}
+#erp-match-panel .erp-empty {padding:36px 12px;text-align:center;color:var(--erp-muted);}
+#erp-match-pager {display:flex;align-items:center;justify-content:center;gap:12px;padding:4px;}
+.erp-footer {justify-content:space-between;border-top:1px solid var(--erp-line);}
+.erp-footer > div:first-child {flex:1;min-width:min(180px,100%);}
+#erp-match-message,#erp-match-hint {display:block;}
+#erp-match-hint {color:var(--erp-warn);}
+@layer endfield-theme {
+ html[data-workbench-design] #erp-match-panel thead th {background:#292927!important;color:#f6f6f2!important;}
+ html[data-workbench-design] #erp-match-panel .erp-account button {border:none!important;min-height:22px;height:auto;padding:0 2px!important;background:transparent!important;color:inherit!important;text-decoration:underline;clip-path:none!important;}
+ html[data-workbench-design] #erp-filters button {min-height:24px;height:auto;border-radius:99px!important;background:var(--erp-soft)!important;border:1px solid var(--erp-line)!important;color:var(--erp-ink)!important;clip-path:none!important;}
+ html[data-workbench-design] #erp-filters [aria-pressed=true] {background:var(--erp-ink)!important;border-color:var(--erp-ink)!important;color:var(--erp-panel)!important;}
+}

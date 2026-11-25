@@ -31,7 +31,7 @@ export function openStandardProduct(api){
    const needs=plan.needs.length;
    $('#standard-preview').innerHTML=`<hr><h3>确认商品变更</h3><p>${esc(plan.data.店铺||'ERP 店铺')}（${esc(plan.data.店铺ID)}） · SPU ${esc(plan.data.SPU编码)}<br>${esc(plan.data.SPU名称||'')} · 更新 ${plan.updated} 套，新增 ${plan.added} 套</p>
    <label><input id="standard-prices" type="checkbox" ${prices?'checked':''}> 同时更新价格：到手价 = SKU 价格 − 本店优惠券 ¥${esc(api.state().shopSettings[p.shopId].coupon)}</label>
-   <p class="hint">已有配置更新名称、SKU 资料和有明细的实际配置；图片配件、样式、加购和自定义简称保留。新增配置使用本店默认样式。SKU 库存是网店库存。</p>
+   <p class="hint">SKU 名称写入配置简称；配置序号、图片配件、样式和加购保留，有明细时更新实际配件。新增配置使用本店默认样式。SKU 库存是网店库存。</p>
    ${plan.bindings.length?`<div class="standard-warning"><strong>本链接有未填写 SKU 的配置，请确认对应关系</strong>${plan.bindings.map(b=>`<label class="field">${esc(b.name)} · SKU ${esc(b.skuId)}<select data-standard-config="${esc(b.skuId)}"><option value="">请选择已有配置，或新增</option><option value="new">新增一套配置</option>${b.choices.map(c=>`<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')}</select></label>`).join('')}</div>`:''}
    ${Object.keys(configChoices).length?'<button id="standard-reset-configs">重新选择 SKU 对应配置</button>':''}
    ${needs?`<div class="standard-warning"><strong>请为 ${needs} 个未识别配件选择位置</strong>${plan.needs.map(n=>`<label class="field">${esc(n.name)} · ID ${esc(n.goods_id)}<select data-standard-slot="${esc(n.goods_id)}"><option value="">请选择配件位置</option>${slots.map(s=>`<option>${esc(s)}</option>`).join('')}</select></label>`).join('')}</div>`:''}

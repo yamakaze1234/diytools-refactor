@@ -1,3 +1,4 @@
+import {nasErrorText} from './nas-main-workspace.js';
 /** 批量配置命名：区分自动名称与手工名称，预览确认后再应用命名方案。 */
 import {suggestedName} from './legacy-names.js';
 import {syncPosterShortName} from './short-name-poster.js';
@@ -42,7 +43,7 @@ export function mountNameFormatPreview(container,{getConfigs,shopId,esc,toast,fo
  const options=()=>({format:$('[data-batch-name-format]').value,replaceManual:$('[data-batch-name-manual]').checked,shopId});
  const invalidate=()=>{plan=null;$('[data-batch-name-status]').textContent='内容已变化，请重新预览简称';$('[data-batch-name-results]').innerHTML='';onInvalidate();};
  for(const selector of ['[data-batch-name-format]','[data-batch-name-manual]'])$(selector).onchange=invalidate;
- const preview=()=>{try{plan=nameFormatPlan(getConfigs(),options());const kept=plan.rows.filter(r=>r.preserved).length;$('[data-batch-name-status]').textContent=`共 ${plan.rows.length} 套配置；生成 ${plan.rows.length-kept} 个简称${kept?`，保留 ${kept} 个手动简称`:''}。核对后再应用。`;$('[data-batch-name-results]').innerHTML=`<div class="wps-table-wrap"><table class="wps-table"><thead><tr><th>配置</th><th>原简称</th><th>应用后简称</th></tr></thead><tbody>${plan.rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.before||'（空）')}</td><td>${esc(r.after)}${r.preserved?'<small>保留手动简称</small>':''}</td></tr>`).join('')}</tbody></table></div>`;onPreview(plan);return plan;}catch(error){plan=null;toast(error.message);return null;}};
+ const preview=()=>{try{plan=nameFormatPlan(getConfigs(),options());const kept=plan.rows.filter(r=>r.preserved).length;$('[data-batch-name-status]').textContent=`共 ${plan.rows.length} 套配置；生成 ${plan.rows.length-kept} 个简称${kept?`，保留 ${kept} 个手动简称`:''}。核对后再应用。`;$('[data-batch-name-results]').innerHTML=`<div class="wps-table-wrap"><table class="wps-table"><thead><tr><th>配置</th><th>原简称</th><th>应用后简称</th></tr></thead><tbody>${plan.rows.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc(r.before||'（空）')}</td><td>${esc(r.after)}${r.preserved?'<small>保留手动简称</small>':''}</td></tr>`).join('')}</tbody></table></div>`;onPreview(plan);return plan;}catch(error){plan=null;toast(nasErrorText(error));return null;}};
  $('[data-batch-name-preview]').onclick=preview;
  return {preview,invalidate,read(){if(!requirePreview)return nameFormatPlan(getConfigs(),options());if(!plan)throw Error('请先预览简称，核对后再应用');validateNameFormatPlan(plan,getConfigs());return plan;}};
 }
@@ -52,7 +53,7 @@ export function openNameFormatBatch({openDialog,closeDialog,esc,toast,getConfigs
  openDialog('批量修改简称格式','<div id="batch-name-format-mount"></div><div class="actions"><button id="batch-name-format-apply" class="primary" disabled>应用预览中的简称</button></div>');
  const button=document.querySelector('#batch-name-format-apply'),mount=document.querySelector('#batch-name-format-mount');
  const control=mountNameFormatPreview(mount,{getConfigs,shopId,esc,toast,scope,format,onPreview:plan=>button.disabled=!plan.rows.some(r=>!r.preserved),onInvalidate:()=>button.disabled=true});
- button.onclick=async()=>{try{const plan=control.read();if(await apply(plan)!==false&&button.isConnected)closeDialog();}catch(error){button.disabled=true;toast(error.message);}};
+ button.onclick=async()=>{try{const plan=control.read();if(await apply(plan)!==false&&button.isConnected)closeDialog();}catch(error){button.disabled=true;toast(nasErrorText(error));}};
 }
 
 export function mountNameFormatEntry(open){

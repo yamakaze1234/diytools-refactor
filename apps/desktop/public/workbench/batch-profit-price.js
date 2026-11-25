@@ -1,3 +1,4 @@
+import {nasErrorText} from './nas-main-workspace.js';
 /** 11-19：批量按目标利润定价——选范围、按核算或 ERP 利润填目标，可同时设分期和 99 结尾，预览后一次应用（可撤销）。 */
 import {totals} from './core.js';
 import {pricing} from './pricing.js';
@@ -104,7 +105,7 @@ export function openBatchProfitPrice({openDialog,esc,toast,settings,scopes,loadA
     if(isOpen())progress.textContent=`已载入 ${count} / ${total}`;
    }}).then(()=>{loaded=isOpen();},error=>{
     loadError=error;
-    if(isOpen())progress.textContent='载入失败：'+error.message;
+    if(isOpen())progress.textContent='载入失败：'+nasErrorText(error);
    }).finally(()=>{loading=null;build();});
   }
   build();
@@ -120,7 +121,7 @@ export function openBatchProfitPrice({openDialog,esc,toast,settings,scopes,loadA
   const kind=val('bpp-kind')==='tax'?'核算':'ERP',target=input.value.trim(),count=plan.length;
   applying=true;applyButton.disabled=true;
   try{await apply(plan,`批量按${kind}利润 ${target} 定价`);toast(`已按${kind}利润 ${target} 调整 ${count} 套配置，可撤销`);}
-  catch(error){toast(error.message);}
+  catch(error){toast(nasErrorText(error));}
   finally{applying=false;build();}
  };
  build();input.focus();

@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.2.53"
+version = "0.2.54"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -60,8 +60,14 @@ semver = "1"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
 uuid = { version = "1", features = ["v4"] }
 flate2 = "1"
+# 组件包只解压白名单内的普通文件，压缩格式限定为 Deflate。
+zip = { version = "4.6", default-features = false, features = ["deflate"] }
+tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
+# 与 Tauri 已锁定的 WebView2 版本一致，仅开放纯缓存和回收站 API。
+webview2-com = "=0.39.1"
+windows = { version = "=0.62.2", features = ["Win32_UI_Shell", "Win32_System_Com", "Win32_Foundation"] }
 # 便携程序从资源管理器打开时不一定继承代理环境变量；公共 HTTPS 仍遵循 Windows 当前用户代理设置。
 reqwest = { version = "0.12", default-features = false, features = ["system-proxy"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Diagnostics_ToolHelp", "Win32_Security", "Win32_Security_Credentials"] }

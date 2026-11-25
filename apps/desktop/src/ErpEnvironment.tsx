@@ -30,7 +30,19 @@ export default function ErpEnvironment() {
   useEffect(() => {
     const instance = createErpSessionController({ desktop,
       request: input => invoke<ErpSession | ErpGoodsResult>('erp_session_request', { input }),
-      onState: setSession });
+      onState: setSession,
+      beforeSessionChange:async()=>{
+        const status=await invoke<{job:{active:boolean}|null}>('erp_session_request',{input:{action:'match_status'}});
+        if(!status.job?.active)return true;
+        if(!confirm('后台 ERP 匹配尚未结束，确认停止本批后退出或切换账号？'))return false;
+        await invoke('erp_session_request',{input:{action:'match_stop'}});
+        for(let attempt=0;attempt<250;attempt++){
+          await new Promise(resolve=>setTimeout(resolve,600));
+          const next=await invoke<{job:{active:boolean}|null}>('erp_session_request',{input:{action:'match_status'}});
+          if(!next.job?.active)return true;
+        }
+        throw Error('ERP 当前步骤尚未结束，请稍后再切换账号。');
+      } });
     controller.current = instance;
     if (desktop) void instance.status();
     const mounted = ++lifecycle.current;

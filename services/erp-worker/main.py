@@ -4,12 +4,14 @@
 import importlib
 import importlib.metadata
 import json
+import os
 import platform
 import sys
 
 from session import Session, WorkerError, silence_sdk, load_adapter, local_erp_config
 
 MAX_INPUT = 64 * 1024
+MAX_MATCH_INPUT = 2 * 1024 * 1024
 MAX_OUTPUT = 2 * 1024 * 1024
 MAX_SQL_OUTPUT = 32 * 1024 * 1024
 
@@ -53,17 +55,19 @@ def serve(input_stream=None, output_stream=None, session=None):
     session = session if session is not None else Session()
     try:
         while True:
-            line = input_stream.readline(MAX_INPUT + 1)
+            line = input_stream.readline(MAX_MATCH_INPUT + 1)
             if not line:
                 break
             request_id = ""
             output_limit = MAX_OUTPUT
             try:
-                if len(line) > MAX_INPUT:
+                if len(line) > MAX_MATCH_INPUT:
                     while line and not line.endswith(b"\n"):
-                        line = input_stream.readline(MAX_INPUT + 1)
+                        line = input_stream.readline(MAX_MATCH_INPUT + 1)
                     raise WorkerError("INPUT_TOO_LARGE", "请求超过 64 KiB 限制")
                 request = json.loads(line.decode("utf-8"), parse_constant=lambda value: (_ for _ in ()).throw(ValueError()))
+                if len(line)>MAX_INPUT and not (isinstance(request,dict) and str(request.get('action','')).startswith('match_')):
+                    raise WorkerError('INPUT_TOO_LARGE','请求超过 64 KiB 限制')
                 if isinstance(request, dict) and isinstance(request.get("id"), str) and len(request["id"]) <= 256:
                     request_id = request["id"]
                 if isinstance(request, dict) and request.get("action") in {"sql_read", "sql_read_nas", "sql_read_nas_form", "sql_cost_file", "nas_quotation_file"}:
@@ -73,7 +77,7 @@ def serve(input_stream=None, output_stream=None, session=None):
             except WorkerError as error:
                 response = error_response(request_id, error.code, error.message)
             except (ValueError, UnicodeError, RecursionError):
-                response = error_response(request_id, "INVALID_REQUEST", "请求 JSON 格式无效")
+                response = error_response(request_id, 'INPUT_TOO_LARGE' if len(line)>MAX_INPUT else 'INVALID_REQUEST', '请求超过允许大小' if len(line)>MAX_INPUT else '请求 JSON 格式无效')
             except Exception:
                 response = error_response(request_id, "INTERNAL_ERROR", "ERP 服务暂不可用")
             try:
@@ -85,7 +89,8 @@ def serve(input_stream=None, output_stream=None, session=None):
             except (BrokenPipeError, OSError):
                 break
     finally:
-        session.disconnect()
+        if hasattr(session,'shutdown'):session.shutdown()
+        else:session.disconnect()
 
 
 # 只支持环境检查和常驻协议两种启动方式，统一 UTF-8 避免中文通过管道乱码。
@@ -93,7 +98,9 @@ def main() -> None:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     if sys.argv[1:] == ["--serve"]:
-        serve()
+        # 独立协议描述符不受后台适配器屏蔽 stdout 的影响，状态查询无需等 SDK 请求结束。
+        with os.fdopen(os.dup(sys.stdout.fileno()), 'w', encoding='utf-8', buffering=1) as protocol:
+            serve(output_stream=protocol)
     elif not sys.argv[1:]:
         print(json.dumps(environment_report(), ensure_ascii=False))
     else:

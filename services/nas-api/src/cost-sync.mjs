@@ -7,6 +7,7 @@ const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const version=value=>value===null||typeof value==='string'&&/^[1-9]\d{0,18}$/.test(value)&&BigInt(value)<=9223372036854775807n;
 const text=value=>typeof value==='string'&&value.length<=512&&!/[\x00-\x1f\x7f]/.test(value);
 const number=(value,min,max)=>typeof value==='number'&&Number.isFinite(value)&&value>=min&&value<=max;
+const stock=value=>value===null||number(value,-Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER);
 const valid=(condition,field)=>{if(!condition)throw new Fault('VALIDATION_FAILED',400,{field});};
 
 export function validateCostSync(rows,shop){
@@ -20,8 +21,8 @@ export function validateCostSync(rows,shop){
    row.expected_version===row.expected_versions[shop]&&(!tax||version(row.expected_shared_version)),'changes.expected_versions');
   const f=row.fields;
   valid(plain(f)&&(tax?Object.keys(f).length===1&&number(f.tax,0,100000000):
-   Object.keys(f).length===4&&text(f.name)&&text(f.sku)&&(f.erp===null||number(f.erp,0,100000000000))&&
-   (f.stockAvailable===null||number(f.stockAvailable,-Number.MAX_SAFE_INTEGER,Number.MAX_SAFE_INTEGER))),'changes.cost_sync.fields');
+   Object.keys(f).every(key=>['erp','stockAvailable','name','sku','stockIncomingAvailable'].includes(key))&&text(f.name)&&text(f.sku)&&(f.erp===null||number(f.erp,0,100000000000))&&
+   stock(f.stockAvailable)&&(!Object.hasOwn(f,'stockIncomingAvailable')||stock(f.stockIncomingAvailable))),'changes.cost_sync.fields');
  }
  return action;
 }
@@ -49,9 +50,16 @@ export async function applyCostSync(db,{member,shop,rows,action,operationId,requ
   const {rows:[{data}]}=await db.query('SELECT workbench_sources.apply_cost_sync($1,$2,$3,$4,$5::jsonb,$6) AS data',
    [shop,member.workspaceId,member.uid,action,JSON.stringify(rows),operationId]);
   // 每店使用自己的回执版本和历史，发起店仍由原工作区队列登记。
+  // 旧库函数可能忽略新增观察。回执前核对写入结果，不完整则整笔事务回滚。
+  const expectedIncoming=new Map(rows.filter(row=>Object.hasOwn(row.fields,'stockIncomingAvailable'))
+   .map(row=>[row.id,row.fields.stockIncomingAvailable]));
   const receipts={},audits={},history={};
   for(const id of shops){
    const context=data[id];
+   for(const row of context.changes){
+    if(expectedIncoming.has(row.id)&&row.after?.stockIncomingAvailable!==expectedIncoming.get(row.id))
+     throw new Fault('NAS_COST_SYNC_NOT_INSTALLED',503);
+   }
    const changes=context.changes.map(row=>({id:row.id,version:row.version,...(row.manual?{skipped:'manual_tax'}:{})}));
    receipts[id]={shop_id:id,operation_id:operationId,kind:'costs',changes};
    audits[id]=context.changes.map(({id,version,previous_version,manual})=>({id,version,previous_version,manual}));

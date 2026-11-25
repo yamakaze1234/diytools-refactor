@@ -11,6 +11,7 @@ import logging
 import math
 import os
 import sys
+import threading
 from datetime import datetime, timezone
 
 MAX_ROWS = 500
@@ -29,9 +30,33 @@ class WorkerError(Exception):
         self.message = message
 
 
-# 临时屏蔽 Python 日志和原生标准输出，避免 SDK 的敏感调试信息混入 JSONL；退出时恢复。
+# 进程级标准流由所有读线程共享，仅首个进入者切换、最后退出者恢复。
+_silence_lock = threading.Lock()
+_silence_users = 0
+_silence_guard = None
+
+
 @contextlib.contextmanager
 def silence_sdk():
+    global _silence_users, _silence_guard
+    with _silence_lock:
+        if _silence_users == 0:
+            _silence_guard = _silence_outputs()
+            _silence_guard.__enter__()
+        _silence_users += 1
+    try:
+        yield
+    finally:
+        with _silence_lock:
+            _silence_users -= 1
+            if _silence_users == 0:
+                _silence_guard.__exit__(None, None, None)
+                _silence_guard = None
+
+
+# 临时屏蔽 Python 日志和原生标准输出，避免 SDK 的敏感调试信息混入 JSONL；退出时恢复。
+@contextlib.contextmanager
+def _silence_outputs():
     """Discard Python/native SDK output and logging, including sensitive errors."""
     previous = logging.root.manager.disable
     saved = []
@@ -100,7 +125,7 @@ def local_erp_config():
             if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password
                     or parsed.query or parsed.fragment or parsed.path not in ("", "/")):
                 raise ValueError()
-            config = {"domain": domain.rstrip("/") + "/", "adapter_path": config_path.parent / "runtime" / "erp-adapter.py"}
+            config = {"domain": domain.rstrip("/") + "/", "adapter_path": Path(os.environ.get("DIYTOOLS_ERP_COMPONENT_DIR") or config_path.parent / "runtime") / "erp-adapter.py"}
         return config
     except Exception:
         raise WorkerError("ERP_CONFIG_INVALID", "本机 ERP 接入配置无效") from None
@@ -187,22 +212,88 @@ def _row(item, default_id):
 
 # 一个常驻 worker 只管理一个 ERP 会话；工厂可注入，使协议测试无需实际网络。
 class Session:
-    def __init__(self, client_factory=create_sdk_client, api_factories=sdk_api_factories, version=None, config=None):
+    def __init__(self, client_factory=create_sdk_client, api_factories=sdk_api_factories, version=None, config=None, matching_factory=None):
         self._erp = None
         self._client_factory = client_factory
         self._api_factories = api_factories
         self._config = local_erp_config() if config is None else config
         self._domain = self._config.get("domain")
         self.version = version or "external-adapter"
+        self._matching = None
+        self._matching_factory = matching_factory
 
     def status(self):
         return {"connected": self._erp is not None, "user": self._erp.user if self._erp is not None else None,
                 "domain": self._domain, "package_version": self.version}
 
     def disconnect(self):
+        if self._matching and self._matching.active():
+            raise WorkerError('MATCH_ACTIVE', '后台 ERP 匹配尚未结束，请先确认停止任务，再退出或切换 ERP 账号。')
         old, self._erp = self._erp, None
+        if self._matching:self._matching.gateway=None
         close_client(old)
         return self.status()
+
+    def shutdown(self):
+        # 桌面退出由宿主二次确认；进程销毁不远端 logout，未完成步骤留待只读核验。
+        if self._matching:
+            self._matching.cancel()
+        close_client(self._erp)
+        self._erp = None
+
+    def matching(self, action, payload):
+        from matching import MatchingService, MatchError
+        try:
+            root = os.environ.get('DIYTOOLS_ERP_OPERATIONS')
+            if not root:
+                if action == 'match_status':
+                    return {'job':None}
+                raise WorkerError('PACKAGE_UNAVAILABLE', '本机匹配运行目录尚未配置。')
+            if not self._matching:
+                self._matching = MatchingService(None, root, None)
+            service = self._matching
+            if action == 'match_status':
+                return service.status(payload.get('offset',0), payload.get('limit',50), action_filter=payload.get('filter','all'))
+            if action == 'match_detail':
+                if not service.job or payload.get('jobId')!=service.job['id']:raise WorkerError('INVALID_REQUEST','回执编号无效。')
+                return service.status(detail=payload.get('configId'))
+            if action == 'match_stop':
+                return service.cancel()
+            if self._erp is None:
+                raise WorkerError('NOT_CONNECTED', '请先连接 ERP。')
+            if service.active():raise WorkerError('ERP_OPERATION_BUSY', '本批 ERP 任务正在运行，请等待当前步骤完成。')
+            if service.gateway is None:
+                try:
+                    with silence_sdk():
+                        if self._matching_factory:
+                            service.gateway=self._matching_factory(self._erp,domain=self._domain)
+                        else:
+                            module=load_adapter(local_erp_config())
+                            factory=getattr(module,'matching_gateway',None)
+                            if not callable(factory):
+                                raise WorkerError('PACKAGE_UNAVAILABLE','请安装支持套餐匹配协议的本机 ERP 适配器。')
+                            service.gateway=factory(self._erp,domain=self._domain)
+                except WorkerError:
+                    raise
+                except Exception:
+                    raise WorkerError('PACKAGE_UNAVAILABLE','本机 ERP 匹配适配器无法加载，请核对可选运行时。') from None
+            # 账号和域名仅作为本机回执归属摘要，不保存密码、Cookie 或登录会话。
+            from matching import digest
+            service.owner = digest([self._domain,self._erp.user])
+            if action == 'match_preview':return service.preview(payload)
+            if action == 'match_execute':return service.execute(payload)
+            if action == 'match_recover':return service.recover(payload)
+            if action == 'match_search':
+                if service.active():raise WorkerError('ERP_OPERATION_BUSY', 'ERP 匹配正在运行，请稍后搜索。')
+                query = payload.get('query')
+                if not isinstance(query,str) or not 1<=len(query.strip())<=100:raise WorkerError('INVALID_REQUEST', '请输入配件名称或 GoodID。')
+                from operation_lock import OperationLock, OperationBusy
+                try:
+                    with OperationLock(root):return service._read('search_goods', query=query.strip())
+                except OperationBusy as error:raise WorkerError('ERP_OPERATION_BUSY',str(error)) from None
+            raise WorkerError('UNKNOWN_ACTION', '不支持的匹配操作。')
+        except MatchError as error:
+            raise WorkerError(error.code,error.message) from None
 
     # 先释放旧会话，再验证域名和凭据；失败时不能继续复用上一次账号。
     def connect(self, request):
@@ -331,6 +422,22 @@ class Session:
                 self.disconnect()
             raise WorkerError("INVALID_DOMAIN", "ERP 地址与本机配置不一致")
         action = request.get("action")
+        if action in {'match_status','match_detail','match_preview','match_execute','match_recover','match_stop','match_search'}:
+            payload = request.get('payload', {})
+            if not isinstance(payload,dict):raise WorkerError('INVALID_REQUEST', '匹配请求无效。')
+            return self.matching(action,payload)
+        # 只读 SQL 和成本表也持有同一操作锁；跨 worker 进程仍互斥。
+        if action in {'sql_read','sql_read_nas','sql_read_nas_form','sql_cost_file','nas_quotation_file','query_goods','connect','disconnect'} and os.environ.get('DIYTOOLS_ERP_OPERATIONS'):
+            from operation_lock import OperationLock, OperationBusy
+            try:
+                with OperationLock(os.environ['DIYTOOLS_ERP_OPERATIONS']):
+                    return self._handle_action(request)
+            except OperationBusy as error:
+                raise WorkerError('ERP_OPERATION_BUSY', str(error)) from None
+        return self._handle_action(request)
+
+    def _handle_action(self,request):
+        action = request.get('action')
         if action == "sql_cost_file":
             from cost_file import read_costs
             try:

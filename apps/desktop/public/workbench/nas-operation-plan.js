@@ -1,5 +1,6 @@
 /** 跨批操作按原工作区、服务和账号持久保存；重试仅重放选中的原批次。 */
 import {NasApiError,receiptNotFound,receiptLookupError,originalVersionRejected,migrationNotInstalled} from './nas-api-client.js';
+import {applyNasRenumber} from './nas-renumber-receipt.js';
 const known=new Set(['INVALID_REQUEST','INVALID_CONTENT_TYPE','PAYLOAD_TOO_LARGE','VALIDATION_FAILED','PRODUCT_MEMBERS_CHANGED',
  'DEPENDENCY_CONFLICT','INVALID_DEPENDENCY','VERSION_CONFLICT','QUOTATION_REVIEW_REQUIRED','CONFIGURATION_EXISTS',
  'NOT_FOUND','INVALID_CONFIGURATION_STATE','OPERATION_REUSED','WRITES_DISABLED','FORBIDDEN','UNAUTHENTICATED','SKU_ALREADY_USED',
@@ -84,8 +85,8 @@ export function createNasOperationQueue({client,storage,key,shopId='intel',lock=
   if(plan.kind==='configurations')for(const row of batch.result.changes.flatMap(change=>change.reordered??[])){
    for(const later of plan.batches.filter(next=>next.status==='ready'))for(const change of later.body.changes){
     if(change.id!==row.configuration_id||change.expected_version!==row.previous_version)continue;
+    applyNasRenumber(change.document,row);
     change.expected_version=row.version;
-    if(change.document?.name===row.before)change.document.name=row.name;
    }
   }
   await persist(plan);return batch.result;

@@ -5,6 +5,7 @@ export function createReactWorkbenchAdapter(host,document){
  return {
   continuousAvailable:Boolean(renderer?.continuous),
   continuous:(container,model)=>{if(!renderer?.continuous)return false;renderer.continuous(container,model);return true;},
+  configCard:(container,model)=>{if(!renderer?.configCard)return false;renderer.configCard(container,model);return true;},
   editor:(container,model)=>{if(!renderer)return false;renderer.editor(container,model);return true;},
   templates:(container,model)=>{if(!renderer)return false;renderer.templates(container,model);return true;},
   dialog:(container,kind,model)=>{if(!renderer)return false;renderer.dialog(container,kind,model);return true;},

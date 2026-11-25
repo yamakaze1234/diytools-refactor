@@ -14,7 +14,7 @@ const base=process.env.REACT_TEST_URL||'http://127.0.0.1:5236';
 const root=await mkdtemp(join(tmpdir(),'diy-price-poster-nas-'));
 const api=await startSourceAcceptance({fixture,root,authenticate:async()=>({uid:fixtureActor,workspaceId:fixtureWorkspace})});
 const link=id=>'price-fix-'+id;
-for(const migration of ['027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql'])
+for(const migration of ['027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql','030-incoming-stock.sql'])
  await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+migration,import.meta.url),'utf8'));
 const row=(id,i)=>link(id)+'-'+i;
 let browser,page;
@@ -45,6 +45,9 @@ try{
  }
  // 用真实兼容字段模拟旧配置曾将同一输出源文案同步进 addons。
  const target=row('a',4);
+ // 让简称和海报显示不同后缀，单改配置名称无法通过下面的界面断言。
+ await api.db.query("UPDATE intel_live.configurations SET fields=fields || $2::jsonb WHERE configuration_id=$1",
+  [target,JSON.stringify({shortName:'配置4：相邻简称',posterSubtitle:'配置4：右侧预览'})]);
  await api.db.query("INSERT INTO intel_live.addons(configuration_id,position,fields,items) VALUES($1,1,$2,'[]')",
   [target,JSON.stringify({text:copy,note:'',sourceId:source.sourceId})]);
 
@@ -108,6 +111,38 @@ try{
   assert.ok(!ink.includes('加购与选配'),'没有页签文案时不绘制加购模块');
  };
  await checkDrawing();
+ // 在同一窗口删除相邻配置、再用 Ctrl+Z 恢复；回执应立即反映到所有编号展示。
+ async function checkRenumberedViews(ordinal){
+  const name='配置'+ordinal,short=name+'：相邻简称',poster=name+'：右侧预览';
+  await page.waitForFunction(({id,name,short})=>{
+   const item=document.querySelector('.config-item[data-id="'+id+'"]');
+   const card=document.querySelector('[data-continuous-config="'+id+'"] h2');
+   return item?.getAttribute('aria-label')==='打开 '+name&&card?.textContent===short;
+  },{id:target,name,short});
+  await page.waitForFunction(text=>window.posterInk.join('').includes(text),poster);
+  await page.getByRole('button',{name:'价格',exact:true}).click();
+  const priceRow=page.locator('[data-pp-row="'+target+'"] [data-pp-cell="shortName"]');
+  await priceRow.waitFor();
+  assert.equal(await priceRow.inputValue(),short);
+  if(!await page.locator('.pp-menu').evaluate(node=>node.open))await page.locator('.pp-menu > summary').click();
+  await page.locator('#pp-back').click();
+  await page.locator('#price-profit-page').waitFor({state:'hidden'});
+ }
+ await page.evaluate(()=>{window.posterInk=[];});
+ page.once('dialog',prompt=>prompt.accept());
+ await page.locator('[data-continuous-config="'+row('a',3)+'"] .ov-delete-config').click();
+ await checkRenumberedViews(3);
+ await page.evaluate(()=>{window.posterInk=[];document.activeElement?.blur();});
+ await page.keyboard.press('Control+z');
+ await page.locator('.config-item[data-id="'+row('a',3)+'"]').waitFor();
+ await openRow(target);
+ await checkRenumberedViews(4);
+
+ // 价格页会预取详情；重新启动页面，让后面的按需加载断言从冷缓存开始。
+ await page.reload();await page.waitForFunction(()=>window.workbenchReady===true);
+ await openLink('b');await openRow(row('b',3));
+ await openLink('a');await openRow(target);
+
  await page.locator('[data-tab="addon-packs"]').click();
  await page.locator('#pack-text-mode').click();
  await page.locator('#pack-add-config-copy').waitFor();
@@ -215,13 +250,15 @@ try{
  assert.deepEqual(await page.evaluate(()=>[...new Set(window.pricePaints)]),[2203]);
  await page.locator(`[data-pp-row="${target}"] [data-pp-pick]`).check();
  await page.locator('#pp-batch').click();
- await page.locator('#pp-batch-value').fill('10');
- await page.locator('#pp-batch-apply').click();
- await page.waitForFunction(()=>document.querySelector('#pp-status').textContent.includes('点击“保存到服务端”'));
+ await page.locator('#bpp-target').fill('1800');
+ await page.locator('#bpp-rows tr').first().waitFor();
+ const expectedBatch=Number((await page.locator('#bpp-rows tr').first().locator('td').nth(3).innerText()).replaceAll(',',''));
+ await page.locator('#bpp-apply').click();
  assert.equal(await page.locator('#pp-save-count').textContent(),'1 套待保存');
  await page.locator('#pp-save').click();
  await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
- assert.equal((await client.detail(target)).document.price,2213.25);
+ assert.equal((await client.detail(target)).document.price,expectedBatch);
+ assert.equal(await page.locator('[data-pp-dirty]').count(),0);
 
  const openPriceMenu=async()=>{
   if(await page.locator('.pp-menu').getAttribute('open')===null)await page.locator('.pp-menu > summary').click();
@@ -242,7 +279,7 @@ try{
  await page.waitForFunction(()=>document.querySelector('#continuous-workbench input[aria-label="配置4到手价"]')?.value.replaceAll(',','')==='2231');
  await page.getByRole('button',{name:'价格',exact:true}).click();
  await page.locator(`[data-pp-row="${target}"] [data-pp-expand]`).click();
- const qty=page.locator(`[data-pp-config="${target}"][data-pp-qty="散热"]`);
+ const qty=page.locator(`[data-pp-card="${target}"]`).getByRole('textbox',{name:/配置4 散热实际数量/});
  await qty.fill('3');await qty.press('Enter');
  await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='1 套待保存');
  await page.locator('#pp-save').click();
@@ -316,6 +353,83 @@ try{
  assert.match(await page.locator('#cost-sync-message').textContent(),/0 处成本变化/);
  assert.equal(await page.locator('#cost-apply').isVisible(),false);
 
+ // 成本覆盖仅是显示投影，不应误报未保存；刷新恢复持久草稿后仍对照服务器base。
+ await dialog.press('Escape');await page.getByRole('button',{name:'价格',exact:true}).click();
+ await page.locator('#pp-expand-links').click();
+ assert.equal(await page.locator('[data-pp-dirty]').count(),0);
+ const originalPrice=(await client.detail(target)).document.price;
+ await cell(target).fill(String(originalPrice+10));await cell(target).press('Enter');
+ await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='1 套待保存');
+ await page.reload();await page.waitForFunction(()=>window.workbenchReady);
+ await page.getByRole('button',{name:'价格',exact:true}).click();await page.locator('#pp-expand-links').click();
+ assert.ok(await page.locator(`[data-pp-row="${target}"] [data-pp-dirty]`).count()>0);
+ await page.locator('#pp-save').click();await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
+ assert.equal(await page.locator('[data-pp-dirty]').count(),0);
+
+ // P1：跨链接恢复同一配件写回真实合成 NAS，一步撤销后重做恢复仍以服务器为准。
+ for(const id of [target,row('b',3)]){
+  await page.locator(`[data-pp-expand="${id}"]`).click();
+  const tax=page.locator(`[data-pp-card="${id}"] .ov-tax-input`).first();await tax.fill('141');await tax.press('Enter');
+ }
+ await page.locator('#pp-save').click();await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
+ const taxBanner=page.locator('#pp-tax-banner');await taxBanner.waitFor();
+ await taxBanner.getByRole('button',{name:'查看汇总 / 批量还原'}).click();
+ const taxRow=page.locator('.pp-tax-summary-table tbody tr').filter({hasText:'9900791'});
+ page.once('dialog',d=>d.accept());await taxRow.getByRole('button',{name:/还原此配件/}).click();await dialog.waitFor({state:'hidden'});
+ for(const id of [target,row('b',3)])assert.equal((await client.detail(id)).document.actualParts[0].taxOverride,undefined);
+ await page.locator('.pp-grid').focus();await page.keyboard.press('Control+z');await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='2 套待保存');
+ await page.locator('#pp-save').click();await page.waitForFunction(()=>document.querySelector('#pp-save-count').textContent==='无待保存');
+ await page.reload();await page.waitForFunction(()=>window.workbenchReady);await page.getByRole('button',{name:'价格',exact:true}).click();
+ await taxBanner.waitFor({state:'visible'});assert.match(await taxBanner.innerText(),/2 套配置/);await page.locator('#pp-expand-links').click();
+ // 已落盘草稿在退出检查可为干净，但缓存检查必须识别，批量弹窗必须返回中文。
+ await cell(target).fill(String(originalPrice+30));await cell(target).press('Enter');
+ const cacheStatus=await page.evaluate(()=>workbenchCacheStatus());assert.equal(cacheStatus.count,1);
+ await returnToConfig();await openLink('a');await openRow(target);await page.locator('#link-display-names').click();
+ await page.locator('#upgrade-batch-query').fill('9900791');await page.locator('[data-upgrade-part]').first().check();
+ await page.locator('#upgrade-batch-text').fill('P1 中文错误回归');await page.locator('#upgrade-batch-preview').click();await page.locator('#upgrade-batch-apply').click();
+ await page.waitForFunction(()=>document.querySelector('#upgrade-batch-status').textContent.includes('未保存的本地草稿'));
+ assert.doesNotMatch(await page.locator('#upgrade-batch-status').innerText(),/UNSAVED_DRAFT/);await dialog.press('Escape');
+ // 清理前明确放弃后重新载入，不能残留旧控制器；登录和隔离连接资料仍保留。
+ await page.evaluate(()=>workbenchPrepareCacheCleanup('discard'));await page.evaluate(()=>workbenchReloadAfterCache());await page.waitForFunction(()=>window.workbenchReady);
+ await page.getByRole('button',{name:'价格',exact:true}).click();await page.locator('#price-profit-title').waitFor();assert.equal((await page.evaluate(()=>workbenchCacheStatus())).count,0);
+ // P2：三标签附加真实保存到合成 NAS；本机 ERP 查询仍为 mock。
+ let localJob=null,stopCalls=0,logoutCalls=0;
+ await page.route('**/api/erp-matching',async route=>{
+  const input=route.request().postDataJSON();
+  if(input.action==='match_stop'){stopCalls++;localJob={...localJob,active:false,phase:'stopped',items:localJob.items.map(item=>({...item,state:'not_run'}))};}
+  await route.fulfill({json:{ok:true,result:input.action==='status'?{connected:true,user:'离线验收'}:input.action==='match_search'?{rows:[{goodsId:'9900791',name:'本店固定附加'}],total:1}:{job:localJob}}});
+ });
+ if(await page.locator('.pp-menu').getAttribute('open')===null)await page.locator('.pp-menu > summary').click();await page.locator('#pp-shop-settings').click();
+ assert.equal(await page.locator('.shop-settings-tabs [role=tab]').count(),3);await page.locator('#shop-extra-toggle').click();
+ await page.locator('#shop-extra-query').fill('9900791');await page.locator('#shop-extra-search').click();await page.locator('[data-extra-pick]').click();await page.locator('#shop-extra-qty').fill('2');await page.locator('#shop-extra-add-button').click();
+ await page.locator('#shop-erp-save').click();await dialog.waitFor({state:'hidden'});
+ assert.deepEqual((await client.workspaceCatalog()).shopSettings.intel.erpDefaultExtras.map(row=>row.goodsId),['29369','131060','7031','56020','50681','9900791']);
+ assert.deepEqual((await client.workspaceCatalog()).shopSettings.intel.erpDefaultExtras.at(-1),{goodsId:'9900791',name:'本店固定附加',qty:2});
+ // 合成 NAS 的费率修改须明确全店套数；取消不产生新版本，分批确认后回读两个链接。
+ const beforeRate=await client.detail(target);
+ if(await page.locator('.pp-menu').getAttribute('open')===null)await page.locator('.pp-menu > summary').click();
+ await page.locator('#pp-shop-settings').click();await page.getByRole('tab',{name:'运营费率与分期息点'}).click();
+ const rate=page.locator('#shop-overview-fee-rate'),applyRate=page.locator('#shop-fee-rate-save');
+ await rate.fill('7.4321');const cancelPrompt=page.waitForEvent('dialog'),cancelClick=applyRate.click(),prompt=await cancelPrompt;
+ const affected=Number(prompt.message().match(/本店 (\d+) 套在用配置/)?.[1]);
+ assert.ok(affected>=151,prompt.message());assert.match(prompt.message(),/7.4321%.*主机模板与回收站/);
+ await prompt.dismiss();await cancelClick;assert.equal((await client.detail(target)).version,beforeRate.version);
+ const prompts=[];const acceptRate=async event=>{prompts.push(event.message());await event.accept();};
+ page.on('dialog',acceptRate);
+ try{await applyRate.click();await dialog.waitFor({state:'hidden',timeout:90000});}
+ finally{page.off('dialog',acceptRate);}
+ assert.ok(prompts.some(message=>message.includes('分')&&message.includes('批保存')),JSON.stringify(prompts));
+ for(const id of [target,row('b',3)])assert.equal((await client.detail(id)).document.overviewFeeRate,7.4321);
+ // 退出 NAS 会卸载 iframe 关闭监听，必须先确认停止后台批次，防止登录页关闭绕过保护。
+ localJob={id:'mock-job',active:true,phase:'running',finished:0,total:1,items:[{configId:target,name:'配置4',shopId:'76',spu:'33333333',sku:'22222222',expected:{'9900791':1},state:'running',action:'create',diff:[]}],mode:'normal'};
+ await page.route('**/api/native-nas-identity/logout',async route=>{logoutCalls++;await route.fulfill({json:{nas_session_revoked:true}});});
+ let confirms=0;let cancelResolve;const canceled=new Promise(resolve=>cancelResolve=resolve);
+ const rejectExit=async event=>{confirms++;if(confirms===1)await event.accept();else{await event.dismiss();cancelResolve();}};
+ page.on('dialog',rejectExit);await page.locator('#operator-open').click();await canceled;page.off('dialog',rejectExit);
+ assert.equal(confirms,2);assert.equal(stopCalls,0);assert.equal(logoutCalls,0);
+ page.on('dialog',acceptExit);function acceptExit(event){void event.accept();}
+ const logoutReply=page.waitForResponse(response=>new URL(response.url()).pathname==='/api/native-nas-identity/logout');await page.locator('#operator-open').click();await logoutReply;page.off('dialog',acceptExit);
+ assert.equal(stopCalls,1);assert.equal(logoutCalls,1);
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({通过:true,价格配置:original.length,加载分批:details.slice(start).length,合成资料目录:root}));
 }catch(error){

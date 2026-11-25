@@ -41,7 +41,7 @@ test('本页未改价格时保留最新价格，不产生覆盖授权',()=>{
 });
 
 const app=readFileSync(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
-const saveCode=app.slice(app.indexOf('async function save(){'),app.indexOf('async function sendBatchPending(){'));
+const saveCode=app.slice(app.indexOf('function refreshPriceSaveMarkers(){'),app.indexOf('async function sendBatchPending(){'));
 function harness({otherConflict=false,repeat=false,editDuringLoad=false}={}){
  const {base,local,remote}=changes(),requests=[],dialogs=[],nodes=new Map();
  if(otherConflict){local.configs[0].name='local';remote.configs[0].name='remote';}

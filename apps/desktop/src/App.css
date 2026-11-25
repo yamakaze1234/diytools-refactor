@@ -131,3 +131,11 @@
   outline: 2px solid var(--update-contrast);
   outline-offset: 2px;
 }
+
+/* 缓存确认独立于已冻结的工作台，保留系统 dialog 焦点与取消保护。 */
+.cache-cleanup-dialog { max-width:620px; width:calc(100% - 40px); padding:24px; border:1px solid #c5c5bb; background:var(--background,#fff); color:var(--foreground,#181a19); }
+.cache-cleanup-dialog::backdrop { background:#0006; }
+.cache-cleanup-dialog h2 { margin-top:0; }
+.cache-cleanup-dialog p { line-height:1.7; }
+.cache-cleanup-dialog .actions { display:flex; gap:10px; justify-content:flex-end; margin-top:20px; }
+.cache-cleanup-dialog button { border:1px solid #bbb; padding:8px 12px; cursor:pointer; }

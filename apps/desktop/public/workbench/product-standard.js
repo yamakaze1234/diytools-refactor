@@ -9,6 +9,7 @@ import {defaultServiceText} from './service-promises.js';
 import {sourcesFor,DEFAULT_ERP_SHOP_IDS} from './shops.js';
 import {sourcePart} from './source.js';
 import {excludedComponent} from './component-policy.js';
+import {syncPosterShortName} from './short-name-poster.js';
 
 export const productFields=['店铺ID','店铺','数据来源','状态','网店类别','SPU编码','SPU名称','备注'];
 export const skuFields=['SKU名称','SKU价格','SKU库存','SKU更新时间','goods_id','商品名称','图片网址','商品网址','关联更新时间'];
@@ -97,7 +98,7 @@ export function planStandardProduct(input,state,product,options={}){
   let price=existing?.price??0;
   if(options.prices&&sku.SKU价格!==null){price=Math.round((sku.SKU价格-Number(settings.coupon||0))*100)/100;if(price<0)errors.push(`SKU ${skuId} 的定价低于店铺券，请先核对优惠券`);}
   if(!existing&&product.installment===null)errors.push('新增 SKU 前请先统一本链接的分期设置');
-  rows.push({skuId,sku,existingId:existing?.id||null,parts,price,name:sku.SKU名称||existing?.name||skuId});
+  rows.push({skuId,sku,existingId:existing?.id||null,parts,price,name:sku.SKU名称||existing?.shortName||existing?.name||skuId});
  }
  const added=rows.filter(r=>!r.existingId).length;
  const capacityError=configCapacityMessage(state.configs,product.shopId,added);if(capacityError)errors.push(capacityError);
@@ -115,8 +116,10 @@ export function applyStandardProduct(plan,state,product){
  for(const row of fresh.rows){
   let c=next.configs.find(c=>c.id===row.existingId);
   const created=!c;
-  if(created){c=blankConfig(null,product,row.name,defaultServiceText(state,product.shopId));c.workspaceOrder=Math.max(-1,...next.configs.map(c=>c.workspaceOrder??0))+1;next.configs.push(c);}
-  Object.assign(c,{skuId:row.skuId,spu:root.SPU编码,name:row.name,price:row.price,productStandard:{...root,SKU编码:row.skuId,sku:clone(row.sku)}});
+  if(created){c=blankConfig(null,product,'配置'+(next.configs.filter(c=>!c.deletedAt&&c.shopId===product.shopId&&c.productId===product.id).length+1),defaultServiceText(state,product.shopId));c.workspaceOrder=Math.max(-1,...next.configs.map(c=>c.workspaceOrder??0))+1;next.configs.push(c);}
+  // SKU名称只写简称；配置序号继续由重新编号和海报文件名使用。
+  Object.assign(c,{skuId:row.skuId,spu:root.SPU编码,shortName:row.name,shortNameAuto:false,price:row.price,productStandard:{...root,SKU编码:row.skuId,sku:clone(row.sku)}});
+  syncPosterShortName(c);
   if(row.parts.length)c.actualParts=clone(row.parts);
   if(created&&row.parts.length)c.parts=clone(row.parts);
   delete c.emptyLinkDraft;
@@ -143,7 +146,7 @@ export function exportStandardProduct(state,product,{erpShopId,erpShopName,allow
   if(c.spu!==spu&&!allowIncomplete)throw Error('本链接 SPU 不一致，请先统一');
   const id=safeId(c.skuId,'SKU');if(!id)continue;if(duplicates.has(id)){if(allowIncomplete)continue;throw Error('本链接 SKU 重复');}
   const meta=validMeta(c)?.sku,sku=Object.fromEntries(skuFields.map(k=>[k,meta?.[k]??null]));
-  sku.SKU名称=c.name;try{sku.SKU价格=pricing(c,settings).listPrice;}catch(e){if(!allowIncomplete)throw e;sku.SKU价格=null;}
+  sku.SKU名称=c.shortName||c.name;try{sku.SKU价格=pricing(c,settings).listPrice;}catch(e){if(!allowIncomplete)throw e;sku.SKU价格=null;}
   sku.SKU明细=actualParts(c).filter(p=>!isSpecialComponent(p)&&(p.goodsId||p.name)).map(p=>{
    const goods_id=safeId(p.goodsId,`${p.slot} goods_id`);if((!Number.isSafeInteger(p.qty)||p.qty<1)&&!allowIncomplete)throw Error(`${p.slot} 数量无效`);
    const original=meta?.SKU明细?.find(x=>x.goods_id===goods_id),cost=state.costSource?.find(x=>x.goodsId===goods_id);

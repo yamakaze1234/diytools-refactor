@@ -28,11 +28,11 @@ export function planNasErpRows(rows,before,kind,at){
   const stock=v=>v===null||typeof v==='number'&&Number.isFinite(v);
   let fields;
   if(kind==='erp'){
-   if(!amount(row.erp)||!stock(row.stockAvailable)||typeof row.name!=='string'||typeof row.sku!=='string')
+   if(!amount(row.erp)||!stock(row.stockAvailable)||!stock(row.stockIncomingAvailable??null)||typeof row.name!=='string'||typeof row.sku!=='string')
     throw Error('ERP 结果缺少完整成本或库存字段。');
-   if(old.document.nasErpOverride&&row.erp===old.document.erp&&row.stockAvailable===old.document.stockAvailable&&
+   if(old.document.nasErpOverride&&row.erp===old.document.erp&&row.stockAvailable===old.document.stockAvailable&&(row.stockIncomingAvailable??null)===(old.document.stockIncomingAvailable??null)&&
     row.name===old.document.name&&row.sku===old.document.sku)continue;
-   fields={erp:row.erp,stockAvailable:row.stockAvailable,name:row.name,sku:row.sku,stockUpdatedAt:at};
+   fields={erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku,stockUpdatedAt:at};
   }else{
    if(!amount(row.tax))throw Error('成本表金额无效。');
    // 手动价只有逐项恢复后才重新进入成本表同步。
@@ -60,7 +60,7 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
   if(!goods.has(id)||!/^\d{1,20}$/.test(id)||seen.has(id))throw Error('读取结果包含非预期或重复的货号。');
   seen.add(id);
   const amount=value=>value===null||Number.isFinite(value)&&value>=0;
-  if(erp?(!amount(row.erp)||row.stockAvailable!==null&&!Number.isFinite(row.stockAvailable)||typeof row.name!=='string'||typeof row.sku!=='string'):
+  if(erp?(!amount(row.erp)||row.stockAvailable!==null&&!Number.isFinite(row.stockAvailable)||row.stockIncomingAvailable!=null&&!Number.isFinite(row.stockIncomingAvailable)||typeof row.name!=='string'||typeof row.sku!=='string'):
    !Number.isFinite(row.tax)||row.tax<0)throw Error('读取结果包含无效成本或库存。');
   const common=snapshot.common[id];
   const expected_versions={};
@@ -73,9 +73,9 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
    const label=shopById(store).shortName;
    if(erp){
     if(!before.erpOverride||before.erpMissing||before.stockMissing||Boolean(before.erpUnknown)!==(row.erp===null)||(before.erp??null)!==row.erp||
-     (before.stockAvailable??null)!==row.stockAvailable||before.name!==row.name||before.sku!==row.sku)
+     (before.stockAvailable??null)!==row.stockAvailable||(before.stockIncomingAvailable??null)!==(row.stockIncomingAvailable??null)||before.name!==row.name||before.sku!==row.sku)
      differences.push({area:label,goodsId:id,name:row.name,before:before.stockAvailable??null,after:row.stockAvailable,
-      erpBefore:before.erp??null,erpAfter:row.erp});
+      incomingBefore:before.stockIncomingAvailable??null,incomingAfter:row.stockIncomingAvailable??null,erpBefore:before.erp??null,erpAfter:row.erp});
    }else if(before.manual===true){
     protectedRows.push({goodsId:id,shop:label,before:before.tax??null,after:row.tax});
    }else if(before.tax!==row.tax||before.taxOverride!==true||before.provisional===true||common?.overrideShops?.includes(store)){
@@ -85,7 +85,7 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
   if(!differences.length)continue;
   changes.push({id,action:erp?'erp_sync':'tax_sync',expected_version:expected_versions[shop],expected_versions,
    ...(erp?{}:{expected_shared_version:common?.version??null}),
-   fields:erp?{erp:row.erp,stockAvailable:row.stockAvailable,name:row.name,sku:row.sku}:{tax:row.tax}});
+   fields:erp?{erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku}:{tax:row.tax}});
   examples.push(...differences);
  }
  return {changes,examples,protectedRows,missing:goods.size-seen.size};

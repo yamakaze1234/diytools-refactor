@@ -62,9 +62,9 @@ body.continuous-mode .main > * { flex-shrink: 0; }
 /* 操作栏参与布局，避免绝对定位在滚动与窄窗口中被裁切。 */
 body.continuous-mode .page-heading { position: relative; align-self: stretch; justify-content: flex-end; top: auto; right: auto; z-index: 2; }
 body.continuous-mode #product-panel .product-heading { padding-right: 0; }
-body.continuous-mode #continuous-workbench { flex: 1; min-height: 0; }
-#continuous-workbench { min-width: 0; max-width: 100%; }
-#continuous-workbench[hidden] { display: none !important; }
+body.continuous-mode :is(#continuous-workbench,[data-pp-card]) { flex: 1; min-height: 0; }
+:is(#continuous-workbench,[data-pp-card]) { min-width: 0; max-width: 100%; }
+:is(#continuous-workbench,[data-pp-card])[hidden] { display: none !important; }
 .reui-continuous { height: 100%; font-family: var(--font-sans),"Microsoft YaHei",sans-serif; }
 .continuous-sheet { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border: 1px solid var(--ui-line); border-radius: 6px; }
 .continuous-sheet-content { width: 100%; min-width: 100%; }
@@ -138,13 +138,13 @@ body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
 }
 
 /* 双页签设计稿：外层继续使用工作台导航，页头和表格的尺寸独立于旧编辑器。 */
-body.overview-mode {
+body.overview-mode, body:has(.price-profit-active) {
  --ov-gutter: clamp(12px,1.12vw,22px);
  --ov-ink: #181a19; --ov-muted: #5d645f; --ov-line: #dbdfdb;
  --ov-page: #f1f3f0; --ov-sheet: #fff; --ov-columns: #f5f7f4; --ov-display: #faf9ed;
  --ov-numbers: 'Cascadia Mono',Consolas,'Microsoft YaHei UI',monospace;
 }
-html.dark body.overview-mode {
+html.dark body.overview-mode, html.dark body:has(.price-profit-active) {
  --ov-ink: var(--ef-ink); --ov-muted: var(--ef-ink-2); --ov-line: var(--ef-rule);
  --ov-page: var(--ef-paper); --ov-sheet: var(--ef-panel); --ov-columns: var(--ef-chip); --ov-display: var(--ef-chip);
 }
@@ -184,128 +184,132 @@ body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer { ord
 body.overview-mode .preview-side:not(.preview-expanded) .ov-preview-footer button { flex: 1; }
 .ov-expanded-poster { display: block; width: auto; max-width: min(760px,85vw); height: auto; margin: 0 auto; }
 .reui-continuous { display: flex; flex-direction: column; color: var(--ov-ink); font: 14px/1.45 'PingFang SC','Microsoft YaHei UI','Segoe UI',sans-serif; }
-#continuous-workbench .ov-sheet-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px var(--ov-gutter) 20px; overscroll-behavior: contain; scrollbar-width: thin; background: var(--ov-page); }
-#continuous-workbench .ov-toolbar { display: flex; align-items: stretch; gap: 7px; padding: 8px var(--ov-gutter) 7px; background: var(--ov-sheet); }
+/* 虚拟表自行对齐配置，浏览器的滚动锚点会在卡片重新测高时移走定位目标。 */
+:is(#continuous-workbench,[data-pp-card]) .ov-sheet-scroll { flex: 1; min-height: 0; overflow: auto; padding: 12px var(--ov-gutter) 20px; overscroll-behavior: contain; overflow-anchor: none; scrollbar-width: thin; background: var(--ov-page); }
+:is(#continuous-workbench,[data-pp-card]) .ov-toolbar { display: flex; align-items: stretch; gap: 7px; padding: 8px var(--ov-gutter) 7px; background: var(--ov-sheet); }
 /* 编辑历史与搜索同一行，窄屏换行时两枚按钮保持一组。 */
-#continuous-workbench .ov-history { display: flex; flex: none; }
-#continuous-workbench .ov-history button { min-height: 30px; padding: 3px 9px; font-size: 12px; white-space: nowrap; }
-#continuous-workbench .ov-search { flex: 1; min-width: 120px; position: relative; }
-#continuous-workbench .ov-search::before { content: ''; position: absolute; top: 11px; left: 13px; width: 10px; height: 10px; border: 1.5px solid var(--ov-muted); border-radius: 50%; pointer-events: none; }
-#continuous-workbench .ov-search::after { content: ''; position: absolute; top: 22px; left: 23px; width: 5px; border-top: 1.5px solid var(--ov-muted); transform: rotate(45deg); pointer-events: none; }
-#continuous-workbench .ov-search input { width: 100%; min-height: 36px; padding: 6px 10px 6px 34px; background: var(--ov-sheet); border: 1px solid var(--ov-line); border-radius: 0; font-size: 13px; color: inherit; }
-#continuous-workbench .ov-toolbar label { display: flex; align-items: center; gap: 7px; border: 1px solid var(--ov-line); padding: 0 10px; font-size: 12px; white-space: nowrap; cursor: pointer; }
-#continuous-workbench .ov-toolbar input[type=checkbox] { width: 14px; height: 14px; margin: 0; accent-color: #262c26; }
-#continuous-workbench .ov-hint { margin: 0; padding: 0 var(--ov-gutter) 11px; background: var(--ov-sheet); border-bottom: 1px solid var(--ov-line); color: var(--ov-muted); font-size: 11px; }
-#continuous-workbench .ov-hint kbd { font: 500 11px/1.3 var(--ov-numbers); }
-#continuous-workbench .ov-hint, #continuous-workbench .ov-notice { margin: 0 0 6px; font-size: 11px; }
-#continuous-workbench .ov-config { min-width: 790px; margin-bottom: 15px; border: 1px solid var(--ov-line); background: var(--ov-sheet); }
-#continuous-workbench .ov-config[data-active] { box-shadow: 0 0 0 2px var(--ov-ink); }
-#continuous-workbench .ov-table { width: 100%; table-layout: fixed; border-collapse: collapse; font: inherit; }
-#continuous-workbench .ov-unit { width: clamp(64px,4vw,77px); }
-#continuous-workbench .ov-good { width: clamp(62px,3.7vw,71px); }
-#continuous-workbench .ov-stock { width: clamp(53px,3.2vw,62px); }
-#continuous-workbench .ov-qty { width: clamp(51px,3vw,58px); }
-#continuous-workbench .ov-slot { width: clamp(77px,5.2vw,86px); }
-#continuous-workbench .ov-actual-col { width: 26%; }
-#continuous-workbench .ov-table :is(td,th) { border-right: 1px solid var(--ov-line); border-bottom: 1px solid var(--ov-line); }
-#continuous-workbench .ov-sum { text-align: center; font-weight: 750; border-color: #fff7; white-space: nowrap; }
-#continuous-workbench .ov-sum-labels .ov-sum { height: 29px; padding: 4px 2px 0; font-size: 11px; }
-#continuous-workbench .ov-sum-values .ov-sum { height: 37px; padding: 1px 2px 5px; font: 700 16px/1.2 var(--ov-numbers); }
-#continuous-workbench .ov-sum.ov-cost { background: #d3e8c4; color: #ac261d; }
-#continuous-workbench .ov-sum.ov-fee { background: #d6a722; color: #2d2406; }
-#continuous-workbench .ov-sum.ov-profit { background: #181a19; color: #f3f134; }
-#continuous-workbench .ov-sum.ov-profit.ov-loss { color: #ff8a8a; }
-#continuous-workbench .ov-sum.ov-price { background: #f3f134; color: #bc191f; }
-#continuous-workbench .ov-sum-values .ov-price { font-size: 19px; }
-#continuous-workbench .ov-dark { background: #181a18; color: #fff; padding: 0; text-align: left; }
-#continuous-workbench .ov-title-bar { display: flex; min-height: 66px; align-items: stretch; }
-#continuous-workbench .ov-title-bar h2 { align-self: center; flex: 1; margin: 0; padding: 4px 8px; text-align: center; color: #fff; font: 700 14px/1.25 'Microsoft YaHei UI','Segoe UI',sans-serif; overflow-wrap: anywhere; }
+:is(#continuous-workbench,[data-pp-card]) .ov-history { display: flex; flex: none; }
+:is(#continuous-workbench,[data-pp-card]) .ov-history button { min-height: 30px; padding: 3px 9px; font-size: 12px; white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-search { flex: 1; min-width: 120px; position: relative; }
+:is(#continuous-workbench,[data-pp-card]) .ov-search::before { content: ''; position: absolute; top: 11px; left: 13px; width: 10px; height: 10px; border: 1.5px solid var(--ov-muted); border-radius: 50%; pointer-events: none; }
+:is(#continuous-workbench,[data-pp-card]) .ov-search::after { content: ''; position: absolute; top: 22px; left: 23px; width: 5px; border-top: 1.5px solid var(--ov-muted); transform: rotate(45deg); pointer-events: none; }
+:is(#continuous-workbench,[data-pp-card]) .ov-search input { width: 100%; min-height: 36px; padding: 6px 10px 6px 34px; background: var(--ov-sheet); border: 1px solid var(--ov-line); border-radius: 0; font-size: 13px; color: inherit; }
+:is(#continuous-workbench,[data-pp-card]) .ov-toolbar label { display: flex; align-items: center; gap: 7px; border: 1px solid var(--ov-line); padding: 0 10px; font-size: 12px; white-space: nowrap; cursor: pointer; }
+:is(#continuous-workbench,[data-pp-card]) .ov-toolbar input[type=checkbox] { width: 14px; height: 14px; margin: 0; accent-color: #262c26; }
+:is(#continuous-workbench,[data-pp-card]) .ov-hint { margin: 0; padding: 0 var(--ov-gutter) 11px; background: var(--ov-sheet); border-bottom: 1px solid var(--ov-line); color: var(--ov-muted); font-size: 11px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-hint kbd { font: 500 11px/1.3 var(--ov-numbers); }
+:is(#continuous-workbench,[data-pp-card]) .ov-hint, :is(#continuous-workbench,[data-pp-card]) .ov-notice { margin: 0 0 6px; font-size: 11px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-config { min-width: 790px; margin-bottom: 15px; border: 1px solid var(--ov-line); background: var(--ov-sheet); }
+:is(#continuous-workbench,[data-pp-card]) .ov-config[data-active] { box-shadow: 0 0 0 2px var(--ov-ink); }
+:is(#continuous-workbench,[data-pp-card]) .ov-table { width: 100%; table-layout: fixed; border-collapse: collapse; font: inherit; }
+:is(#continuous-workbench,[data-pp-card]) .ov-unit { width: clamp(64px,4vw,77px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-good { width: clamp(62px,3.7vw,71px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-stock { width: clamp(53px,3.2vw,62px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-qty { width: clamp(51px,3vw,58px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-slot { width: clamp(77px,5.2vw,86px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-actual-col { width: 26%; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table :is(td,th) { border-right: 1px solid var(--ov-line); border-bottom: 1px solid var(--ov-line); }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum { text-align: center; font-weight: 750; border-color: #fff7; white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-labels .ov-sum { height: 29px; padding: 4px 2px 0; font-size: 11px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values .ov-sum { height: 37px; padding: 1px 2px 5px; font: 700 16px/1.2 var(--ov-numbers); }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-cost { background: #d3e8c4; color: #ac261d; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-fee { background: #d6a722; color: #2d2406; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-profit { background: #181a19; color: #f3f134; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-profit.ov-loss { color: #ff8a8a; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-price { background: #f3f134; color: #bc191f; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values .ov-price { font-size: 19px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-dark { background: #181a18; color: #fff; padding: 0; text-align: left; }
+:is(#continuous-workbench,[data-pp-card]) .ov-title-bar { display: flex; min-height: 66px; align-items: stretch; }
+:is(#continuous-workbench,[data-pp-card]) .ov-title-bar h2 { align-self: center; flex: 1; margin: 0; padding: 4px 8px; text-align: center; color: #fff; font: 700 14px/1.25 'Microsoft YaHei UI','Segoe UI',sans-serif; overflow-wrap: anywhere; }
 /* 配置名称与版本固定使用黄色，同一规则覆盖桌面和窄屏表头。 */
-#continuous-workbench .ov-config-badge { flex: 0 0 115px; font-size: 14px; display: grid; place-content: center; gap: 2px; padding: 4px; color: #181a18; background: #f3f134; text-align: center; }
-#continuous-workbench th.ov-title { height: 1px; }
-#continuous-workbench .ov-title-bar { height: 100%; }
-#continuous-workbench .ov-line-total { display:block; font-size:15px; font-weight:750; }
+:is(#continuous-workbench,[data-pp-card]) .ov-config-badge { flex: 0 0 115px; font-size: 14px; display: grid; place-content: center; gap: 2px; padding: 4px; color: #181a18; background: #f3f134; text-align: center; }
+:is(#continuous-workbench,[data-pp-card]) th.ov-title { height: 1px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-title-bar { height: 100%; }
+:is(#continuous-workbench,[data-pp-card]) .ov-line-total { display:block; font-size:15px; font-weight:750; }
 /* 两列的单价和乘数采用同样的行高、字距和居中方式。 */
-#continuous-workbench .ov-line-calc { display:flex; justify-content:center; align-items:center; gap:.5ch; min-height:18px; line-height:18px; font-size:11px; color:#785030; white-space:nowrap; }
-#continuous-workbench .ov-line-calc > :first-child { padding-inline:2px; }
-html.dark #continuous-workbench .ov-line-calc { color:#e1bd95; }
-#continuous-workbench .ov-config-badge label { display: flex; justify-content: center; align-items: center; gap: 3px; }
-#continuous-workbench .ov-config-badge select { min-width: 0; max-width: 100%; color: inherit; background: transparent; padding: 0 2px; min-height: 16px; font-size: 12px; }
-#continuous-workbench .ov-controls { padding: 4px 6px; color: #e6eae4; font-size: 11px; }
-#continuous-workbench .ov-controls > div { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-#continuous-workbench .ov-controls label { white-space: nowrap; }
-#continuous-workbench .ov-controls small { display: block; padding-top: 2px; color: #ffdf8a; }
-#continuous-workbench .ov-controls button { background: #282e28; color: #fff; border: 1px solid #888f87; font-size: 10px; padding: 2px 5px; white-space: nowrap; }
-#continuous-workbench .ov-controls button:disabled { opacity: .46; }
-#continuous-workbench .ov-rate { width: 42px; padding: 2px; text-align: center; color: #171a17; background: #fff; font: 750 12px/1.25 'Cascadia Mono',Consolas,monospace; }
-#continuous-workbench .ov-columns th { padding: 5px 7px; color: var(--ov-muted); background: var(--ov-columns); text-align: center; font-size: 11px; font-weight: 650; }
-#continuous-workbench .ov-columns .ov-name-column { text-align: left; }
-#continuous-workbench .ov-columns .ov-display-head { background: var(--ov-display); padding-inline: 11px; }
-#continuous-workbench .ov-table tbody :is(td,th) { padding: 6px 7px; vertical-align: middle; }
-#continuous-workbench .ov-table tbody th { text-align: center; white-space: nowrap; }
-#continuous-workbench .ov-table tbody th button { border: 0; background: transparent; font-size: 16px; font-weight: 750; padding: 0; }
-#continuous-workbench .ov-table tbody th button[aria-pressed=true] { background: #e7ecd6; color: #181a18; }
-#continuous-workbench .ov-table .ov-divider :is(td,th) { border-top: 2px solid #181a18; }
-#continuous-workbench .ov-number { text-align: center; font: 550 14.5px/1.35 var(--ov-numbers); white-space: nowrap; }
-#continuous-workbench .ov-number.ov-stock-out { color: #a32426; font-weight: 750; }
-#continuous-workbench .ov-tax.ov-tax-changed { background: #fff27a; color: #211d00; font-weight: 800; }
-#continuous-workbench .ov-number[data-metric=GoodID] { overflow-wrap: anywhere; white-space: normal; }
-#continuous-workbench :is(.ov-price,.ov-tax,.ov-quantity,.ov-display-name,.ov-addon) input,
-#continuous-workbench :is(.ov-display-name,.ov-addon) input { min-width: 0; width: 100%; border: 0; padding: 0 2px; background: transparent; color: inherit; font: inherit; }
-#continuous-workbench :is(.ov-price,.ov-tax,.ov-quantity) input { text-align: center; }
-#continuous-workbench .ov-table .ov-sum input { min-height: 20px; }
-#continuous-workbench .ov-table input:focus { outline: 1px solid #747b42; outline-offset: 1px; }
-#continuous-workbench .ov-table [data-ov-selected] { box-shadow: inset 0 0 0 2px #8a995e; background: #eff2de; color: #171a17; }
-#continuous-workbench .ov-part-picker { color: inherit; font-weight: 650; min-height: 26px; padding-block: 2px; }
-#continuous-workbench .ov-actual-name { color: var(--ov-ink); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
-#continuous-workbench .ov-table .ov-display { padding-inline: 11px; vertical-align: top; }
-#continuous-workbench :is(.ov-display-line,.ov-addon-line) { display: flex; justify-content: space-between; gap: 7px; align-items: start; }
-#continuous-workbench .ov-display-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 680; }
+:is(#continuous-workbench,[data-pp-card]) .ov-line-calc { display:flex; justify-content:center; align-items:center; gap:.5ch; min-height:18px; line-height:18px; font-size:11px; color:#785030; white-space:nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-line-calc > :first-child { padding-inline:2px; }
+html.dark :is(#continuous-workbench,[data-pp-card]) .ov-line-calc { color:#e1bd95; }
+:is(#continuous-workbench,[data-pp-card]) .ov-config-badge label { display: flex; justify-content: center; align-items: center; gap: 3px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-config-badge select { min-width: 0; max-width: 100%; color: inherit; background: transparent; padding: 0 2px; min-height: 16px; font-size: 12px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-controls { padding: 4px 6px; color: #e6eae4; font-size: 11px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-controls > div { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-controls label { white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-controls small { display: block; padding-top: 2px; color: #ffdf8a; }
+:is(#continuous-workbench,[data-pp-card]) .ov-controls button { background: #282e28; color: #fff; border: 1px solid #888f87; font-size: 10px; padding: 2px 5px; white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-controls button:disabled { opacity: .46; }
+:is(#continuous-workbench,[data-pp-card]) .ov-rate { width: 42px; padding: 2px; text-align: center; color: #171a17; background: #fff; font: 750 12px/1.25 'Cascadia Mono',Consolas,monospace; }
+:is(#continuous-workbench,[data-pp-card]) .ov-columns th { padding: 5px 7px; color: var(--ov-muted); background: var(--ov-columns); text-align: center; font-size: 11px; font-weight: 650; }
+:is(#continuous-workbench,[data-pp-card]) .ov-columns .ov-name-column { text-align: left; }
+:is(#continuous-workbench,[data-pp-card]) .ov-columns .ov-display-head { background: var(--ov-display); padding-inline: 11px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table tbody :is(td,th) { padding: 6px 7px; vertical-align: middle; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table tbody th { text-align: center; white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table tbody th button { border: 0; background: transparent; font-size: 16px; font-weight: 750; padding: 0; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table tbody th button[aria-pressed=true] { background: #e7ecd6; color: #181a18; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-divider :is(td,th) { border-top: 2px solid #181a18; }
+:is(#continuous-workbench,[data-pp-card]) .ov-number { text-align: center; font: 550 14.5px/1.35 var(--ov-numbers); white-space: nowrap; }
+/* 总表与展开卡片共用窄库存列，待入量换行以免遮挡相邻单价。 */
+:is(#continuous-workbench,[data-pp-card]) .ov-stock-incoming { display:block; white-space:normal; overflow-wrap:anywhere; font:500 10px/1.3 var(--ov-numbers); color:#825400; }
+html.dark :is(#continuous-workbench,[data-pp-card]) .ov-stock-incoming { color:#ffdd89; }
+:is(#continuous-workbench,[data-pp-card]) .ov-number.ov-stock-out { color: #a32426; font-weight: 750; }
+:is(#continuous-workbench,[data-pp-card]) .ov-tax.ov-tax-changed { background: #fff27a; color: #211d00; font-weight: 800; }
+:is(#continuous-workbench,[data-pp-card]) .ov-number[data-metric=GoodID] { overflow-wrap: anywhere; white-space: normal; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-price,.ov-tax,.ov-quantity,.ov-display-name,.ov-addon) input,
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-display-name,.ov-addon) input { min-width: 0; width: 100%; border: 0; padding: 0 2px; background: transparent; color: inherit; font: inherit; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-price,.ov-tax,.ov-quantity) input { text-align: center; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-sum input { min-height: 20px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table input:focus { outline: 1px solid #747b42; outline-offset: 1px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-ov-selected] { box-shadow: inset 0 0 0 2px #8a995e; background: #eff2de; color: #171a17; }
+:is(#continuous-workbench,[data-pp-card]) .ov-part-picker { color: inherit; font-weight: 650; min-height: 26px; padding-block: 2px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-actual-name { color: var(--ov-ink); font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-display { padding-inline: 11px; vertical-align: top; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-display-line,.ov-addon-line) { display: flex; justify-content: space-between; gap: 7px; align-items: start; }
+:is(#continuous-workbench,[data-pp-card]) .ov-display-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 680; }
 /* 名称和数量共用行内排版，长名称换行后数量接在末尾。 */
-#continuous-workbench .ov-display-name .ov-editable { display: inline; text-decoration: underline dotted; }
-#continuous-workbench .ov-display-name small { display: inline-block; margin-inline-start: 4px; padding: 0 4px; color: #593900; background: #fff0b0; font: 800 14px/1.3 var(--ov-numbers); }
-#continuous-workbench .ov-addon-line { justify-content: flex-end; gap: 5px; margin-top: 4px; }
-#continuous-workbench .ov-addon { flex: 1; min-width: 0; display: flex; background: #fcfbe7; color: #383a26; font-size: 12px; padding: 2px 4px; }
-#continuous-workbench :is(.ov-display-line,.ov-addon-line) > button { flex: none; min-height: 0; border: 0; background: transparent; white-space: nowrap; font-size: 11px; color: var(--ov-muted); padding: 2px 4px; }
-#continuous-workbench .ov-missing { font-size: 11px; opacity: .75; }
-#continuous-workbench .ov-add-row { margin: 4px 7px; font-size: 11px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-display-name .ov-editable { display: inline; text-decoration: underline dotted; }
+:is(#continuous-workbench,[data-pp-card]) .ov-display-name small { display: inline-block; margin-inline-start: 4px; padding: 0 4px; color: #593900; background: #fff0b0; font: 800 14px/1.3 var(--ov-numbers); }
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-line { justify-content: flex-end; gap: 5px; margin-top: 4px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-addon { flex: 1; min-width: 0; display: flex; background: #fcfbe7; color: #383a26; font-size: 12px; padding: 2px 4px; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-display-line,.ov-addon-line) > button { flex: none; min-height: 0; border: 0; background: transparent; white-space: nowrap; font-size: 11px; color: var(--ov-muted); padding: 2px 4px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-missing { font-size: 11px; opacity: .75; }
+:is(#continuous-workbench,[data-pp-card]) .ov-add-row { margin: 4px 7px; font-size: 11px; }
 .overview-manual-tax:not([hidden]) { display: inline-block; margin-left: 6px; background: #fff27a; color: #372900; padding: 1px 4px; font-weight: 750; }
 .ov-manual-tax-tag { display: block; font-size: 11px; color: inherit; }
 .manual-tax-sync-warning { background: #fff8bc; color: #372900; border: 1px solid #d6b944; padding: 8px 12px; margin: 8px 0; }
 html.dark :is(.overview-manual-tax:not([hidden]),.manual-tax-sync-warning) { background: var(--ef-warning-surface, #fff8bc); color: var(--ef-warning-ink, #372900); }
 .overview-tax-count[data-has-difference] { display: inline-block; background: #fff27a; color: #372900; padding: 1px 4px; font-weight: 750; }
-#continuous-workbench .ov-editable { flex: 1; min-width: 0; cursor: text; overflow-wrap: anywhere; white-space: pre-wrap; }
-#continuous-workbench .ov-editable:empty::before { content: attr(data-placeholder); opacity: .6; }
-#continuous-workbench .ov-editable:focus { outline: 1px solid #8e8c43; outline-offset: 1px; text-decoration: none; }
-#continuous-workbench .ov-mobile-head { display: none; }
+:is(#continuous-workbench,[data-pp-card]) .ov-editable { flex: 1; min-width: 0; cursor: text; overflow-wrap: anywhere; white-space: pre-wrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-editable:empty::before { content: attr(data-placeholder); opacity: .6; }
+:is(#continuous-workbench,[data-pp-card]) .ov-editable:focus { outline: 1px solid #8e8c43; outline-offset: 1px; text-decoration: none; }
+:is(#continuous-workbench,[data-pp-card]) .ov-mobile-head { display: none; }
 
 @media (max-width:1360px) {
  body.overview-mode .workspace { grid-template-columns: var(--sidebar-w) minmax(0,1fr); }
  body.overview-mode .workspace > .preview-side:not(.preview-expanded) { position: absolute; inset: 0 0 0 auto; width: min(350px,95%); z-index: 15; }
 }
 @container (max-width:821px) {
- #continuous-workbench .ov-toolbar { flex-wrap: wrap; }
- #continuous-workbench .ov-search { flex-basis: 100%; }
- #continuous-workbench .ov-toolbar label { min-height: 32px; }
- #continuous-workbench .ov-config { min-width: 0; }
- #continuous-workbench .ov-mobile-head { display: block; }
- #continuous-workbench .ov-mobile-head :is(.ov-title-bar,.ov-controls) { background: #181a19; }
- #continuous-workbench .ov-mobile-head .ov-title-bar { min-height: 49px; }
- #continuous-workbench .ov-mobile-sums { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0; }
- #continuous-workbench .ov-mobile-sums > div { padding: 4px; border: 1px solid #fff8; text-align: center; }
- #continuous-workbench .ov-mobile-sums dt { font-size: 10px; }
- #continuous-workbench .ov-mobile-sums dd { margin: 1px 0 0; font: 700 15px/1.25 var(--ov-numbers); }
- #continuous-workbench .ov-table :is(colgroup,thead) { display: none; }
- #continuous-workbench .ov-table, #continuous-workbench .ov-table tbody { display: block; }
- #continuous-workbench .ov-table tbody tr { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); padding: 8px 9px; border-bottom: 1px solid var(--ov-line); }
- #continuous-workbench .ov-table tbody tr.ov-divider { border-top: 2px solid var(--ov-ink); }
- #continuous-workbench .ov-table tbody :is(td,th) { padding: 0; border: 0; }
- #continuous-workbench .ov-table tbody th[scope=row] { grid-area: 1 / 1 / 2 / -1; text-align: left; }
- #continuous-workbench .ov-table tbody th button { font-size: 12px; }
- #continuous-workbench .ov-table tbody .ov-display { grid-area: 2 / 1 / 3 / -1; padding: 2px 0 4px; }
- #continuous-workbench .ov-table tbody .ov-actual { grid-area: 3 / 1 / 4 / -1; margin-bottom: 4px; padding: 2px 4px; }
- #continuous-workbench .ov-number { font-size: 12px; white-space: normal; }
- #continuous-workbench .ov-number::before { content: attr(data-metric); display: block; color: var(--ov-muted); font: 400 10px/1.4 'Microsoft YaHei UI',sans-serif; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-toolbar { flex-wrap: wrap; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-search { flex-basis: 100%; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-toolbar label { min-height: 32px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-config { min-width: 0; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-head { display: block; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-head :is(.ov-title-bar,.ov-controls) { background: #181a19; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-head .ov-title-bar { min-height: 49px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-sums { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); margin: 0; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-sums > div { padding: 4px; border: 1px solid #fff8; text-align: center; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-sums dt { font-size: 10px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-mobile-sums dd { margin: 1px 0 0; font: 700 15px/1.25 var(--ov-numbers); }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table :is(colgroup,thead) { display: none; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table, :is(#continuous-workbench,[data-pp-card]) .ov-table tbody { display: block; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody tr { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); padding: 8px 9px; border-bottom: 1px solid var(--ov-line); }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody tr.ov-divider { border-top: 2px solid var(--ov-ink); }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody :is(td,th) { padding: 0; border: 0; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody th[scope=row] { grid-area: 1 / 1 / 2 / -1; text-align: left; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody th button { font-size: 12px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody .ov-display { grid-area: 2 / 1 / 3 / -1; padding: 2px 0 4px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table tbody .ov-actual { grid-area: 3 / 1 / 4 / -1; margin-bottom: 4px; padding: 2px 4px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-number { font-size: 12px; white-space: normal; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-number::before { content: attr(data-metric); display: block; color: var(--ov-muted); font: 400 10px/1.4 'Microsoft YaHei UI',sans-serif; }
 }
 
 /* 侧边栏：点开链接时是否展开（调试改动 11-19） */
@@ -316,17 +320,17 @@ html.dark :is(.overview-manual-tax:not([hidden]),.manual-tax-sync-warning) { bac
 .sidebar .product-toggle .link-arrow:hover{background:rgba(0,0,0,.08)}
 
 /* 11-19：数字列和金额框随位数自适应宽度，不截断、不折行 */
-#continuous-workbench .ov-table { table-layout: auto; }
-#continuous-workbench :is(.ov-unit,.ov-good,.ov-stock,.ov-qty,.ov-slot) { width: 1%; }
-#continuous-workbench .ov-table :is(.ov-number,.ov-sum) { white-space: nowrap; }
-#continuous-workbench .ov-number[data-metric=GoodID] { overflow-wrap: normal; white-space: nowrap; }
-#continuous-workbench .ov-table tbody .ov-number { padding-inline: 10px; }
-#continuous-workbench :is(.ov-sum-labels,.ov-sum-values) .ov-sum { padding-inline: 8px; }
-#continuous-workbench .ov-table :is(.ov-sum,.ov-tax) input,
-#continuous-workbench .ov-rate { field-sizing: content; width: auto; min-width: 3ch; max-width: none; box-sizing: content-box; padding-inline: 4px; }
-#continuous-workbench .ov-profit-input { border: 0; background: transparent; color: inherit; font: inherit; text-align: center; cursor: text; }
-#continuous-workbench .ov-profit-input:hover { background: rgba(255,255,255,.12); }
-#continuous-workbench .ov-profit-input:focus { background: #fff; color: #181a19; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table { table-layout: auto; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-unit,.ov-good,.ov-stock,.ov-qty,.ov-slot) { width: 1%; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table :is(.ov-number,.ov-sum) { white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-number[data-metric=GoodID] { overflow-wrap: normal; white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table tbody .ov-number { padding-inline: 10px; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-sum-labels,.ov-sum-values) .ov-sum { padding-inline: 8px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table :is(.ov-sum,.ov-tax) input,
+:is(#continuous-workbench,[data-pp-card]) .ov-rate { field-sizing: content; width: auto; min-width: 3ch; max-width: none; box-sizing: content-box; padding-inline: 4px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-profit-input { border: 0; background: transparent; color: inherit; font: inherit; text-align: center; cursor: text; }
+:is(#continuous-workbench,[data-pp-card]) .ov-profit-input:hover { background: rgba(255,255,255,.12); }
+:is(#continuous-workbench,[data-pp-card]) .ov-profit-input:focus { background: #fff; color: #181a19; }
 
 /* 11-19：侧边栏草稿区 / 链接区 */
 .sidebar .list-zone-heading.list-zone-links { margin-top: 10px; }
@@ -391,6 +395,20 @@ html[data-workbench-design] .sidebar #template-section-toggle.list-zone-heading 
 }
 .host-template-scroll tr > :is(th,td):nth-child(-n+2) { text-align: center; white-space: nowrap; }
 .host-template-scroll td:nth-child(3) { min-width: 142px; }
+/* 列宽固定为填满后的比例：空白和填满时各列不再跳动。 */
+.host-template-scroll table { table-layout: fixed; }
+.host-template-scroll col.col-pick, .host-template-scroll col.col-no { width: 42px; }
+.host-template-scroll col.col-actions { width: 124px; }
+.host-template-scroll col.col-short { width: 9%; }
+.host-template-scroll col[data-template-col="CPU"] { width: 11.6%; }
+.host-template-scroll col[data-template-col="显卡"] { width: 9.5%; }
+.host-template-scroll col[data-template-col="主板"] { width: 15.1%; }
+.host-template-scroll col[data-template-col="内存"] { width: 18.7%; }
+.host-template-scroll col[data-template-col="硬盘"] { width: 13.3%; }
+.host-template-scroll col[data-template-col="电源"] { width: 12.3%; }
+.host-template-scroll td:nth-child(3) strong { overflow-wrap: anywhere; }
+.host-template-scroll .host-template-part-line > :not(button) { flex: none; }
+.host-template-scroll .host-template-part-line > button { flex: 0 1 auto; min-width: 0; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: left; }
 .host-template-scroll td small { display: block; margin-top: 2px; color: var(--ef-muted, #4d514a); font-size: 11px; }
 .host-template-scroll td small { overflow-wrap:anywhere; }
 .host-template-scroll td .host-template-warning { color:#ba2621; }
@@ -453,48 +471,48 @@ html.dark :is(.ov-erp-issue,.ov-erp-tag) { color:#ffaaa0; }
 .ov-erp-candidate { border-inline-start:3px solid #386baf; }
 
 /* 11-19：配置下方工具条、到手价 ±100 与取 99 */
-#continuous-workbench .ov-row-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; }
-#continuous-workbench .ov-row-tools .ov-add-row { margin: 0 !important; }
-#continuous-workbench .ov-row-tools-gap { flex: 1; }
-#continuous-workbench .ov-price-box { display: inline-flex; align-items: center; gap: 4px; }
-#continuous-workbench .ov-price-step { display: inline-flex; flex-direction: column; gap: 1px; }
-#continuous-workbench .ov-price-step button { width: 18px; height: 15px; padding: 0; border: 1px solid rgba(188,25,31,.45); background: rgba(255,255,255,.55); color: #bc191f; font-size: 8px; line-height: 1; cursor: pointer; }
-#continuous-workbench .ov-price-step button:hover { background: #fff; }
-#continuous-workbench .ov-price99 { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
-#continuous-workbench .ov-price99 input { width: 12px; height: 12px; margin: 0; accent-color: #bc191f; }
-#continuous-workbench .ov-price-step button { width: 22px; height: 17px; font-size: 10px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-row-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-row-tools .ov-add-row { margin: 0 !important; }
+:is(#continuous-workbench,[data-pp-card]) .ov-row-tools-gap { flex: 1; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price-box { display: inline-flex; align-items: center; gap: 4px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price-step { display: inline-flex; flex-direction: column; gap: 1px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price-step button { width: 18px; height: 15px; padding: 0; border: 1px solid rgba(188,25,31,.45); background: rgba(255,255,255,.55); color: #bc191f; font-size: 8px; line-height: 1; cursor: pointer; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price-step button:hover { background: #fff; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price99 { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; font-size: 11px; font-weight: 700; cursor: pointer; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price99 input { width: 12px; height: 12px; margin: 0; accent-color: #bc191f; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price-step button { width: 22px; height: 17px; font-size: 10px; }
 
-#continuous-workbench .ov-row-tools .ov-delete-config { color: #a1282c !important; border-color: #e3b8b9 !important; }
-#continuous-workbench .ov-row-tools .ov-delete-config:hover { background: #fbeaea !important; }
+:is(#continuous-workbench,[data-pp-card]) .ov-row-tools .ov-delete-config { color: #a1282c !important; border-color: #e3b8b9 !important; }
+:is(#continuous-workbench,[data-pp-card]) .ov-row-tools .ov-delete-config:hover { background: #fbeaea !important; }
 
 /* 11-19：表头合计列的默认宽度——总价 / 核算成本按 5 位数，利润按 4 位数，到手价按 5 位数；开分期、取 99 时宽度不变 */
-#continuous-workbench .ov-sum-values td.ov-cost,
-#continuous-workbench .ov-sum-values td.ov-fee { width: calc(6ch + 16px); min-width: calc(6ch + 16px); }
-#continuous-workbench .ov-sum-values td.ov-profit { width: calc(5ch + 16px); min-width: calc(5ch + 16px); }
-#continuous-workbench .ov-sum-values td.ov-price { width: calc(6ch + 46px); min-width: calc(6ch + 46px); }
-#continuous-workbench .ov-sum-labels th.ov-price { white-space: nowrap; }
-#continuous-workbench .ov-price-tags { margin-left: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values td.ov-cost,
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values td.ov-fee { width: calc(6ch + 16px); min-width: calc(6ch + 16px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values td.ov-profit { width: calc(5ch + 16px); min-width: calc(5ch + 16px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values td.ov-price { width: calc(6ch + 46px); min-width: calc(6ch + 46px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-labels th.ov-price { white-space: nowrap; }
+:is(#continuous-workbench,[data-pp-card]) .ov-price-tags { margin-left: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0; }
 
 /* 11-19：输入框宽度固定为格子宽度，打字时不再来回弹；数字超出时才变宽 */
-#continuous-workbench .ov-table :is(.ov-sum,.ov-tax) input,
-#continuous-workbench .ov-table .ov-profit-input { min-width: 100%; box-sizing: border-box; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table :is(.ov-sum,.ov-tax) input,
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-profit-input { min-width: 100%; box-sizing: border-box; }
 /* 小计下方给乘数留空间，单价输入框只占自己的数字宽度。 */
-#continuous-workbench .ov-table .ov-line-calc .ov-tax-input {
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-line-calc .ov-tax-input {
  display:block; field-sizing:content; width:auto; min-width:1ch; height:18px; min-height:18px; padding:0; font:inherit; color:inherit;
 }
 /* 数字统一等宽，切换字体后也不跳 */
-#continuous-workbench :is(.ov-table, .ov-sum) { font-variant-numeric: tabular-nums; }
-html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-variant-numeric: tabular-nums; }
+:is(#continuous-workbench,[data-pp-card]) :is(.ov-table, .ov-sum) { font-variant-numeric: tabular-nums; }
+html.ui-font-system :is(#continuous-workbench,[data-pp-card]) :is(.ov-number,.ov-sum,input) { font-variant-numeric: tabular-nums; }
 /* 顶栏字体选择 */
 .topbar .ui-font-choice { display: inline-flex; align-items: center; gap: 6px; margin-right: 10px; color: #d9ddd8; font-size: 12px; white-space: nowrap; }
 .topbar .ui-font-choice select { height: 28px; padding: 0 6px; border: 1px solid #555b55; background: #262a26; color: #fff; font: inherit; }
 /* 到手价框在弹性容器里，百分比最小宽度不生效，改用位数：到手价 6 位、利润 6 位（含负号）都不弹 */
-#continuous-workbench .ov-table .ov-price-box input { min-width: 6.3ch; }
-#continuous-workbench .ov-table .ov-profit-input { min-width: 6.3ch; }
-#continuous-workbench .ov-table .ov-profit-input { min-width: max(100%, 6.3ch); }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-price-box input { min-width: 6.3ch; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-profit-input { min-width: 6.3ch; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-profit-input { min-width: max(100%, 6.3ch); }
 /* 利润框：直接铺满格子，不随打字伸缩（格子按 4 位数 + 负号留宽） */
-#continuous-workbench .ov-table .ov-profit-input { field-sizing: fixed; width: 100%; min-width: 0; padding-inline: 0; }
-#continuous-workbench .ov-sum-values td.ov-profit { width: calc(6ch + 16px); min-width: calc(6ch + 16px); }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-profit-input { field-sizing: fixed; width: 100%; min-width: 0; padding-inline: 0; }
+:is(#continuous-workbench,[data-pp-card]) .ov-sum-values td.ov-profit { width: calc(6ch + 16px); min-width: calc(6ch + 16px); }
 
 /* 11-19：批量按利润定价对话框 */
 .bpp-form { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px 16px; margin: 8px 0; }
@@ -513,18 +531,18 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
 #dialog .bpp-form fieldset label input { flex: none; margin: 0 !important; width: 14px; height: 14px; }
 
 /* 11-19：WPS 式选区——整块浅绿底色，只画外框；中间「配件」列也一起亮 */
-#continuous-workbench .ov-table [data-ov-selected] { background: #e2efda !important; color: #171a17; box-shadow: var(--sel-t,0 0 #0000), var(--sel-b,0 0 #0000), var(--sel-l,0 0 #0000), var(--sel-r,0 0 #0000) !important; }
-#continuous-workbench .ov-table [data-sel-t] { --sel-t: inset 0 2px 0 #217346; }
-#continuous-workbench .ov-table [data-sel-b] { --sel-b: inset 0 -2px 0 #217346; }
-#continuous-workbench .ov-table [data-sel-l] { --sel-l: inset 2px 0 0 #217346; }
-#continuous-workbench .ov-table [data-sel-r] { --sel-r: inset -2px 0 0 #217346; }
-#continuous-workbench .ov-table [data-sel-anchor] { background: #fff !important; }
-#continuous-workbench .ov-table th[data-ov-selected] button { background: transparent !important; }
-#continuous-workbench .ov-table [data-ov-cell]:focus { outline: none; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-ov-selected] { background: #e2efda !important; color: #171a17; box-shadow: var(--sel-t,0 0 #0000), var(--sel-b,0 0 #0000), var(--sel-l,0 0 #0000), var(--sel-r,0 0 #0000) !important; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-t] { --sel-t: inset 0 2px 0 #217346; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-b] { --sel-b: inset 0 -2px 0 #217346; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-l] { --sel-l: inset 2px 0 0 #217346; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-r] { --sel-r: inset -2px 0 0 #217346; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-anchor] { background: #fff !important; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table th[data-ov-selected] button { background: transparent !important; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table [data-ov-cell]:focus { outline: none; }
 /* 11-19：数量格像 WPS 一样——单击/拖动只选格子，双击、直接打数字、回车或 F2 才进入编辑 */
-#continuous-workbench .ov-table .ov-quantity input { pointer-events: none; cursor: cell; }
-#continuous-workbench .ov-table .ov-quantity input:focus { pointer-events: auto; cursor: text; }
-#continuous-workbench .ov-table .ov-quantity { cursor: cell; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-quantity input { pointer-events: none; cursor: cell; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-quantity input:focus { pointer-events: auto; cursor: text; }
+:is(#continuous-workbench,[data-pp-card]) .ov-table .ov-quantity { cursor: cell; }
 
 /* 11-19：链接箭头统一用 ▸，展开时旋转 90°，带过渡 */
 .sidebar .product-toggle .link-arrow{transition:transform .15s ease}
@@ -551,10 +569,10 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
 .ov-tax-actions{display:flex;gap:4px;justify-content:flex-end;margin-top:3px}
 .ov-tax-actions .ov-tax-global{display:inline-block;margin:0}
 /* 两列垂直居中。含税有操作时，ERP 列预留同样的高度，保持金额两行齐平。 */
-#continuous-workbench .ov-multiple-qty { --ov-tax-actions-height:24px; }
-#continuous-workbench .ov-multiple-qty .ov-tax-actions { block-size:var(--ov-tax-actions-height); align-items:center; justify-content:center; }
-#continuous-workbench .ov-multiple-qty .ov-tax-actions .ov-tax-global { min-height:0; height:100%; padding-block:0; }
-#continuous-workbench .ov-multiple-qty > .ov-number:first-child:has(+ .ov-tax > .ov-tax-actions)::after {
+:is(#continuous-workbench,[data-pp-card]) .ov-multiple-qty { --ov-tax-actions-height:24px; }
+:is(#continuous-workbench,[data-pp-card]) .ov-multiple-qty .ov-tax-actions { block-size:var(--ov-tax-actions-height); align-items:center; justify-content:center; }
+:is(#continuous-workbench,[data-pp-card]) .ov-multiple-qty .ov-tax-actions .ov-tax-global { min-height:0; height:100%; padding-block:0; }
+:is(#continuous-workbench,[data-pp-card]) .ov-multiple-qty > .ov-number:first-child:has(+ .ov-tax > .ov-tax-actions)::after {
  content:""; display:block; block-size:var(--ov-tax-actions-height); margin-top:3px;
 }
 .ov-tax-reset{border-color:#9aa0a6!important;background:#fff!important;color:#444!important}
@@ -566,31 +584,31 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
 .sidebar .config-item.scroll-spy{background:#fff7a8!important;box-shadow:inset 4px 0 0 #181a19!important;transition:background .15s}
 .sidebar .config-item.scroll-spy.active{background:#f3f134!important}
 /* 11-19：加购改成【…】括号形式（同 11-18 设计稿），旁边「本链接 / 全局」 */
-#continuous-workbench .ov-addon.ov-addon-bracket{align-items:baseline;padding:3px 6px 3px 7px;line-height:1.45}
-#continuous-workbench .ov-addon.ov-addon-bracket:hover{background:#f7f3c2}
-#continuous-workbench .ov-bracket{flex:none;color:#8a8320;font-weight:700}
-#continuous-workbench .ov-addon.ov-addon-bracket > :not(.ov-bracket){flex:0 1 auto;min-width:3em}
-#continuous-workbench .ov-addon-apply{flex:none;display:inline-flex;gap:3px;align-self:center}
-#continuous-workbench .ov-addon-apply button{min-height:0;height:18px;padding:0 5px;font-size:11px;line-height:16px;border:1px solid #c9c27a;border-radius:3px;background:#fff;color:#555016;white-space:nowrap;cursor:pointer}
-#continuous-workbench .ov-addon-apply button:hover{background:#f7f3c2}
-#continuous-workbench .ov-addon-apply .ov-addon-apply-all{border-color:#c8a200;background:#fff7cc;color:#6b5400}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon.ov-addon-bracket{align-items:baseline;padding:3px 6px 3px 7px;line-height:1.45}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon.ov-addon-bracket:hover{background:#f7f3c2}
+:is(#continuous-workbench,[data-pp-card]) .ov-bracket{flex:none;color:#8a8320;font-weight:700}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon.ov-addon-bracket > :not(.ov-bracket){flex:0 1 auto;min-width:3em}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-apply{flex:none;display:inline-flex;gap:3px;align-self:center}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button{min-height:0;height:18px;padding:0 5px;font-size:11px;line-height:16px;border:1px solid #c9c27a;border-radius:3px;background:#fff;color:#555016;white-space:nowrap;cursor:pointer}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:hover{background:#f7f3c2}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-apply .ov-addon-apply-all{border-color:#c8a200;background:#fff7cc;color:#6b5400}
 .gup-text{margin:8px 0;padding:4px 8px;background:#fcfbe7;color:#383a26}
 .addon-sync-summary{margin:12px 0;padding:12px;background:var(--ef-chip);color:var(--ef-ink);border:1px solid var(--ef-rule);white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
 .gtax ul s{color:#999}
 /* 本链接/全局 放在加购条下面一行靠右，不挤压加购文字 */
-#continuous-workbench .ov-addon-line{flex-wrap:wrap}
-#continuous-workbench .ov-addon-line > .ov-addon{flex:1 1 calc(100% - 80px)}
-#continuous-workbench .ov-addon-apply{order:9;flex-basis:100%;justify-content:flex-end;margin-top:2px}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-line{flex-wrap:wrap}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-line > .ov-addon{flex:1 1 calc(100% - 80px)}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-apply{order:9;flex-basis:100%;justify-content:flex-end;margin-top:2px}
 /* 11-19 16:51：「本链接 / 全局」挪回加购条同一行（加购条右边、隐藏加购左边），不再单占一行 */
-#continuous-workbench .ov-addon-line{flex-wrap:nowrap;align-items:center}
-#continuous-workbench .ov-addon-line > .ov-addon{flex:1 1 auto}
-#continuous-workbench .ov-addon-apply{order:0;flex:none;flex-basis:auto;margin-top:0;align-self:center}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-line{flex-wrap:nowrap;align-items:center}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-line > .ov-addon{flex:1 1 auto}
+:is(#continuous-workbench,[data-pp-card]) .ov-addon-apply{order:0;flex:none;flex-basis:auto;margin-top:0;align-self:center}
 
 /* 真实长型号在桌面小窗口里保持可读；不足时横向滚动，不把加购文字挤成竖排。 */
 @media (min-width: 761px) {
- #continuous-workbench .ov-table { min-width: 1120px; }
- #continuous-workbench .ov-table td.ov-actual { min-width: 200px; }
- #continuous-workbench .ov-table td.ov-display { min-width: 300px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table { min-width: 1120px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table td.ov-actual { min-width: 200px; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-table td.ov-display { min-width: 300px; }
 }
 
 /* 行内输出源维护沿用完整会话和保存保护，窗口只露出名称、结构化加购及操作。 */
@@ -609,16 +627,16 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
  #dialog.source-quick-dialog textarea#source-name { min-height:76px!important; resize:vertical!important; }
  #dialog.source-quick-dialog .addon-choice { padding:14px!important; margin-block:10px!important; border:1px solid var(--ef-rule)!important; }
  #dialog.source-quick-dialog .inline-grid { gap:12px!important; }
- #continuous-workbench .ov-edit-source { border-color:var(--ov-line)!important; background:var(--ov-sheet)!important; color:var(--ov-ink)!important; }
- #continuous-workbench .ov-addon-apply button:focus-visible { outline:2px solid #b89b20!important; outline-offset:2px!important; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-edit-source { border-color:var(--ov-line)!important; background:var(--ov-sheet)!important; color:var(--ov-ink)!important; }
+ :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:focus-visible { outline:2px solid #b89b20!important; outline-offset:2px!important; }
 
  /* 深色使用暗底与浅色状态字，避免加购条、卡片和输入框出现大块亮白。 */
- html.dark #continuous-workbench .ov-addon { background:#35351f!important; color:#f1e9b1!important; box-shadow:inset 0 0 0 1px #5f5b36!important; }
- html.dark #continuous-workbench .ov-addon:hover { background:#414128!important; }
- html.dark #continuous-workbench .ov-bracket { color:#d1c875!important; }
- html.dark #continuous-workbench .ov-addon-apply button { border-color:#68643b!important; background:#2b302b!important; color:#f5e8a9!important; }
- html.dark #continuous-workbench .ov-addon-apply button:hover { background:#454b2f!important; }
- html.dark #continuous-workbench .ov-addon-apply .ov-addon-apply-all { background:#46401c!important; border-color:#8a7b31!important; color:#ffe997!important; }
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon { background:#35351f!important; color:#f1e9b1!important; box-shadow:inset 0 0 0 1px #5f5b36!important; }
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon:hover { background:#414128!important; }
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-bracket { color:#d1c875!important; }
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button { border-color:#68643b!important; background:#2b302b!important; color:#f5e8a9!important; }
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:hover { background:#454b2f!important; }
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply .ov-addon-apply-all { background:#46401c!important; border-color:#8a7b31!important; color:#ffe997!important; }
  html.dark #dialog.source-dialog :is(.addon-choice,.addon-card) { background:var(--ef-chip)!important; border-color:var(--ef-rule)!important; color:var(--ef-ink)!important; }
  html.dark #dialog.source-dialog :is(input,textarea,select) { background:var(--ef-panel)!important; color:var(--ef-ink)!important; border-color:var(--ef-rule)!important; color-scheme:dark!important; }
  html.dark #dialog.source-dialog :is(input,textarea,select):focus-visible { outline:2px solid var(--ef-signal)!important; outline-offset:2px!important; }
@@ -636,33 +654,33 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
 /* 图底部文字使用原配置字段，编辑区与图片样式独立，避免误改逐项升级和成本。 */
 /* 深色总表不再复用浅绿与亮黄色大色块，与工作台中性灰主题一致。 */
 @layer workbench-interaction {
- html.dark #continuous-workbench .ov-sum:is(.ov-cost,.ov-fee){background:var(--ef-chip)!important;color:var(--ef-ink)!important;}
- html.dark #continuous-workbench .ov-sum.ov-profit{background:var(--ef-panel)!important;color:var(--ef-success-ink)!important;}
- html.dark #continuous-workbench .ov-sum.ov-profit.ov-loss{color:var(--ef-danger)!important;}
- html.dark #continuous-workbench .ov-sum.ov-price{background:var(--ef-chip)!important;color:var(--ef-signal)!important;}
- html.dark #continuous-workbench .ov-dark{background:var(--ef-paper)!important;color:var(--ef-ink)!important;}
- html.dark #continuous-workbench .ov-config-badge{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-left:3px solid var(--ef-signal)!important;}
- html.dark #continuous-workbench .ov-config-badge select{background:var(--ef-panel)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
- html.dark #continuous-workbench .ov-title-bar h2{color:var(--ef-ink)!important;}
- html.dark #continuous-workbench .ov-rate{background:var(--ef-panel)!important;color:var(--ef-ink)!important;border:1px solid var(--ef-rule)!important;}
- html.dark #continuous-workbench .ov-controls button{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
- html.dark #continuous-workbench .ov-config[data-active]{box-shadow:none!important;border-color:#555!important;}
- html.dark #continuous-workbench .ov-table tbody th button[aria-pressed=true]{background:var(--ef-chip)!important;color:var(--ef-signal)!important;}
- html.dark #continuous-workbench .ov-table .ov-divider :is(td,th){border-top-color:var(--ef-rule)!important;}
- html.dark #continuous-workbench .ov-tax.ov-tax-changed{background:var(--ef-warning-surface)!important;color:var(--ef-warning-ink)!important;}
- html.dark #continuous-workbench .ov-number.ov-stock-out{color:var(--ef-danger)!important;}
- html.dark #continuous-workbench .ov-addon{background:var(--ef-chip)!important;color:var(--ef-ink)!important;box-shadow:inset 0 0 0 1px var(--ef-rule)!important;}
- html.dark #continuous-workbench .ov-addon:hover{background:#393939!important;}
- html.dark #continuous-workbench .ov-bracket{color:var(--ef-ink-2)!important;}
- html.dark #continuous-workbench .ov-addon-apply button{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:#555!important;}
- html.dark #continuous-workbench .ov-addon-apply .ov-addon-apply-all{background:var(--ef-chip)!important;color:var(--ef-signal)!important;border-color:#68643b!important;}
- html.dark #continuous-workbench .ov-addon-apply button:hover{background:var(--ef-signal)!important;color:var(--ef-on-signal)!important;}
- html.dark #continuous-workbench .ov-table [data-ov-selected]{background:#3a3a24!important;color:var(--ef-ink)!important;}
- html.dark #continuous-workbench .ov-table [data-sel-anchor]{background:var(--ef-panel)!important;}
- html.dark #continuous-workbench .ov-table [data-sel-t]{--sel-t:inset 0 2px 0 var(--ef-signal);}
- html.dark #continuous-workbench .ov-table [data-sel-b]{--sel-b:inset 0 -2px 0 var(--ef-signal);}
- html.dark #continuous-workbench .ov-table [data-sel-l]{--sel-l:inset 2px 0 0 var(--ef-signal);}
- html.dark #continuous-workbench .ov-table [data-sel-r]{--sel-r:inset -2px 0 0 var(--ef-signal);}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-sum:is(.ov-cost,.ov-fee){background:var(--ef-chip)!important;color:var(--ef-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-profit{background:var(--ef-panel)!important;color:var(--ef-success-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-profit.ov-loss{color:var(--ef-danger)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-sum.ov-price{background:var(--ef-chip)!important;color:var(--ef-signal)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-dark{background:var(--ef-paper)!important;color:var(--ef-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-config-badge{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-left:3px solid var(--ef-signal)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-config-badge select{background:var(--ef-panel)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-title-bar h2{color:var(--ef-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-rate{background:var(--ef-panel)!important;color:var(--ef-ink)!important;border:1px solid var(--ef-rule)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-controls button{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-config[data-active]{box-shadow:none!important;border-color:#555!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table tbody th button[aria-pressed=true]{background:var(--ef-chip)!important;color:var(--ef-signal)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table .ov-divider :is(td,th){border-top-color:var(--ef-rule)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-tax.ov-tax-changed{background:var(--ef-warning-surface)!important;color:var(--ef-warning-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-number.ov-stock-out{color:var(--ef-danger)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon{background:var(--ef-chip)!important;color:var(--ef-ink)!important;box-shadow:inset 0 0 0 1px var(--ef-rule)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon:hover{background:#393939!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-bracket{color:var(--ef-ink-2)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:#555!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply .ov-addon-apply-all{background:var(--ef-chip)!important;color:var(--ef-signal)!important;border-color:#68643b!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:hover{background:var(--ef-signal)!important;color:var(--ef-on-signal)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-ov-selected]{background:#3a3a24!important;color:var(--ef-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-anchor]{background:var(--ef-panel)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-t]{--sel-t:inset 0 2px 0 var(--ef-signal);}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-b]{--sel-b:inset 0 -2px 0 var(--ef-signal);}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-l]{--sel-l:inset 2px 0 0 var(--ef-signal);}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-r]{--sel-r:inset -2px 0 0 var(--ef-signal);}
  html.dark body.overview-mode .sidebar #config-list .product-group.editing-product:not([data-link-colored])>.compact-link-card{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-left:3px solid var(--ef-signal)!important;}
  html.dark body.overview-mode .sidebar #config-list .product-group.editing-product:not([data-link-colored])>.compact-link-card :is(button,span,strong,small){color:var(--ef-ink)!important;}
  html.dark body.overview-mode .sidebar .config-item.scroll-spy{background:var(--ef-chip)!important;box-shadow:inset 3px 0 0 var(--ef-signal)!important;}
@@ -847,8 +865,8 @@ html.ui-font-system #continuous-workbench :is(.ov-number,.ov-sum,input) { font-v
 
 /* 配置工具条使用当前深色主题色，避免通用加号按钮白底配浅字。 */
 @layer workbench-interaction {
- html.dark #continuous-workbench .ov-row-tools button:not(.ov-delete-config){background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
- html.dark #continuous-workbench .ov-row-tools button:not(.ov-delete-config):hover{background:var(--ef-panel)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-row-tools button:not(.ov-delete-config){background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:var(--ef-rule)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-row-tools button:not(.ov-delete-config):hover{background:var(--ef-panel)!important;}
 }
 
 /* 链接加购包复用工作台表格和金额颜色，明细允许横向滚动。 */

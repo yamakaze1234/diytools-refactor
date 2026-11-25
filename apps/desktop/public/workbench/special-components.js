@@ -11,7 +11,7 @@ export const isSpecialComponent=row=>row?.specialComponent===true;
 /** 规范特殊项的固定字段，避免混入普通商品的成本缓存。 */
 export function normalizeSpecialComponent(row){
  if(!isSpecialComponent(row))return row;
- return {...row,goodsId:'',erp:0,tax:0,erpUnknown:false,erpMissing:false,erpName:'',stockAvailable:null,stockUpdatedAt:null,stockSource:null,erpUpdatedAt:null};
+ return {...row,goodsId:'',erp:0,tax:0,erpUnknown:false,erpMissing:false,erpName:'',stockAvailable:null,stockIncomingAvailable:null,stockUpdatedAt:null,stockSource:null,erpUpdatedAt:null};
 }
 // Defaults are virtual until edited, so an empty new workspace can still receive cloud data.
 /** 为店铺候选列表补入可选择的特殊配件。 */

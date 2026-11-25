@@ -15,8 +15,31 @@ export function componentStock(goodsId,costs,threshold=5){
  const validId=typeof goodsId==='string'&&/^[1-9]\d*$/.test(goodsId);
  const known=validId&&row&&!row.erpMissing&&typeof row.stockAvailable==='number'&&Number.isFinite(row.stockAvailable);
  const value=known?row.stockAvailable:null;
- return {goodsId,value,status:value===null?'unknown':value<=0?'out':value<=threshold?'low':'ok',updatedAt:row?.stockUpdatedAt||null,
+ // 两个库存字段分别确认；旧快照没有待入数据时保持未知。
+ const incoming=validId&&row&&!row.erpMissing&&Number.isFinite(row.stockIncomingAvailable)?row.stockIncomingAvailable:null;
+ return {goodsId,value,incoming,status:value===null?'unknown':value<=0?'out':value<=threshold?'low':'ok',updatedAt:row?.stockUpdatedAt||null,
   reason:!validId?'未绑定有效 goodsId':hits.length>1?'库存源 ID 重复':!row?'本机库存源未找到':row.erpMissing?'最近一次 ERP 未匹配':value===null?'库存尚未确认':''};
+}
+/** 同一货号先合并每套用量，再分别按最终可销和待入可销计算能组成的整套数。 */
+export function configurationStock(config,costs){
+ const quantities=new Map();
+ for(const part of actualParts(config)){
+  if(isSpecialComponent(part)||(!part.name&&!part.goodsId))continue;
+  const qty=Number(part.qty);
+  quantities.set(part.goodsId,(quantities.get(part.goodsId)??0)+(Number.isSafeInteger(qty)&&qty>0?qty:NaN));
+ }
+ const components=[...quantities].map(([id,qty])=>({stock:componentStock(id,costs),qty}));
+ const capacity=field=>{
+  let result=null,unknown=false;
+  for(const {stock,qty} of components){
+   if(stock[field]===null||!Number.isSafeInteger(qty)){unknown=true;continue;}
+   const sets=Math.max(0,Math.floor(stock[field]/qty));
+   if(sets===0)return 0;
+   result=result===null?sets:Math.min(result,sets);
+  }
+  return unknown?null:result;
+ };
+ return {stockAvailable:capacity('value'),stockIncomingAvailable:capacity('incoming')};
 }
 /** 在店铺范围内检查配置配件库存，生成供界面筛选的报告。 */
 export function checkInventory(configs,costs,shopId,threshold=5){
@@ -52,7 +75,7 @@ export function stockReplacementPlan(configs,costs,catalog,report,key,productIds
 export function validateStockReplacement(plan,configs,costs,catalog){
  if(plan.taskPlans){for(const taskPlan of plan.taskPlans)validateStockReplacement(taskPlan,configs,costs,catalog);applyReplacement(plan,structuredClone(configs));return;}
  const current=componentStock(plan.issue.goodsId,costs,plan.threshold);
- for(const key of ['value','status','updatedAt','reason'])if(current[key]!==plan.issue[key])throw Error('库存已变化，请重新检查');
+ for(const key of ['value','incoming','status','updatedAt','reason'])if(current[key]!==plan.issue[key])throw Error('库存已变化，请重新检查');
  const row=catalog.find(r=>r.sourceId===plan.replacement.sourceId);if(JSON.stringify(row)!==JSON.stringify(plan.replacement))throw Error('新配件或绑定加购已变化，请重新预览');
  applyReplacement(plan,structuredClone(configs));
 }

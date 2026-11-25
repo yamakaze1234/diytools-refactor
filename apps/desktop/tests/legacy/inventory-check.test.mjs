@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {checkInventory,componentStock,inventoryThreshold,stockReplacementPlan,validateStockReplacement} from '../../public/workbench/inventory-check-data.js';
+import {configurationStock,checkInventory,componentStock,inventoryThreshold,stockReplacementPlan,validateStockReplacement} from '../../public/workbench/inventory-check-data.js';
 import {applyReplacement} from '../../public/workbench/global-batch.js';
 const costs=[{goodsId:'100',stockAvailable:0,stockUpdatedAt:'2026-09-18T10:00:00Z'},{goodsId:'200',stockAvailable:5},{goodsId:'300',stockAvailable:6},{goodsId:'400',stockAvailable:null}];
 const original={sourceId:'old',goodsId:'100',name:'旧 CPU',qty:2,slot:'CPU',posterVisible:false,erp:100,tax:120};
@@ -41,4 +41,26 @@ test('special replacement preserves manual addon and unknown stock cannot be bat
  const plan=stockReplacementPlan(configs,costs,[special],report,'100',['p'],'sp');assert.equal(plan.changes[0].after.parts[0].erp,0);assert.equal(plan.changes[0].after.addons.length,2);
  assert.throws(()=>stockReplacementPlan(configs,[],[replacement],checkInventory(configs,[],'intel'),'100',['p'],'new'),/低库存或无库存/);
  assert.throws(()=>stockReplacementPlan(configs,costs,[replacement],report,'100',[],'new'),/勾选/);
+});
+
+
+// 同一货号在多个槽位共用一份库存，缺失的待入数据也不能算作现货。
+test('整机按合并后的实际用量分别计算最终与待入可销，旧快照保持未知',()=>{
+ const configuration={parts:[],actualParts:[
+  {goodsId:'1',name:'条A',qty:2},{goodsId:'1',name:'条B',qty:1},
+  {goodsId:'2',name:'板',qty:1},{goodsId:'',name:'核显',specialComponent:true,qty:1},
+ ]};
+ const costs=[{goodsId:'1',stockAvailable:-1,stockIncomingAvailable:8},{goodsId:'2',stockAvailable:5,stockIncomingAvailable:5}];
+ assert.deepEqual(configurationStock(configuration,costs),{stockAvailable:0,stockIncomingAvailable:2});
+ assert.equal(componentStock('1',costs).value,-1);
+ let old=structuredClone(costs);delete old[0].stockIncomingAvailable;
+ assert.equal(configurationStock(configuration,old).stockIncomingAvailable,null);
+ old[1].stockIncomingAvailable=-1;
+ assert.equal(configurationStock(configuration,old).stockIncomingAvailable,0);
+});
+test('现货已空的配件在选择器和总表提示有货在途',async()=>{
+ const {componentStockView}=await import('../../public/workbench/component-stock-view.js');
+ const row={goodsId:'21',stockAvailable:0,stockIncomingAvailable:2};
+ assert.match(componentStockView(row,[row]).label,/有货在途.*待入可销 2/);
+ assert.doesNotMatch(componentStockView(row,[{...row,stockIncomingAvailable:null}]).label,/待入可销|在途/);
 });

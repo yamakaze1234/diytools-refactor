@@ -1,11 +1,24 @@
 # 验证未配置、缺适配器、加载失败和可用状态；环境检查不连接 ERP。
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 from main import environment_report
 from session import WorkerError
 
 class EnvironmentTests(unittest.TestCase):
+    def test_versioned_adapter_path_selected_by_native_host(self):
+        from session import local_erp_config
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / 'integrations.json'
+            config.write_text(json.dumps({'version':1,'erp':{'domain':'https://erp.example.test'}}),encoding='utf-8')
+            component = root / 'versions' / 'one'
+            with patch.dict('os.environ',{'DIYTOOLS_INTEGRATIONS':str(config), 'DIYTOOLS_ERP_COMPONENT_DIR':str(component)}):
+                self.assertEqual(local_erp_config()['adapter_path'], component / 'erp-adapter.py')
+
     @patch("main.load_adapter")
     @patch("main.local_erp_config", return_value={})
     def test_missing_configuration(self, config, loader):

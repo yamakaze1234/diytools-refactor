@@ -2,15 +2,28 @@ import {actualParts} from './actual-parts.js';
 import {hasConfigCost,resetConfigCost,setConfigCost} from './config-cost.js';
 import {parseCostPrice} from './cost-paste.js';
 import {chargeCents,moneyCents} from './pricing.js';
+import {isSpecialComponent} from './special-components.js';
 
 export const overviewFeeRate=config=>Number.isFinite(config.overviewFeeRate)&&config.overviewFeeRate>=0&&config.overviewFeeRate<=30?config.overviewFeeRate:4;
+/** 多个费率并存时取众数，票数相同沿用工作表中先出现的值。 */
+export function commonOverviewFeeRate(configs){
+ const counts=new Map();
+ for(const config of configs){
+  const rate=overviewFeeRate(config);
+  counts.set(rate,(counts.get(rate)||0)+1);
+ }
+ let rate=4,most=0;
+ for(const [value,count] of counts)if(count>most){most=count;rate=value;}
+ return {rate,mixed:counts.size>1};
+}
 export function readOverviewFeeRate(value){
  const text=String(value??'').trim(),rate=Number(text);
  if(!/^\d+(?:\.\d{1,4})?$/.test(text)||rate>30)throw Error('运营费率须为 0–30%，最多四位小数');
  return rate;
 }
 
-/** 总表使用确认版核价口径；共享财务模块继续使用其既有店铺定价设置。 */
+/** 全系统唯一利润口径：成本加运营费和100元，ERP固定扣2%，仅核算利润扣分期。 */
+export const PROFIT_FORMULA_VERSION='overview-cost-rate-v1';
 export function overviewTableTotals(config,raw,quote,overrides={}){
  const rate=overrides.rate??overviewFeeRate(config);
  const price=overrides.price===undefined?quote.priceCents:moneyCents(overrides.price);
@@ -26,7 +39,7 @@ export function overviewTableTotals(config,raw,quote,overrides={}){
 
 /** 以精确到分的共用价为基准；旧记录无基准时保留独立核算价提醒。 */
 export function differentTax(part,shared){
- return hasConfigCost(part)&&moneyCents(part.taxOverride.value)!==moneyCents(shared?.tax??part.taxOverride.base);
+ return !isSpecialComponent(part)&&hasConfigCost(part)&&moneyCents(part.taxOverride.value)!==moneyCents(shared?.tax??part.taxOverride.base);
 }
 export function overviewTaxDifferenceCount(configs,costIndex){
  return configs.filter(config=>actualParts(config).some(part=>differentTax(part,costIndex.get(String(part.goodsId??''))))).length;

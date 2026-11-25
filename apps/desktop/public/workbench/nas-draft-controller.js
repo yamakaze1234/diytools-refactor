@@ -1,6 +1,7 @@
 /** NAS 试验入口草稿：按服务和成员隔离，保留服务器版本、提交编号和完整原提交正文。 */
 import {NasApiError,nasOperationsCapability,receiptNotFound,receiptLookupError,originalVersionRejected} from './nas-api-client.js';
 import {effectiveNasAddons} from './addon-data.js';
+import {applyNasRenumber} from './nas-renumber-receipt.js';
 const clone=value=>structuredClone(value);
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const knownRejection=new Set(['VALIDATION_FAILED','VERSION_CONFLICT','DEPENDENCY_CONFLICT','INVALID_DEPENDENCY',
@@ -107,6 +108,17 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   return result;
  }
  // 回收站确认后，仅清本账号、本店且早于归档版本的草稿。保留待查回执及恢复后新建的草稿。
+ function discardLocalDrafts(ids){
+  // 仅供已明确确认放弃草稿的缓存清理使用；先整批检查，未知提交绝不丢弃。
+  if(!owner||working)throw new NasApiError('SAVE_IN_PROGRESS');
+  const targets=[...new Set(ids)].map(id=>({id,key:prefix()+JSON.stringify(id)}));
+  try{
+   const saved=targets.map(row=>({...row,value:JSON.parse(storage.getItem(row.key)||'null')}));
+   if(saved.some(row=>row.value&&(row.value.id!==row.id||row.value.document?.id!==row.id||row.value.document?.shopId!==shopId||row.value.pending)))throw new NasApiError('SAVE_STATUS_UNKNOWN');
+   for(const row of saved)storage.removeItem(row.key);
+   if(ids.includes(configurationId)){record=null;remote=null;}
+  }catch(error){if(error instanceof NasApiError)throw error;throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
+ }
  function discardArchived(id,archivedVersion){
   if(!owner)return;
   const name=prefix()+JSON.stringify(id);
@@ -258,12 +270,17 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   if(!loaded)try{saved=JSON.parse(storage.getItem(name)||'null');}catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
   if(!saved||saved.format!==1||saved.id!==row.configuration_id||saved.document?.id!==saved.id||saved.document.shopId!==shopId||
      saved.pending||saved.version!==row.previous_version||saved.base?.name!==row.before)return false;
-  const next=clone(saved);next.version=row.version;next.base.name=row.name;
-  if(next.document.name===row.before)next.document.name=row.name;
+  // 干净记录的 base 与 document 可能共用同一对象；分别生成基线和可编辑快照。
+  const next={...saved,version:row.version,base:clone(saved.base),document:clone(saved.document)};
+  applyNasRenumber(next.base,row,false);
+  applyNasRenumber(next.document,row);
   // 重开后尚未载入的草稿也接续确认版本，不读取远端来覆盖本机输入。
   persistConfirmedMetadata(name,saved,next);
   if(loaded)record=next;
-  if(loaded&&remote?.version===row.previous_version)remote={...remote,version:row.version,document:{...remote.document,name:row.name}};
+  if(loaded&&remote?.version===row.previous_version){
+   const document=clone(remote.document);applyNasRenumber(document,row,false);
+   remote={...remote,version:row.version,document};
+  }
   return true;
  }
  // 明确同步输出源时只接续本次预览核实的来源依赖；配置版本、其它成本和本机输入保持原样。
@@ -284,5 +301,5 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   // 这里只接续当前窗口的已读基线，不清理其它窗口可能写入的同配置草稿。
   record=next;return true;
  }
- return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,discardArchived,acceptRenumber,acceptSourceVersions,acceptObservedDependencies};
+ return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,discardArchived,discardLocalDrafts,acceptRenumber,acceptSourceVersions,acceptObservedDependencies};
 }

@@ -74,7 +74,9 @@ fn normalized_rows(rows: Value) -> Result<Value> {
             .as_str()
             .filter(|s| !s.trim().is_empty())
             .ok_or("数据库商品身份不完整")?;
-        for key in ["stockAvailable", "erp"] {
+        for key in ["stockAvailable", "stockIncomingAvailable", "erp"] {
+            // 旧 worker 没有待入字段，保留其既有观察。
+            if key == "stockIncomingAvailable" && row.get(key).is_none() { continue; }
             let number = row.get(key).ok_or("数据库缺少库存或成本字段")?;
             if !number.is_null()
                 && !number
@@ -85,7 +87,11 @@ fn normalized_rows(rows: Value) -> Result<Value> {
             }
         }
         // Retain only the normalized business fields, never worker/debug/settings data.
-        result.push(json!({"goodsId":id,"name":name,"stockAvailable":row["stockAvailable"],"erp":row["erp"]}));
+        let mut item = json!({"goodsId":id,"name":name,"stockAvailable":row["stockAvailable"],"erp":row["erp"]});
+        if let Some(incoming) = row.get("stockIncomingAvailable") {
+            item["stockIncomingAvailable"] = incoming.clone();
+        }
+        result.push(item);
     }
     Ok(Value::Array(result))
 }
@@ -201,7 +207,9 @@ fn stock_plan(state: &Value, rows: &Value, at: &str) -> Result<Plan> {
             return;
         };
         matched += 1;
-        if !same_optional(record.get("stockAvailable"), row.get("stockAvailable"))
+        let incoming = row.get("stockIncomingAvailable");
+        let incoming_changed = incoming.is_some_and(|v| !same_value(&record["stockIncomingAvailable"], v));
+        if incoming_changed || !same_optional(record.get("stockAvailable"), row.get("stockAvailable"))
             || !same_optional(record.get("erp"), row.get("erp"))
         {
             let name = record["name"]
@@ -210,11 +218,16 @@ fn stock_plan(state: &Value, rows: &Value, at: &str) -> Result<Plan> {
                 .map(Value::from)
                 .unwrap_or_else(|| row["name"].clone());
             let mut change = json!({"erpBefore":record["erp"],"erpAfter":row["erp"],"area":area,"goodsId":id,"name":name,"before":record["stockAvailable"],"after":row["stockAvailable"]});
+            if incoming_changed {
+                change["incomingBefore"] = record["stockIncomingAvailable"].clone();
+                change["incomingAfter"] = row["stockIncomingAvailable"].clone();
+            }
             if let Some(id) = config_id {
                 change["configId"] = id.into();
             }
             changes.push(change);
         }
+        if let Some(value) = incoming { record["stockIncomingAvailable"] = value.clone(); }
         record["stockAvailable"] = row["stockAvailable"].clone();
         record["stockUpdatedAt"] = at.into();
         record["stockSource"] = "company-sql".into();
@@ -330,8 +343,9 @@ pub fn sql_apply(store: &WorkbenchStore, id: &str) -> Result<Value> {
     summary["updatedAt"] = at.clone().into();
     summary["scope"] = scope.clone().into();
     summary["warehouse"] = "公司大库".into();
-    summary["stockField"] = "分库可销数".into();
-    summary["costField"] = "库存成本".into();
+    summary["stockField"] = "最终可销".into();
+    summary["incomingStockField"] = "待入可销".into();
+    summary["costField"] = "单价成本".into();
     let mut erp_sync = before["erpSync"].as_object().cloned().unwrap_or_default();
     let shared_scope = before["erpSync"]["scope"]
         .as_str()
@@ -343,7 +357,7 @@ pub fn sql_apply(store: &WorkbenchStore, id: &str) -> Result<Value> {
         ("stockSource", json!("company-sql")),
         ("stockUpdatedAt", json!(at)),
         ("updatedAt", json!(at)),
-        ("costField", json!("库存成本")),
+        ("costField", json!("单价成本")),
         ("sqlSync", summary.clone()),
     ] {
         erp_sync.insert(key.into(), value);

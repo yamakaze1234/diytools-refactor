@@ -38,6 +38,13 @@ test('回执写入本地失败保留待查编号，成功恢复后再清',async(
  f.setRemove(key=>f.map.delete(key));
  await a.receipt();assert.equal(a.read().version,'2');assert.equal(a.read().pending,null);
 });
+test('明确放弃缓存清理草稿仅清当前成员，任一未知回执整批阻断',async()=>{
+ const f=fixture(),a=f.create();await a.open('c');a.edit({...doc,name:'A草稿'});
+ f.setUser('B');const b=f.create();await b.open('c');b.edit({...doc,name:'B草稿'});
+ b.discardLocalDrafts(['c']);assert.equal(f.map.size,1);
+ f.setUser('A');f.setSave(()=>{throw new NasApiError('SAVE_STATUS_UNKNOWN');});await assert.rejects(a.save(),{code:'SAVE_STATUS_UNKNOWN'});
+ const before=[...f.map.entries()];assert.throws(()=>a.discardLocalDrafts(['c']),{code:'SAVE_STATUS_UNKNOWN'});assert.deepEqual([...f.map.entries()],before);
+});
 test('错误格式返回不清原编号，归档不掩盖本地草稿',async()=>{
  const f=fixture(),a=f.create();await a.open('c');a.edit({...doc,name:'待提交'});
  await assert.rejects(a.save('archive'),{code:'UNSAVED_DRAFT'});assert.equal(f.calls.length,0);

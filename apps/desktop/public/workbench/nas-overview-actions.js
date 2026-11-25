@@ -113,7 +113,7 @@ export function createNasOverviewActions(api){
   if(!restore&&(!Number.isFinite(value)||value<0))throw Error('核算价须为有效的非负金额');
   const versions=Object.fromEntries(records.map(s=>[s.shop,s.catalog.costVersions[goodsId]??null]));
   const impact=records.map(s=>`<li><b>${names[s.shop]}</b>：${counts(s.documents.map(r=>r.document))}；¥${fmt(s.cost?.tax)} → ¥${fmt(restore?s.cost?.globalTax?.base??s.cost?.tax:value)}</li>`).join('');
-  api.openDialog(restore?'全局恢复成本表价格':'应用到全局核算价',`<div class="gtax"><p><strong>${api.esc(name)}</strong><br>GoodID ${api.esc(goodsId)}</p><p>三店共用核算价。不同的配置独立核算价保留，与目标价相同的独立价取消。</p><ul>${impact}</ul><div class="actions"><button id="gtax-cancel">取消</button><button id="gtax-apply" class="primary">${restore?'全局恢复':'应用到全局'}</button></div></div>`);
+  api.openDialog(restore?'全局恢复成本表价格':'应用到全局核算价',`<div class="gtax"><p><strong>${api.esc(name)}</strong><br>GoodID ${api.esc(goodsId)}</p><p>${restore?'恢复三店全局改价前的原核算价与同步状态。':'三店共用核算价，同步成本表时按手动核算价保留。'}不同的配置独立核算价保留，与目标价相同的独立价取消。</p><ul>${impact}</ul><div class="actions"><button id="gtax-cancel">取消</button><button id="gtax-apply" class="primary">${restore?'全局恢复':'应用到全局'}</button></div></div>`);
   document.querySelector('#gtax-cancel').onclick=api.closeDialog;
   document.querySelector('#gtax-apply').onclick=async event=>{
    const button=event.currentTarget;button.disabled=true;

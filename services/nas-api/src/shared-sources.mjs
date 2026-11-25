@@ -20,10 +20,11 @@ export function validateErpAdoption(id,document){
  const row=document.erpAdoption;
  const name=text=>typeof text==='string'&&text===text.trim()&&text.length>0&&text.length<=512&&!excludedComponent({name:text});
  valid(sourceGoodsId(id)&&document.id===id&&Object.keys(document).every(k=>['id','name','erpAdoption'].includes(k))&&name(document.name),'document');
- valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','sku','tableTax'].includes(k))&&name(row.name)&&
+ valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','stockIncomingAvailable','sku','tableTax'].includes(k))&&name(row.name)&&
   (row.erp===null||Number.isFinite(row.erp)&&row.erp>=0&&row.erp<=100000000)&&
   (!Object.hasOwn(row,'tableTax')||Number.isFinite(row.tableTax)&&row.tableTax>=0&&row.tableTax<=100000000)&&
   (row.stockAvailable===null||Number.isFinite(row.stockAvailable)&&Math.abs(row.stockAvailable)<=Number.MAX_SAFE_INTEGER)&&
+  (!Object.hasOwn(row,'stockIncomingAvailable')||row.stockIncomingAvailable===null||Number.isFinite(row.stockIncomingAvailable)&&Math.abs(row.stockIncomingAvailable)<=Number.MAX_SAFE_INTEGER)&&
   typeof row.sku==='string'&&row.sku.length<=512,'document.erpAdoption');
 }
 

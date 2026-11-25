@@ -33,8 +33,8 @@ function* editingStateWork(base,local,remote,{ownLocalRows=false}={}){
  const merge=(b,l,r)=>{
   // Materialization fills unknown stock on new part rows. Missing and null
   // mean the same thing; neither is a concurrent edit during first save.
-  if([b,l,r].every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&'goodsId' in v)&&[b,l,r].some(v=>'stockAvailable' in v)){
-   [b,l,r]=[b,l,r].map(v=>({...v,stockAvailable:v.stockAvailable??null}));
+  if([b,l,r].every(v=>v&&typeof v==='object'&&!Array.isArray(v)&&'goodsId' in v)&&[b,l,r].some(v=>'stockAvailable' in v||'stockIncomingAvailable' in v)){
+   [b,l,r]=[b,l,r].map(v=>({...v,stockAvailable:v.stockAvailable??null,stockIncomingAvailable:v.stockIncomingAvailable??null}));
   }
   if(same(l,b))return clone(r);if(same(r,b)||same(l,r))return clone(l);
   if(b&&l&&r&&typeof b==='object'&&typeof l==='object'&&typeof r==='object'&&!Array.isArray(l)&&!Array.isArray(r)){

@@ -35,7 +35,8 @@ test('回执丢失后先重放 A，再以新 operationId 保存期间输入的 B
  };
  context.acceptSavedState=(snapshot,remote)=>{context.acceptedState=structuredClone(remote);};
  context.pollDerivedStatus=()=>Promise.resolve();context.scheduleImageSave=()=>{};context.toast=()=>{};
- Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+saveCode+'\nglobalThis.runSave=save;',context);
+ const markersCode=acceptCode.slice(acceptCode.indexOf('function refreshPriceSaveMarkers(){'));
+ Object.assign(context,scopeHelpers);if(!('acceptedState' in context))context.acceptedState=null;vm.runInNewContext('var nasMain=false;\n'+markersCode+saveCode+'\nglobalThis.runSave=save;',context);
  context.state.configs[0].price=11;
  await assert.rejects(context.runSave(),/响应中断/);
  context.state.configs[0].price=12;

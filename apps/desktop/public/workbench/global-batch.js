@@ -9,6 +9,9 @@ import {actualParts} from './actual-parts.js';
 import {replaceBothParts} from './replace-both-parts.js';
 import {mergeTaskPlans,mountBatchTasks} from './batch-task-plans.js';
 import {startImageExportTask} from './image-export-tasks.js';
+import {nasErrorText} from './nas-main-workspace.js';
+// 所有批量弹窗统一使用中文 NAS 文案，旧异常的 message 也兼容。
+const batchError=(api,error)=>api.errorText?.(error)||nasErrorText(error,api.getConfigs?.()??[]);
 
 const key=p=>String(p.goodsId||'').trim()&&String(p.goodsId)!=='0'?`id:${p.goodsId}`:`name:${p.name}`;
 /** 汇总配件在配置中的使用情况，供批量操作选择范围。 */
@@ -201,20 +204,20 @@ export function openUpgradeDescriptionBatch(api){
   $('#upgrade-batch-apply').disabled=!plan.changes.length;
   const count=$('#upgrade-batch-export').checked?exportEntries(api.getConfigs(),changedLinks(plan),'both',exportOptions(plan.changes.map(c=>c.id))).length:0;
   status(`${tasks.length} 条任务，将修改 ${plan.changes.length} 套配置${count?`，导出 ${changedLinks(plan).length} 个链接，共 ${count} 张图片`:''}`);
- }catch(e){invalidate();status(e.message);}};
+ }catch(e){invalidate();status(batchError(api,e));}};
  $('#upgrade-batch-apply').onclick=async()=>{
   if(!plan||busy)return;const approved=plan,auto=$('#upgrade-batch-export').checked;let saved=false;
   try{if(auto)exportEntries(api.getConfigs(),changedLinks(approved),'both',exportOptions(approved.changes.map(c=>c.id)));validateReplacement(approved,api.getConfigs());lock(true);status(`正在保存 ${approved.changes.length} 套配置…`);await apply(approved);saved=true;exportIds=changedLinks(approved);changedConfigIds=approved.changes.map(c=>c.id);undoRecords=captureBatchRevert(approved,api.getConfigs());$('#upgrade-batch-undo').classList.remove('hidden');$('#upgrade-batch-undo').textContent='一键还原本次修改';plan=null;$('#upgrade-batch-retry').classList.remove('hidden');if(auto){lock(false);await exportImages();}else status(`已保存 ${approved.changes.length} 套配置，可继续修改、单次还原或导出图片。`);}
-  catch(e){status((saved?'修改已保存，导出未完成：':'修改未完成：')+e.message);}
+  catch(e){status((saved?'修改已保存，导出未完成：':'修改未完成：')+batchError(api,e));}
   finally{lock(false);if(root.isConnected){invalidate();$('#upgrade-batch-undo').disabled=!undoRecords;}}
  };
  $('#upgrade-batch-undo').onclick=async()=>{
   if(busy||!undoRecords)return;
   try{lock(true);const reversal=batchRevertPlan(undoRecords,api.getConfigs());if(reversal.changes.length)await apply(reversal);undoRecords=null;status('已还原本次批量修改并保存，可继续修改或导出图片。');$('#upgrade-batch-undo').textContent='本次修改已还原';}
-  catch(error){status('还原未完成：'+error.message);}
+  catch(error){status('还原未完成：'+batchError(api,error));}
   finally{lock(false);if(root.isConnected){invalidate();$('#upgrade-batch-undo').disabled=!undoRecords;}}
  };
- $('#upgrade-batch-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(e){status('修改已保存，导出未完成：'+e.message);}finally{lock(false);if(root.isConnected)invalidate();}};
+ $('#upgrade-batch-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(e){status('修改已保存，导出未完成：'+batchError(api,e));}finally{lock(false);if(root.isConnected)invalidate();}};
 
  listParts();
 }
@@ -290,7 +293,7 @@ export function openGlobalBatch(api){
   plan=replacementTasksPlan(getConfigs(),tasks.snapshot());
   if($('#global-export').checked)exportEntries(getConfigs(),plan.productIds,'both',exportOptions(plan.changes.map(c=>c.id)));
   $('#global-diff').textContent=replacementDiff(plan);$('#global-diff-details').open=true;$('#global-apply').disabled=!plan.changes.length;status(`${plan.taskCount} 条任务，将修改 ${plan.changes.length} 套配置${$('#global-export').checked?`，导出 ${exportEntries(getConfigs(),plan.productIds,'both',exportOptions(plan.changes.map(c=>c.id))).length} 张图片`:''}。请核对明细后应用。`);
- }catch(error){invalidate();status(error.message);}};
+ }catch(error){invalidate();status(batchError(api,error));}};
  const exportImages=()=>exportBatchImages(api,exportIds,status,exportOptions(changedConfigIds));
  let lockedControls=[];
  const lock=value=>{busy=value;if(value){lockedControls=[...dialog.querySelectorAll('input,select,button')].map(el=>({el,disabled:el.disabled}));lockedControls.forEach(({el})=>el.disabled=true);}else{lockedControls.forEach(({el,disabled})=>{if(el.isConnected)el.disabled=disabled;});lockedControls=[];}};
@@ -303,7 +306,7 @@ export function openGlobalBatch(api){
    undoRecords=api.undoSaved?result:captureBatchRevert(approved,getConfigs());
    $('#global-undo').classList.toggle('hidden',!undoRecords);$('#global-undo').textContent='一键还原本次修改';plan=null;$('#global-retry').classList.remove('hidden');
    if(auto){lock(false);await exportImages();}else status(`已统一修改并保存 ${approved.changes.length} 套配置。可以继续修改，或导出刚修改的链接图片。`);
-  }catch(error){const message=api.errorText?.(error)||error.message;status((saved?'修改已保存，导出未完成：':'修改未完成：')+message);toast(message);}
+  }catch(error){const message=batchError(api,error);status((saved?'修改已保存，导出未完成：':'修改未完成：')+message);toast(message);}
   finally{lock(false);if(root.isConnected){plan=null;$('#global-apply').disabled=true;$('#global-undo').disabled=!undoRecords;}}
  };
  // 还原也走同一事务保存和基线校验；成功后消耗此批次的还原机会。
@@ -315,10 +318,10 @@ export function openGlobalBatch(api){
    else{const reversal=batchRevertPlan(undoRecords,getConfigs());if(reversal.changes.length)await apply(reversal);}
    undoRecords=null;plan=null;status('已还原本次批量修改并保存，可重新选择配件或导出图片。');$('#global-undo').textContent='本次修改已还原';
   }
-  catch(error){const message=api.errorText?.(error)||error.message;status('还原未完成：'+message);toast(message);}
+  catch(error){const message=batchError(api,error);status('还原未完成：'+message);toast(message);}
   finally{lock(false);if(root.isConnected){$('#global-undo').disabled=!undoRecords;invalidate();}}
  };
- $('#global-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(error){status('修改已保存，导出未完成：'+error.message);}finally{lock(false);if(root.isConnected)invalidate();}};
+ $('#global-retry').onclick=async()=>{if(busy||!exportIds)return;try{await exportImages();}catch(error){status('修改已保存，导出未完成：'+batchError(api,error));}finally{lock(false);if(root.isConnected)invalidate();}};
  listParts();
 }
 

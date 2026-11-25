@@ -1,6 +1,7 @@
 /** 将原主编辑器数据接到 NAS。保留原业务文档，显示兼容值不自动变成保存内容。 */
 import {createNasApiClient,NasApiError,nasShopIds,nasOperationsCapability} from './nas-api-client.js';
 import {createNasDraftController,ensureNasPartLineIds,nasDependencies} from './nas-draft-controller.js';
+import {applyNasRenumber,validateRenumberFields} from './nas-renumber-receipt.js';
 import {createNasCatalogController} from './nas-catalog-controller.js';
 import {createNasOperationQueue,nasPlanStorage} from './nas-operation-plan.js';
 import {syncPosterAddonText} from './batch-content.js';
@@ -303,6 +304,10 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   return dup(rec.document);
  }
  const drafts=()=>lookup?.drafts()||[];
+ function discardLocalDrafts(ids){
+  ready();lookup.discardLocalDrafts(ids);
+  for(const id of ids){editors.delete(id);controllers.delete(id);}
+ }
  const release=id=>{if(!openings.has(id)){editors.delete(id);controllers.delete(id);}};
  const close=()=>{closed=true;editors.clear();controllers.clear();openings.clear();};
  function documentFor(config){
@@ -406,13 +411,15 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   }));
  }
  // 仅消费确认回执中的自动名称调整，显示投影与持久草稿一起接续新版本。
- function acceptRenumber(rows){
+ function acceptRenumber(rows,onAccepted){
   const accepted=[];
   for(const row of rows){
    if(!versionNumber(row.previous_version)||!versionNumber(row.version)||typeof row.before!=='string'||typeof row.name!=='string')throw new NasApiError('INVALID_API_RESPONSE');
+   validateRenumberFields(row);
    if(!(controllers.get(row.configuration_id)??lookup).acceptRenumber(row))continue;
    const editor=editors.get(row.configuration_id);
-   if(editor){for(const key of ['raw','visible'])if(editor[key]?.name===row.before)editor[key].name=row.name;editor.remoteVersion=row.version;}
+   if(editor){for(const key of ['raw','visible'])applyNasRenumber(editor[key],row);editor.remoteVersion=row.version;}
+   onAccepted?.(row);
    accepted.push(row.configuration_id);
   }
   // 价格利润表有独立草稿，编号回执只推进相同基线的版本。
@@ -421,7 +428,9 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   if(changed)priceDraft(prices);
   return accepted;
  }
- return {initialize,request,refreshDependencies,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,release,close,documentFor,acceptRenumber,
+ return {initialize,request,refreshDependencies,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,discardLocalDrafts,release,close,documentFor,acceptRenumber,
+  // 角标读取已确认 base，不能把飞行期间的新草稿当作保存回执。
+  acceptedDocument:id=>dup(controllers.get(id)?.read()?.base??null),
   acceptSourceVersions:(ids,versions)=>{ready();for(const id of ids)if(!controllers.get(id)?.acceptSourceVersions(versions))throw new NasApiError('UNSAVED_DRAFT');},
   acceptObservedDependencies:versions=>{ready();let count=0;for(const ctrl of controllers.values())if(ctrl.acceptObservedDependencies(versions))count++;return count;},
   agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],
@@ -456,7 +465,13 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   canWrite:()=>!closed&&Boolean(capability?.configuration_writes===true)};
 }
 
-export const nasErrorText=error=>{
+export const nasErrorText=(error,configs=[])=>{
+ // 批量入口可能接到旧版仅含 message 的异常，同样映射中文并补充可定位的配置名。
+ if(error?.code==='UNSAVED_DRAFT'||/\bUNSAVED_DRAFT\b/.test(error?.message??'')){
+  const ids=new Set([error?.details?.configuration_id,...(error?.details?.configuration_ids??[])].filter(Boolean));
+  const names=configs.filter(c=>ids.has(c.id)).map(c=>c.name||c.shortName).filter(Boolean);
+  return '存在未保存的本地草稿，请先保存到服务端后再执行批量修改。'+(names.length?'涉及配置：'+[...new Set(names)].slice(0,8).join('、')+(names.length>8?' 等':'')+'。':'');
+ }
  const field=error?.details?.field;
  if(error?.code==='VALIDATION_FAILED'&&typeof field==='string'&&/^[A-Za-z][A-Za-z0-9._/]{0,119}$/.test(field))
   return '配置内容未通过校验（'+field+'）。';

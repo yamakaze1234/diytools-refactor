@@ -26,7 +26,7 @@ async function snapshotRows(ids,loadSaved,shop){
  let report;
  try{report=buildNasProfitReport({...data,shopId:shop,configIds:ids});}
  catch{throw new Fault('VERSION_CONFLICT',409);}
- // 比较口径冻结实际 BOM、金额、分期和费用；展示变更也由配置版本另行核对。
+ // 比较口径含 formulaVersion/overviewFeeRate，费率或公式变化不能沿用旧亏损快照指纹。
  return report.results.map(row=>({...row,config_version:versions.get(row.config_id),fingerprint:hash(row.snapshot)}));
 }
 

@@ -37,6 +37,20 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   await assert.rejects(client('gigabyte',localOperator).costSyncSnapshot(),{code:'FORBIDDEN'});
   await api.db.exec(await migration('027-quotation-identity-invalidation.sql'));
   await api.db.exec(await migration('028-cross-shop-cost-sync.sql'));
+  // 已装旧 028 但未装 030，回执保护必须回滚三店写入。
+  const oldSchema=await intel.costSyncSnapshot();
+  const oldPlan=planSharedCostSync(oldSchema,[{goodsId:'100001',name:'测试',sku:'A',erp:1,stockAvailable:-1,stockIncomingAvailable:2}],'erp','intel');
+  await assert.rejects(intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:oldPlan.changes}),{code:'NAS_COST_SYNC_NOT_INSTALLED'});
+  assert.deepEqual(await intel.costSyncSnapshot(),oldSchema);
+  // 重复安装不重建任何业务记录。
+  for(let i=0;i<2;i++)await api.db.exec(await migration('030-incoming-stock.sql'));
+
+  // 建源初次写入成本行时也保留独立的最终可销、待入可销。
+  const newId='9901234';
+  await shopClients.intel.saveCatalog('shared-sources',newId,'create',{operation_id:randomUUID(),document:{
+   id:newId,name:'新配件',erpAdoption:{name:'新品',erp:99,sku:'A01',stockAvailable:-2,stockIncomingAvailable:8}}});
+  const adopted=await shopClients.intel.resource('costs',newId);
+  assert.deepEqual([adopted.document.stockAvailable,adopted.document.stockIncomingAvailable],[-2,8]);
 
   await chosen(intel,current);
   current=await intel.detail(configId);
@@ -107,16 +121,28 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   assert.equal(reread.common['100001'].tax,960);
   assert.equal(reread.stores.jonsbo['100001'].tax,1030);
   const erp=planSharedCostSync(reread,[{goodsId:'9900059',erp:null,stockAvailable:0,sku:'987',name:'ERP 配件'},
-   {goodsId:'100001',erp:45,stockAvailable:20,sku:'654',name:'ERP 核对'}],'erp','intel');
+   {goodsId:'100001',erp:45,stockAvailable:-2,stockIncomingAvailable:13,sku:'654',name:'ERP 核对'}],'erp','intel');
   await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:erp.changes});
   for(const shop of nasShopIds){
    const {document}=await shopClients[shop].resource('costs','100001');
    const missing=await shopClients[shop].resource('costs','9900059');
-   assert.deepEqual([document.tax,document.erp,document.stockAvailable,document.nasManualTax===true],
-    [shop==='jonsbo'?1030:960,45,20,shop==='jonsbo']);
+   assert.deepEqual([document.tax,document.erp,document.stockAvailable,document.stockIncomingAvailable,document.nasManualTax===true],
+    [shop==='jonsbo'?1030:960,45,-2,13,shop==='jonsbo']);
    assert.deepEqual([missing.document.tax,missing.document.erp,missing.document.stockAvailable,missing.document.erpUnknown],[59,null,0,true]);
    const activity=await shopClients[shop].activity();
    assert(activity.some(row=>row.action==='erp_sync'));
   }
+  // 只有待入变动时也要生成计划，并在三店回读到同一数值。
+  const update={goodsId:'100001',name:'ERP 核对',sku:'654',erp:45,stockAvailable:-2,stockIncomingAvailable:-1};
+  const beforeIncoming=await intel.costSyncSnapshot();
+  for(const shop of nasShopIds)assert.equal(beforeIncoming.stores[shop]['100001'].stockIncomingAvailable,13);
+  const incomingPlan=planSharedCostSync(beforeIncoming,[update],'erp','intel');
+  const invalid=structuredClone(incomingPlan.changes);
+  invalid[0].fields.stockIncomingAvailable='-1';
+  await assert.rejects(intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:invalid}),{code:'VALIDATION_FAILED'});
+  await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:incomingPlan.changes});
+  const afterIncoming=await intel.costSyncSnapshot();
+  for(const shop of nasShopIds)assert.equal(afterIncoming.stores[shop]['100001'].stockIncomingAvailable,-1);
+  assert.equal(planSharedCostSync(afterIncoming,[update],'erp','intel').changes.length,0);
  }finally{await api.close();}
 });

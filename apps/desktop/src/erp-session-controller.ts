@@ -34,6 +34,7 @@ export function createErpSessionController(options: {
   desktop: boolean;
   request(input: ErpRequest): Promise<ErpSession | ErpGoodsResult>;
   onState(state: ErpSessionState): void;
+  beforeSessionChange?():Promise<boolean>;
 }) {
   let state = initialErpSessionState();
   let disposed = false, generation = 0, skuGeneration = 0;
@@ -72,6 +73,15 @@ export function createErpSessionController(options: {
       if (!disposed && operation === generation) emit({ busy: null });
     }
   }
+  let changing=false;
+  // 账号切换等待显式确认，期间不允许第二次登录请求穿透。
+  async function changeSession(input:ErpRequest){
+    if(changing||disposed||state.busy||!options.desktop)return;
+    changing=true;
+    try{if(options.beforeSessionChange&&!await options.beforeSessionChange())return;return await run(input);}
+    catch(error){if(!disposed)emit({error:error instanceof Error?error.message:String(error)});}
+    finally{changing=false;}
+  }
   return {
     get state() { return state; },
     status() { return run({ action: 'status' }); },
@@ -82,9 +92,9 @@ export function createErpSessionController(options: {
         return Promise.resolve();
       }
       // 服务地址由原生 worker 的本机配置绑定，页面只提交会话凭据。
-      return run({ action: 'connect', ...credentials });
+      return changeSession({ action: 'connect', ...credentials });
     },
-    disconnect() { return run({ action: 'disconnect' }); },
+    disconnect() { return changeSession({ action: 'disconnect' }); },
     setSku(sku: string) {
       if (disposed || state.sku === sku) return;
       skuGeneration++;

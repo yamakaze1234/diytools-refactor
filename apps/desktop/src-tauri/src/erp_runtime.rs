@@ -1,13 +1,14 @@
-// ERP 辅助进程从本机 data/runtime 读取；公开源码不内嵌或下载任何私有依赖。
+// ERP 辅助进程从本机已选版本目录启动，签名组件安装由独立更新命令处理。
 use std::{path::Path, process::Stdio};
 use tokio::process::{Child, Command};
 
 // 外部运行时路径只由原生数据目录决定，不能由页面请求选择可执行文件。
 pub fn command(data_dir: &Path) -> Result<Command, String> {
-    let worker = data_dir.join("runtime").join("erp-worker.exe");
+    let component = crate::updater::component::active_directory(data_dir)?;
+    let worker = component.join("erp-worker.exe");
     let mut command = if worker.is_file() {
         let mut command = Command::new(&worker);
-        command.current_dir(data_dir.join("runtime"));
+        command.current_dir(&component);
         command
     } else {
         #[cfg(debug_assertions)]
@@ -39,6 +40,8 @@ pub fn command(data_dir: &Path) -> Result<Command, String> {
     };
     // 本机接入配置固定在 data；worker 不接受命令行凭据或页面指定的配置路径。
     command.env("DIYTOOLS_INTEGRATIONS", data_dir.join("integrations.json"));
+    // 版本目录由已签名组件记录选定，旧版仍使用 data/runtime。
+    command.env("DIYTOOLS_ERP_COMPONENT_DIR", component);
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

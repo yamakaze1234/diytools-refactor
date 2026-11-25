@@ -9,6 +9,7 @@ export function priceMovement(row,metric='erp'){
 }
 export function trackedProfit(config,settings){
  if(!config)return null;
+ // 历史紧凑记录保留当时快照；有BOM的配置统一使用总表成本费率口径。
  if(!config.actualParts&&!config.parts&&config.loggedProfit)return config.loggedProfit;
  const t=totals(config,settings??{pricingRule:config.shopPricingRule});
  const cents=v=>v==null?null:Math.round(v*100);

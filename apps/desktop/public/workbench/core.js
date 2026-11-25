@@ -1,3 +1,4 @@
+import {commonOverviewFeeRate} from './overview-table-model.js';
 /** 工作台共用业务规则：实际 BOM 成本、ERP 文本、配置模板、链接分组与海报基础样式。 */
 import {productInstallment,INSTALLMENT_TERMS,moneyCents,chargeCents,pricing} from './pricing.js';
 import {DEFAULT_SERVICE_TEXT} from './service-promises.js';
@@ -7,6 +8,7 @@ import {isSpecialComponent} from './special-components.js';
 import {restoreConfigOrder} from './config-order.js';
 import {REPAIRED_HOST_COST} from './maintenance-workbook.js';
 import {maintenanceShortName} from './short-name-poster.js';
+import {overviewTableTotals} from './overview-table-model.js';
 export const slots=['CPU','散热','主板','内存','硬盘','显卡','电源','机箱','风扇','配件1','配件2','配件3','配件4','配件5','配件6','配件7'];
 export const clone=x=>structuredClone(x);
 export const cents=x=>x===''||x==null?null:Math.round(Number(x)*100);
@@ -26,7 +28,9 @@ export function erpUnitCost(part){
 export function totals(config,settings={},quote=pricing(config,settings)){
  let erp=0,tax=0,lineCount=0,missing=0,erpFallback=0,erpUnresolved=0,taxUnresolved=0;
  for(const p of actualParts(config)){
-  if(isSpecialComponent(p)||!p.name&&!p.goodsId)continue;
+  // 特殊占位项固定按零成本参与，既不报缺价，也允许整套只有特殊项。
+  if(isSpecialComponent(p)){lineCount++;continue;}
+  if(!p.name&&!p.goodsId)continue;
   const a=erpUnitCost(p),b=taxUnitCost(p),qty=Number(p.qty),knownQty=(typeof p.qty==='number'||typeof p.qty==='string'&&/^\d+$/.test(p.qty))&&Number.isInteger(qty)&&qty>=1&&qty<=1000;
   lineCount++;
   if(a.fallback)erpFallback++;
@@ -35,12 +39,15 @@ export function totals(config,settings={},quote=pricing(config,settings)){
   if(a.fallback||a.cents==null||b==null||!knownQty)missing++;
  }
  const erpCost=lineCount&&!erpUnresolved&&Number.isSafeInteger(erp)?erp:null,taxCost=lineCount&&!taxUnresolved&&Number.isSafeInteger(tax)?tax:null;
- const {priceCents,feeCents,rule}=quote,erpDeduction=chargeCents(priceCents,rule.erpRate),taxDeduction=chargeCents(priceCents,rule.taxRate);
- const basis=taxCost==null||taxDeduction==null?null:taxCost+taxDeduction+moneyCents(rule.taxFixed);
- const erpProfit=erpCost==null||erpDeduction==null?null:priceCents-erpDeduction-erpCost-moneyCents(rule.erpFixed),taxProfit=basis==null?null:priceCents-basis;
- const toMoney=n=>n==null?null:n/100,after=n=>n==null||feeCents==null?null:n-feeCents;
- const termErp=after(erpProfit),termTax=after(taxProfit);
- return {erp:toMoney(erpCost),tax:toMoney(taxCost),basis:toMoney(basis),erpDeduction:toMoney(erpDeduction),taxDeduction:toMoney(taxDeduction),erpProfit:toMoney(erpProfit),taxProfit:toMoney(taxProfit),erpProfitAfter:toMoney(termErp),taxProfitAfter:toMoney(termTax),erpMargin:priceCents>0&&termErp!=null?termErp/priceCents*100:null,taxMargin:priceCents>0&&termTax!=null?termTax/priceCents*100:null,missing,erpFallback,erpUnresolved,taxUnresolved};
+ const toMoney=n=>n==null?null:n/100;
+ // 全系统复用总表唯一公式；旧扣点/固定费用只保留存储兼容，不再参与利润。
+ const raw={erp:toMoney(erpCost),tax:toMoney(taxCost)},summary=overviewTableTotals(config,raw,quote);
+ const erpDeduction=chargeCents(quote.priceCents,2),taxDeduction=chargeCents(taxCost,summary.rate);
+ return {...raw,basis:summary.fee,erpDeduction:toMoney(erpDeduction),taxDeduction:toMoney(taxDeduction),
+  erpProfit:summary.erpProfit,taxProfit:summary.taxProfit,erpProfitAfter:summary.erpProfit,taxProfitAfter:summary.taxProfit,
+  erpMargin:quote.arrival>0&&summary.erpProfit!=null?summary.erpProfit/quote.arrival*100:null,
+  taxMargin:quote.arrival>0&&summary.taxProfit!=null?summary.taxProfit/quote.arrival*100:null,
+  missing,erpFallback,erpUnresolved,taxUnresolved};
 }
 export const maintenanceUsesLocator=(shopId,template)=>shopId==='intel'&&template!=='legacy';
 /** 英特尔新版复用已有定位列，其他表沿用修复版成本表的商品编号与名称列。 */
@@ -181,11 +188,12 @@ export function importTemplateConfigs(configs,product){
  return configs.map((source,index)=>{
   const c=clone(source);
   Object.assign(c,{id:crypto.randomUUID(),name:`配置${offset+index+1}`,shopId:product.shopId||c.shopId||'intel',productId:product.id,product:product.name,productCategory:product.category||'',productCardColor:product.cardColor||'',productUrl:product.url||'',spu:product.spu||'',installment:term,pricingRule:clone(product.pricingRule??null),skuId:'',updatedAt:null,shortNameAuto:true,workspaceOrder:nextOrder+index});
+  if(existing.length)c.overviewFeeRate=commonOverviewFeeRate(existing).rate;
   delete c.productTheme;const linkTheme=existing.find(row=>['light','dark'].includes(row.productTheme))?.productTheme;if(linkTheme)c.productTheme=linkTheme;delete c.sampleNote;delete c.emptyLinkDraft;delete c.deletedAt;delete c.deletionSessionId;return fillCorePartPlaceholders(c);
  });
 }
 /** 按当前链接和参考样式生成新配置，初始化必要的业务字段。 */
-export function blankConfig(reference,product,name='配置1',serviceText=DEFAULT_SERVICE_TEXT){const term=product.installment===undefined?productInstallment(product.configs):product.installment;if(!INSTALLMENT_TERMS.includes(term))throw Error('请先在编辑链接中统一分期设置');const c=clone(reference??product.configs?.find(c=>!c.deletedAt)??{theme:'light',layout:'long',fontFamily:'Microsoft YaHei',upgradeColor:'',upgradeSize:16,upgradeWeight:400,showUpgrades:true,showWarranty:false,caseImage:'',footer:'配置以所选方案为准',modules:modulesDefault(product.shopId,'light')});Object.assign(c,{showWarranty:false,id:crypto.randomUUID(),shopId:product.shopId||reference?.shopId||'intel',productId:product.id,product:product.name,productCategory:product.category||'',productCardColor:product.cardColor||'',productUrl:product.url||'',spu:product.spu||'',skuId:'',name,version:'进阶版',shortName:'',shortNameAuto:true,installment:term,pricingRule:clone(product.pricingRule??null),price:null,updatedAt:null,taxUpdatedAt:null,erpImportedAt:null,addons:[],benefits:[],parts:slots.slice(0,8).map(slot=>({slot,name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''}))});c.actualParts=clone(c.parts);c.modules=posterModules(c).map(m=>m.type==='service'?{...m,text:serviceText}:m);c.productDraft=!!product.configs?.some(row=>row.productDraft);c.overviewPrice99=!!product.configs?.length&&product.configs.every(row=>row.overviewPrice99===true);c.overviewAccessoryLimit=0;delete c.workspaceOrder;delete c.sampleNote;delete c.emptyLinkDraft;delete c.deletedAt;delete c.deletionSessionId;return c;}
+export function blankConfig(reference,product,name='配置1',serviceText=DEFAULT_SERVICE_TEXT){const term=product.installment===undefined?productInstallment(product.configs):product.installment;if(!INSTALLMENT_TERMS.includes(term))throw Error('请先在编辑链接中统一分期设置');const c=clone(reference??product.configs?.find(c=>!c.deletedAt)??{theme:'light',layout:'long',fontFamily:'Microsoft YaHei',upgradeColor:'',upgradeSize:16,upgradeWeight:400,showUpgrades:true,showWarranty:false,caseImage:'',footer:'配置以所选方案为准',modules:modulesDefault(product.shopId,'light')});Object.assign(c,{showWarranty:false,id:crypto.randomUUID(),shopId:product.shopId||reference?.shopId||'intel',productId:product.id,product:product.name,productCategory:product.category||'',productCardColor:product.cardColor||'',productUrl:product.url||'',spu:product.spu||'',skuId:'',name,version:'进阶版',shortName:'',shortNameAuto:true,installment:term,pricingRule:clone(product.pricingRule??null),price:null,updatedAt:null,taxUpdatedAt:null,erpImportedAt:null,addons:[],benefits:[],parts:slots.slice(0,8).map(slot=>({slot,name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''}))});c.actualParts=clone(c.parts);c.modules=posterModules(c).map(m=>m.type==='service'?{...m,text:serviceText}:m);c.overviewFeeRate=commonOverviewFeeRate(product.configs?.length?product.configs:reference?[reference]:[]).rate;c.productDraft=!!product.configs?.some(row=>row.productDraft);c.overviewPrice99=!!product.configs?.length&&product.configs.every(row=>row.overviewPrice99===true);c.overviewAccessoryLimit=0;delete c.workspaceOrder;delete c.sampleNote;delete c.emptyLinkDraft;delete c.deletedAt;delete c.deletionSessionId;return c;}
 export function wrapText(ctx,text,maxWidth){const lines=[];for(const para of String(text||'').split('\n')){let line='';const tokens=para.match(/[A-Za-z0-9][A-Za-z0-9._/+*-]*|[^A-Za-z0-9]/gu)||[];for(const token of tokens){if(ctx.measureText(token).width>maxWidth){for(const ch of token){if(line&&ctx.measureText(line+ch).width>maxWidth){lines.push(line.trimEnd());line='';}line+=ch;}}else{if(line&&ctx.measureText(line+token).width>maxWidth){lines.push(line.trimEnd());line='';}line+=!line?token.trimStart():token;}}lines.push(line);}return lines;}
 
 export const liveConfigs=configs=>configs.filter(c=>!c.deletedAt);

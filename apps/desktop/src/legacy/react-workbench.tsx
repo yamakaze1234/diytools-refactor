@@ -5,7 +5,7 @@ import {LinkPartsPanel,LinkPartsRule,LinkPartsOverview} from './link-parts-panel
 import reuiStyles from '../reui.css?inline';
 import {Input} from '@/components/ui/input';
 import {LayoutGrid,Boxes,Images,History,PackageSearch,ChartNoAxesCombined,X} from 'lucide-react';
-import {ContinuousWorkbench} from './continuous-workbench';
+import {ContinuousWorkbench,ConfigurationCard} from './continuous-workbench';
 import {BatchIds,BatchAppearance,BatchDescription} from './batch-panels';
 /** 渐进迁移只接管展示节点，业务状态与操作仍由工作台闭包维护。 */
 import { startTransition, useLayoutEffect, useRef, useState, useEffect } from 'react';
@@ -95,6 +95,7 @@ export function createWorkbenchReactRenderer() {
  return {
   // 输入值和业务写入即时完成，整表投影允许让出主线程，保留当前输入节点与光标。
   continuous(container:HTMLElement,model:Row){installStyle(container.ownerDocument);startTransition(()=>rootFor(container).render(<ContinuousWorkbench model={model}/>));},
+  configCard(container:HTMLElement,model:Row){flushSync(()=>rootFor(container).render(<ConfigurationCard model={model}/>));},
   editor(container:HTMLElement,model:EditorModel){flushSync(()=>rootFor(container).render(<EditorPanel key={String(model.config.id)+':'+model.tab} model={model}/>));},
   templates(container:HTMLElement,model:Row){let surface=container.querySelector<HTMLElement>(':scope > [data-react-templates]');if(!surface){surface=container.ownerDocument.createElement('div');surface.dataset.reactTemplates='true';surface.style.display='contents';container.prepend(surface);}flushSync(()=>rootFor(surface!).render(<TemplateArea model={model}/>));},
   dialog(container:HTMLElement,kind:string,model:Row){const Panel=regions[kind as keyof typeof regions];if(!Panel)throw Error('未知 React 编辑区 '+kind);flushSync(()=>rootFor(container).render(<Panel model={model}/>));},

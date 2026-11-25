@@ -148,11 +148,12 @@ export function applyShopIdentity(config,shopId,{resetAppearance=false}={}){
 
 // ERP internal shop IDs confirmed by the user on 2026-09-21.
 export const DEFAULT_ERP_SHOP_IDS={intel:'76',gigabyte:'32',jonsbo:'33'};
+import {normalizeErpDefaultExtras} from './erp-default-extras.js';
 /** 补齐店铺设置结构并兼容旧保存值。 */
 function normalizeShopSettings(value){
  const legacyCoupon=Number(value?.coupon);
  const result={};for(const shop of shops){const entry=value?.[shop.id];result[shop.id]={coupon:Number.isFinite(Number(entry?.coupon))&&Number(entry.coupon)>=0?Number(entry.coupon):shop.id===SHOP_IDS.intel&&Number.isFinite(legacyCoupon)&&legacyCoupon>=0?legacyCoupon:0};if(["light","dark"].includes(entry?.posterTheme))result[shop.id].posterTheme=entry.posterTheme;const view=normalizePosterView(entry?.posterView);if(view)result[shop.id].posterView=view;if(typeof entry?.serviceText==='string')result[shop.id].serviceText=entry.serviceText;for(const key of ['erpShopId','erpShopName'])if(typeof entry?.[key]==='string')result[shop.id][key]=entry[key];}
- for(const shop of shops){const entry=value?.[shop.id],rule=normalizePricingRule(entry?.pricingRule),alert=normalizeProfitAlerts(entry?.profitAlert);if(rule)result[shop.id].pricingRule=rule;if(alert)result[shop.id].profitAlert=alert;if(Array.isArray(entry?.addonPacks))result[shop.id].addonPacks=clone(entry.addonPacks);}
+ for(const shop of shops){const entry=value?.[shop.id],rule=normalizePricingRule(entry?.pricingRule),alert=normalizeProfitAlerts(entry?.profitAlert);if(rule)result[shop.id].pricingRule=rule;if(alert)result[shop.id].profitAlert=alert;if(Array.isArray(entry?.addonPacks))result[shop.id].addonPacks=clone(entry.addonPacks);if(entry?.erpDefaultExtras!==undefined)result[shop.id].erpDefaultExtras=normalizeErpDefaultExtras(entry.erpDefaultExtras);}
  return result;
 }
 

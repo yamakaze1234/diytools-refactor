@@ -15,15 +15,15 @@ const settings={coupon:100,pricingRule:shopRule};
 test('继承、覆盖、已知零成本和未知数据共享一套利润口径',()=>{
  const c=fixture();
  assert.equal(pricing(c,settings).listPrice,1100);
- assert.equal(totals(c,settings).erpProfitAfter,405);
- assert.equal(totals(c,settings).taxProfitAfter,235);
- assert.equal(totals({...c,pricingRule:DEFAULT_PRICING_RULE},settings).taxProfitAfter,222);
+ assert.equal(totals(c,settings).erpProfitAfter,480);
+ assert.equal(totals(c,settings).taxProfitAfter,231);
+ assert.equal(totals({...c,pricingRule:DEFAULT_PRICING_RULE},settings).taxProfitAfter,231);
  assert.equal(totals({...c,price:''},settings).erpProfitAfter,null);
  assert.equal(totals({...c,actualParts:[]},settings).taxProfitAfter,null);
- assert.equal(totals({...c,actualParts:[{...c.actualParts[0],erp:0,tax:null}]},settings).erpProfitAfter,905);
+ assert.equal(totals({...c,actualParts:[{...c.actualParts[0],erp:0,tax:null}]},settings).erpProfitAfter,980);
  assert.equal(totals({...c,actualParts:[{...c.actualParts[0],erp:0,tax:null}]},settings).taxProfitAfter,null);
  const penny=totals({price:'0.125',installment:6,actualParts:[{name:'CPU',qty:1,erp:0,tax:0}]},{pricingRule:{...shopRule,erpRate:4,fee6:4}});
- assert.equal(penny.erpProfitAfter,.11);
+ assert.equal(penny.erpProfitAfter,.13);
  const normalized=normalizeWorkspaceState({dataVersion:3,configs:[],shopSettings:{intel:{...settings,profitAlert:{mode:'rate',loss:0,target:24}}}});
  assert.deepEqual(normalized.shopSettings.intel.pricingRule,shopRule);
  assert.deepEqual(normalized.shopSettings.intel.profitAlert,{
@@ -54,7 +54,7 @@ test('四种批量调价含精确目标验算，缺成本跳过，纯计划不�
   const next=plan(mode,goal)[0].price,actual=totals({...c,price:next},settings);
   assert.ok((mode==='margin'?actual.taxMargin:actual.taxProfitAfter)>=goal);
  }
- assert.match(plan('margin',95)[0].reason,/过高/);
+ assert.match(plan('margin',96)[0].reason,/过高/);
  assert.match(plan('target',300,[priceProfitRow({...c,actualParts:[]},settings)])[0].reason,/缺少/);
  assert.equal(c.price,1000);
 });
@@ -64,7 +64,7 @@ test('尾数 99 按核算保本价向上取整，缺少成本或超出上限时�
  assert.equal(priceTail99(row),799);
  const noCost=priceProfitRow({...c,actualParts:[]},settings);
  assert.equal(priceTail99(noCost),null);
- const overLimit=priceProfitRow({...c,actualParts:[{...c.actualParts[0],tax:900000}]},settings);
+ const overLimit=priceProfitRow({...c,actualParts:[{...c.actualParts[0],tax:990000}]},settings);
  assert.equal(priceTail99(overLimit),null);
 });
 
@@ -79,8 +79,8 @@ test('空链接模板接续占位，历史价格报表区分历史与现用扣�
  const batch={items:[],configs:[{before:old,after:old}],handled:[],at:'2026-01-01T00:00:00Z'};
  const report=priceReportSheets(batch,{configs:[c],settings:()=>settings})[2];
  const header=report.rows[0],row=report.rows[1];
- assert.equal(row[header.indexOf('核算利润-后')],222);
- assert.equal(row[header.indexOf('当前核算利润')],235);
+ assert.equal(row[header.indexOf('核算利润-后')],238);
+ assert.equal(row[header.indexOf('当前核算利润')],231);
 });
 
 

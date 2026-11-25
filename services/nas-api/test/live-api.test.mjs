@@ -377,7 +377,8 @@ test('更新成本后按实际 BOM 保存价格前后、原编号去重、NAS �
   const line=detail.items.find(item=>item.goodsId==='00012');
   assert.deepEqual([line.before.tax,line.after.tax],[0,1000]);assert(line.configIds.includes(id));
   const row=detail.configs.find(row=>row.after.id===id);
-  assert.equal(row.after.price,300);assert.equal(row.before.loggedProfit.tax-row.after.loggedProfit.tax,2000);
+  // 20元配件成本变化同时影响4%的成本运营费，总利润变化20.80元。
+  assert.equal(row.after.price,300);assert.equal(row.before.loggedProfit.tax-row.after.loggedProfit.tax,2080);
   assert.equal((await read('handle',{revision,configId:id,handled:true},'other')).status,200);
   assert((await read('detail',{revision})).body.data.handled.includes(id));
   assert.equal((await read('list',{},'sales')).status,403);
@@ -420,4 +421,19 @@ test('模板简称保留人工值，仅成功应用的同一事务归档空白�
   const made=(await request('configurations/'+configId)).body.data.document;
   assert.equal(made.name,'配置1');assert.equal(made.shortName,'人工模板简称');assert.equal(made.skuId,'');
  }finally{roleTx=()=>false;store.workspaceWritable=false;store.catalog.workspaceWritable=false;store.catalog.writable=false;}
+});
+
+test('店铺默认固定附加保存回读、同货号合并及非法输入整批拒收',async()=>{
+ store.workspaceWritable=true;store.catalog.workspaceWritable=true;roleTx=()=>true;
+ try{
+  const old=(await db.query("SELECT version::text FROM intel_live.intel_settings_overrides WHERE shop_id='intel'")).rows[0];
+  const expected=old?.version??null;
+  const write=extras=>request('workspace/settings',{method:'POST',body:{operation_id:randomUUID(),changes:[{id:'intel',action:'replace',expected_version:expected,fields:{erpDefaultExtras:extras}}]}});
+  for(const extras of [null,{},[{goodsId:'0',qty:1,name:'配件'}],[{goodsId:'12',qty:0,name:'配件'}],[{goodsId:'12',qty:1.5,name:'配件'}],[{goodsId:'12',qty:1,name:''}],[{goodsId:'12',qty:1,name:'非法\u0000名'}]]){
+   const rejected=await write(extras);assert.equal(rejected.status,400,JSON.stringify(rejected.body));
+  }
+  const result=await write([{goodsId:'12',qty:2,name:'固定电源线'},{goodsId:12,qty:3,name:'固定电源线'}]);
+  assert.equal(result.status,200,JSON.stringify(result.body));
+  const catalog=await request('workspace-catalog');assert.deepEqual(catalog.body.data.shopSettings.intel.erpDefaultExtras,[{goodsId:'12',qty:5,name:'固定电源线'}]);
+ }finally{roleTx=()=>false;store.workspaceWritable=false;store.catalog.workspaceWritable=false;}
 });

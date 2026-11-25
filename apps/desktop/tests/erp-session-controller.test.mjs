@@ -4,6 +4,12 @@ import { createErpSessionController } from '../src/erp-session-controller.ts';
 
 const connected = { connected: true, user: '测试账号', domain: "https://erp.example.test/", package_version: '1.0' };
 const result = sku => ({ sku, rows: [{ goods_id: '1', quantity: 0, code: '001', name: '测试商品', is_gift: false }], queried_at: '2026-10-12T12:00:00+08:00' });
+test('后台匹配的二次确认取消时不发送 ERP 账号切换请求',async()=>{
+ const calls=[];let allowed=false;
+ const controller=createErpSessionController({desktop:true,onState:()=>{},beforeSessionChange:async()=>allowed,request:async input=>{calls.push(input);return connected;}});
+ await controller.status();await controller.connect({username:'mock',password:'not-real'});assert.deepEqual(calls,[{action:'status'}]);assert.equal(controller.state.session.connected,true);
+ allowed=true;await controller.disconnect();assert.equal(calls.at(-1).action,'disconnect');controller.dispose();
+});
 function deferred() { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; }
 function fixture(request, desktop = true) {
   const calls = [], states = [];

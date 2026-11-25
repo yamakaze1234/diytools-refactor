@@ -69,7 +69,9 @@ export function chargeCents(amountCents,percent){
 /** 到手价为空时定价、扣点与分期费保持未知；历史未设置分期时视为不分期。 */
 export function pricing(config,settings={}){
  const priceCents=moneyCents(config.price),couponCents=moneyCents(settings.coupon??0),term=settings.linkInstallment===null?null:readInstallment(config),rule=effectivePricingRule(config,settings);
- const percent=term==null?null:term?rule['fee'+term]:0;
+ // 6/12期跟随店铺息点；24期固定10%，旧链接规则仍原样保留。
+ const shopRule=normalizePricingRule(settings.pricingRule)||DEFAULT_PRICING_RULE;
+ const percent=term==null?null:term===24?10:term?shopRule['fee'+term]:0;
  const feeCents=chargeCents(priceCents,percent);
  return {arrival:priceCents==null?null:priceCents/100,priceCents,coupon:couponCents==null?null:couponCents/100,listPrice:priceCents==null||couponCents==null?null:(priceCents+couponCents)/100,term,rate:percent==null?null:percent/100,percent,fee:feeCents==null?null:feeCents/100,feeCents,rule};
 }

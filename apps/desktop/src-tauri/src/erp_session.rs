@@ -19,6 +19,7 @@ pub struct SessionInput {
     sku: Option<String>,
     settings: Option<Value>,
     remember: Option<bool>,
+    payload: Option<Value>,
 }
 
 #[derive(Default)]
@@ -43,6 +44,8 @@ impl Worker {
             .and_then(|path| path.parent())
             .ok_or("ERP_RUNTIME_UNAVAILABLE: 本机数据目录尚未配置")?;
         let mut command = if cost {erp_runtime::cost_command(data_dir)?} else {erp_runtime::command(data_dir)?};
+        // 所有 ERP worker 共用本机操作锁和回执；路径由宿主固定，页面不得指定。
+        command.env("DIYTOOLS_ERP_OPERATIONS",data_dir.join("runtime").join("erp-matching"));
         command.env_remove("DIYTOOLS_SQL_VAULT");
         if let Some(vault) = selected_read_vault.or_else(||vault.filter(|_|!cost).map(|path|path.as_path())) {
             command.env("DIYTOOLS_SQL_VAULT", vault);
@@ -88,6 +91,35 @@ impl ErpSessionState {
         self.vault
             .set(path)
             .map_err(|_| "本机凭据目录已经配置".into())
+    }
+
+    pub(crate) fn data_dir(&self) -> Result<&std::path::Path, String> {
+        self.vault.get().and_then(|path| path.parent()).ok_or_else(|| "本机数据目录尚未就绪".into())
+    }
+
+    // 先阻止本进程新请求，再取得 Python 同一文件的操作系统锁，覆盖后台任务和其他宿主进程。
+    pub(crate) async fn when_idle<T>(&self, stop: bool, operation: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
+        let busy = "ERP 正在处理匹配或读取任务，请等待完成后重试。";
+        let _nas = self.nas_read.try_lock().map_err(|_| busy)?;
+        let mut worker = self.worker.try_lock().map_err(|_| busy)?;
+        let mut cost_worker = self.cost_worker.try_lock().map_err(|_| busy)?;
+        let data = self.data_dir()?;
+        let _gate = crate::updater::component::operation_lock(data)?;
+        if stop {
+            Self::finish_worker(worker.take()).await;
+            Self::finish_worker(cost_worker.take()).await;
+        }
+        operation(data)
+    }
+
+    // 关闭输入通知 PyInstaller 正常卸载文件，超时由作业对象兜底。
+    async fn finish_worker(worker: Option<Worker>) {
+        if let Some(Worker { _guard, mut _child, input, output }) = worker {
+            drop(input);
+            drop(output);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), _child.wait()).await;
+            drop(_guard);
+        }
     }
 
     // 独立主程序同一数据目录下按部署及成员分开保存；页面不能提供路径。
@@ -165,21 +197,9 @@ impl ErpSessionState {
 
     // 先关闭管道让 Python 正常收尾，超时后依靠进程保护回收后代。
     pub async fn shutdown(&self) {
-        for slot in [&self.worker,&self.cost_worker] {
-        let mut state = slot.lock().await;
-        if let Some(worker) = state.take() {
-            // EOF lets Python close the connection and the bootloader reclaim its files.
-            let Worker {
-                _guard,
-                mut _child,
-                input,
-                output,
-            } = worker;
-            drop(input);
-            drop(output);
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), _child.wait()).await;
-            drop(_guard);
-        }
+        for slot in [&self.worker, &self.cost_worker] {
+            let mut state = slot.lock().await;
+            Self::finish_worker(state.take()).await;
         }
     }
     // 串行发送带唯一编号的请求；超时、协议错误或管道失败都丢弃旧 worker。
@@ -188,6 +208,7 @@ impl ErpSessionState {
             "status",
             "connect",
             "query_goods",
+            "match_status", "match_detail", "match_preview", "match_execute", "match_recover", "match_stop", "match_search",
             "disconnect",
             "sql_cost_file",
             "nas_quotation_file",
@@ -207,6 +228,7 @@ impl ErpSessionState {
             2 * 1024 * 1024
         };
         let mut request = json!({"id":id,"action":input.action});
+        if let Some(payload)=input.payload {request["payload"]=payload;}
         if let Some(settings) = input.settings {
             request["settings"] = settings;
         }
@@ -226,7 +248,7 @@ impl ErpSessionState {
         }
         let mut bytes = serde_json::to_vec(&request).map_err(|_| "ERP 请求格式无效")?;
         bytes.push(b'\n');
-        if bytes.len() > 64 * 1024 {
+        if bytes.len() > if input.action.starts_with("match_"){2*1024*1024}else{64*1024} {
             return Err("ERP 请求超过 64 KiB 限制".into());
         }
         // 已有请求占用 worker 时立即返回忙碌提示，不能把两条响应交错读入同一管道。
@@ -278,6 +300,7 @@ fn unpack_response(response: Value, id: &str) -> Result<Value,String> {
         Err(match response["error"]["code"].as_str().unwrap_or("") {
             "AUTH_FAILED" => "ERP 登录失败，请核对账号密码或 Cookie。",
             "NOT_CONNECTED" => "请先连接 ERP。",
+            "ERP_NOT_CONFIGURED" => "本机尚未配置 ERP 服务，请先完成本机接入配置。",
             "AMBIGUOUS" => "同一 SKU 对应多个 ERP 商品，无法唯一确定。",
             "NOT_LINKED" => "该 SKU 尚未关联 ERP 商品。",
             "MISSING_CREDENTIALS" => "请填写完整账号密码或单个 _wdb Cookie。",
@@ -286,6 +309,13 @@ fn unpack_response(response: Value, id: &str) -> Result<Value,String> {
             "QUERY_FAILED" => "ERP 查询失败，连接已断开，请重新登录后查询。",
             "INVALID_RESPONSE" | "INCOMPLETE_RESULTS" => "ERP 返回数据不完整，未展示不确定的结果。",
             "PACKAGE_UNAVAILABLE" => "公司 ERP 依赖不可用，请检查本机环境。",
+            "ERP_OPERATION_BUSY" => "ERP 正在同步库存、读成本或匹配套餐，请等待当前操作结束。",
+            "MATCH_ACTIVE" => "后台 ERP 匹配未结束，请先确认停止任务，再退出或切换账号。",
+            "PREVIEW_EXPIRED" | "PREVIEW_STALE" => "匹配预览已过期或 ERP 状态已变化，请重新预览。",
+            "UNSAVED_DRAFT" => "存在未保存的本地草稿，请先保存到服务端后再执行 ERP 匹配。",
+            "IDENTITY_CONFLICT" | "SKU_UNAVAILABLE" => "平台店铺、SPU 或 SKU 无法唯一核验，未执行匹配。",
+            "ERP_READ_FAILED" => "ERP 读取失败，请检查连接后重新预览。",
+            "RECEIPT_INVALID" => "本机匹配回执无法读取，请保留文件并人工核对。",
             "INVALID_REQUEST" | "INVALID_DOMAIN" => "ERP 输入无效，请核对填写内容。",
             "TOO_MANY_RESULTS" | "OUTPUT_TOO_LARGE" => "ERP 返回结果超出本次查询限制。",
             "SQL_CONNECTION" => "数据库连接失败，请核对公司网络和连接设置。本机数据未改动。",
@@ -317,7 +347,7 @@ pub async fn erp_session_request(
     state: tauri::State<'_, ErpSessionState>,
     input: SessionInput,
 ) -> Result<Value, String> {
-    if !["status","connect","query_goods","disconnect"].contains(&input.action.as_str()) {
+    if !["status","connect","query_goods","disconnect","match_status","match_detail","match_preview","match_execute","match_recover","match_stop","match_search"].contains(&input.action.as_str()) {
         return Err("SQL 操作请通过 ERP 同步入口使用。".into());
     }
     state.request(input).await

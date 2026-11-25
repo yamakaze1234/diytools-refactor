@@ -109,8 +109,8 @@ fn actual_bom_quantity_hidden_and_independent_price_are_preserved() {
         .unwrap()
         .push(json!({"name":"不含显卡","specialComponent":true,"qty":null,"tax":null}));
     let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
-    assert_eq!(s["parts"].as_array().unwrap().len(), 1);
-    assert_eq!(accounting(&s), (Some(46000), Some(40000), String::new()));
+    assert_eq!(s["parts"].as_array().unwrap().len(), 2);
+    assert_eq!(accounting(&s), (Some(48400), Some(40000), String::new()));
     c["actualParts"] = json!([]);
     let s = snapshot(&c, &[c.clone()], &Value::Null).unwrap();
     assert_eq!(accounting(&s).0, None);
@@ -134,7 +134,7 @@ fn numeric_identities_match_legacy_without_losing_string_leading_zeroes() {
     let s = snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap();
     assert_eq!(s["productId"], "123");
     assert_eq!(s["parts"][0]["goodsId"], "456");
-    assert_eq!(accounting(&s).0, Some(60000));
+    assert_eq!(accounting(&s).0, Some(63200));
     peer["productId"] = json!("123");
     assert_eq!(
         snapshot(&c, &[c.clone(), peer.clone()], &Value::Null).unwrap()["feeCents"],
@@ -217,7 +217,11 @@ fn deletion_marker_truthiness_matches_legacy_scope_and_link_terms() {
 
 #[test]
 fn strict_thresholds_and_invalid_observation_do_not_advance_baseline() {
-    let store = fixture(json!([config("a", "intel", json!(700))]));
+    // 固定0%运营费率覆盖严格的一百元与三百元阈值，避免成本费率改变边界。
+    let mut c = config("a", "intel", json!(700));
+    c["overviewFeeRate"] = json!(0);
+    c["price"] = json!(960);
+    let store = fixture(json!([c]));
     let first = report(&store, &start(&store, "threshold-1", &["a"]));
     let anchor = result(&first, "accounting")["id"].clone();
     assert_eq!(result(&first, "accounting")["profit_cents"], 16000);
@@ -462,8 +466,9 @@ fn current_content_hash_and_cost_change_causes_are_reported() {
     );
     let next = report(&store, &start(&store, "causes-second", &["a"]));
     let row = result(&next, "accounting");
-    assert_eq!(row["previous_delta_cents"], 19600);
-    assert_eq!(row["details"]["priceImpactCents"], 9600);
+    assert_eq!(row["previous_delta_cents"], 20400);
+    assert_eq!(row["details"]["priceImpactCents"], 10000);
+    assert_eq!(row["details"]["roundingAndBasisImpactCents"], 400);
     assert_eq!(row["details"]["causes"][0]["profitImpactCents"], 10000);
 }
 
@@ -492,7 +497,7 @@ fn selected_thousand_configurations_persist_two_independent_results_each() {
 }
 
 #[test]
-fn effective_shop_and_link_rules_apply_to_six_periods_and_invalidate_old_observations() {
+fn shop_installment_and_overview_rate_apply_while_legacy_deductions_stay_inert() {
     let mut c = config("a", "intel", json!(600));
     c["installment"] = json!(6);
     let store = fixture(json!([c]));
@@ -503,7 +508,7 @@ fn effective_shop_and_link_rules_apply_to_six_periods_and_invalidate_old_observa
     let first = start(&store, "configured-shop", &["a"]);
     let first_report = report(&store, &first);
     let row = result(&first_report, "accounting");
-    assert_eq!(row["profit_cents"], 23500);
+    assert_eq!(row["profit_cents"], 23100);
     assert_eq!(row["snapshot"]["feeCents"], 4500);
     assert_eq!(row["configUpdated"], false);
     edit(&store, |state| {
@@ -511,14 +516,14 @@ fn effective_shop_and_link_rules_apply_to_six_periods_and_invalidate_old_observa
     });
     assert_eq!(
         result(&report(&store, &first), "accounting")["configUpdated"],
-        true
+        false
     );
     edit(&store, |state| {
         state["configs"][0]["pricingRule"] = json!({"taxRate":3,"taxFixed":10,"fee6":5});
     });
     let second = start(&store, "configured-link", &["a"]);
     let second_report = report(&store, &second);
-    assert_eq!(result(&second_report, "accounting")["profit_cents"], 31000);
+    assert_eq!(result(&second_report, "accounting")["profit_cents"], 23100);
     edit(&store, |state| {
         state["shopSettings"]["intel"]["pricingRule"]["taxRate"] = json!(8);
     });

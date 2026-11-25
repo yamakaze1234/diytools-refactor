@@ -15,10 +15,12 @@ class SqlError(Exception):
         self.code = code
         self.message = message
 
-QUERIES = [
-    'SELECT TOP (100001) CONVERT(varchar(20), [goods_id]) AS [goods_id], [库房], [商品编码], [商品名称], [分库数], [分库可销数], [分库待入], [库存成本] FROM [库存].[分库库存]',
-    'SELECT TOP (100001) CONVERT(varchar(20), [goods_id]) AS [goods_id], [商品编码], [商品名称], [总数量], [可销数], [待入] FROM [库存].[库存查询]',
-]
+# 常量探针与目录文本走同一 varchar 驱动解码路径，避免误转正常的西文商品名。
+CATALOG_QUERY = (
+    "SELECT TOP (100001) CONVERT(varchar(20), [goods_id]) AS [goods_id], "
+    "[商品编码], [商品名称], [单价成本], [总数量], [可销数], [待入], [最终可销], [待入可销], "
+    "CONVERT(varchar(8), N'中文') AS [encoding_probe] FROM [库存].[库存查询]"
+)
 
 
 def settings(value):
@@ -49,30 +51,41 @@ def settings(value):
 
 
 def normalize(bundle):
-    """核验两张 ERP 视图的完整性、编码和身份后按 goods_id 合并。
-
-只取“公司大库”的可销数及单件库存成本；目录存在但无对应仓库行时保持 None。
-任一行身份重复、编码不一致或整批超限即拒收，调用方可保留原缓存。
-"""
-    if not isinstance(bundle, dict):
-        raise SqlError('数据库返回结构无效')
-    warehouses, catalog = bundle.get('warehouses'), bundle.get('catalog')
-    if not isinstance(warehouses, list) or not isinstance(catalog, list) or not catalog or max(len(warehouses), len(catalog)) > 100000:
+    """完整目录一次返回，最终可销与待入可销均采用 ERP 已扣待审后的字段。"""
+    catalog = bundle.get('catalog') if isinstance(bundle, dict) else None
+    if not isinstance(catalog, list) or not 0 < len(catalog) <= MAX_ROWS:
         raise SqlError('数据库目录为空、不完整或超过 100000 行，已保留原数据')
-    if any(not isinstance(row, dict) for row in warehouses + catalog):
+    if any(not isinstance(row, dict) for row in catalog):
         raise SqlError('数据库返回行结构无效')
-    # 兼容历史驱动把中文按 latin1 透传的结果；识别后整批按 gb18030 解码。
-    legacy = any(r.get('库房') == bytes.fromhex('b9abcbbeb4f3bfe2').decode('latin1') for r in warehouses)
-    by_id, codes, warehouse_keys, catalog_ids = {}, {}, set(), set()
+    marker = '中文'.encode('gb18030')
+    legacy = catalog[0].get('encoding_probe') in (marker, marker.decode('latin1'))
+    by_id, codes = {}, {}
+
+    # 成本无效保持未知，不能补成零；库存字段继续使用下方原有严格校验。
+    def cost_number(value):
+        try:
+            if value is None or isinstance(value, bool) or isinstance(value, str) and not value.strip():
+                return None
+            number = float(value)
+            return number if math.isfinite(number) and number >= 0 else None
+        except (ValueError, TypeError, OverflowError):
+            return None
 
     def decoded(value):
         if isinstance(value, bytes):
             try:
-                return value.decode('gb18030' if legacy else 'utf-8')
+                return value.decode('gb18030' if legacy else 'utf-8').strip()
             except UnicodeError:
                 raise SqlError('数据库文本编码不一致，已保留原数据') from None
         if not isinstance(value, str):
             raise SqlError('数据库文本字段无效')
+        if 'encoding_probe' not in catalog[0] and not value.isascii():
+            try:
+                repaired = value.encode('latin1').decode('gb18030')
+            except UnicodeError:
+                repaired = ''
+            if re.search(r'[㐀-鿿]', repaired):
+                return repaired.strip()
         if legacy and all(ord(c) < 256 for c in value):
             try:
                 value = value.encode('latin1').decode('gb18030')
@@ -107,33 +120,16 @@ def normalize(bundle):
         codes[sku] = key
         return dict(goodsId=key, name=name, sku=sku)
 
-    for raw in warehouses:
-        if '分库数' not in raw or '分库可销数' not in raw:
-            raise SqlError('数据库缺少公司大库库存字段')
-        ident = identity(raw)
-        key, warehouse = ident['goodsId'], decoded(raw.get('库房'))
-        if not warehouse or len(warehouse) > 100 or (key, warehouse) in warehouse_keys:
-            raise SqlError('库房身份无效或同一商品和库房出现重复记录')
-        warehouse_keys.add((key, warehouse))
-        numeric(raw.get('分库数'))
-        numeric(raw.get('分库待入'))
-        able = numeric(raw.get('分库可销数'))
-        row = by_id.get(key, {**ident, 'stockAvailable': None, 'erp': None})
-        if warehouse == '公司大库':
-            if '库存成本' not in raw:
-                raise SqlError('数据库缺少库存成本字段')
-            cost = numeric(raw['库存成本'])
-            if cost is not None and cost < 0:
-                raise SqlError('SQL 库存成本必须是非负单件成本')
-            row.update(stockAvailable=able, erp=cost)
-        by_id[key] = row
     for raw in catalog:
         ident = identity(raw)
         key = ident['goodsId']
-        if key in catalog_ids:
+        if key in by_id:
             raise SqlError('完整目录商品编号重复')
-        catalog_ids.add(key)
-        by_id[key] = {**by_id.get(key, dict(stockAvailable=None, erp=None)), **ident}
+        if not {'最终可销', '待入可销', '单价成本'}.issubset(raw):
+            raise SqlError('数据库缺少库存或成本字段')
+        by_id[key] = {**ident, 'erp': cost_number(raw['单价成本']),
+                      'stockAvailable': numeric(raw['最终可销']),
+                      'stockIncomingAvailable': numeric(raw['待入可销'])}
     return list(by_id.values())
 
 
@@ -162,7 +158,7 @@ def _install_tls_adapter():
 
 
 def read_bundle(config, password, connector=None):
-    """一次只读读取库存分库与完整目录，逐批 fetch；返回原始两组行。
+    """一次只读查询库存目录，逐批读取，超限时拒绝整批。
 
 超过十万行会拒收，避免把截断结果当作全量。错误仅返回分类提示，
 不暴露可能含凭据的驱动原文；连接在 finally 关闭。
@@ -184,19 +180,14 @@ def read_bundle(config, password, connector=None):
             login_timeout=10, timeout=30, as_dict=True, autocommit=True, readonly=True, appname='DIYWorkbenchPythonReadonly',
             cafile=certifi.where() if config['encrypt'] else None, validate_host=not config['trustServerCertificate'], enc_login_only=False, disable_connect_retry=True, pooling=False)
         stage = '读取库存'
-        cursor, results = connection.cursor(), []
-        for query in QUERIES:
-            cursor.execute(query)
-            rows = []
-            while True:
-                chunk = cursor.fetchmany(1000)
-                if not chunk:
-                    break
-                rows.extend(chunk)
-                if len(rows) > 100000:
-                    raise SqlError('查询超过 100000 行，已拒收截断数据', 'SQL_TOO_MANY_RESULTS')
-            results.append(rows)
-        return dict(warehouses=results[0], catalog=results[1])
+        cursor = connection.cursor()
+        cursor.execute(CATALOG_QUERY)
+        rows = []
+        while chunk := cursor.fetchmany(1000):
+            rows.extend(chunk)
+            if len(rows) > MAX_ROWS:
+                raise SqlError('查询超过 100000 行，已拒收截断数据', 'SQL_TOO_MANY_RESULTS')
+        return {'catalog': rows}
     except SqlError:
         raise
     except Exception as error:

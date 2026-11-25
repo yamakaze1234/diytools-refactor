@@ -100,6 +100,7 @@ try{
  await page.locator('[data-zone-toggle="draft"] .zone-title').click();
  assert.equal(await page.evaluate(()=>localStorage.getItem('diy-list-zone')),'draft');
  await page.locator('#batch-profit-price').click();await page.locator('#bpp-target').fill('100');
+ await page.locator('#bpp-rows tr').first().waitFor();
  assert.equal(await page.locator('#bpp-rows tr').count(),2);
  await page.locator('#bpp-apply').click();
  await page.waitForFunction(()=>document.querySelector('#dialog').open===false);
@@ -109,6 +110,7 @@ try{
  if(!await card('c0').getByRole('checkbox',{name:'选择配置1',exact:true}).isChecked())await card('c0').getByRole('checkbox',{name:'选择配置1',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-continuous-config="c0"] input[aria-label="选择配置1"]').checked);
  if(await card('c1').getByRole('checkbox',{name:'选择配置2',exact:true}).isChecked())await card('c1').getByRole('checkbox',{name:'选择配置2',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('[data-continuous-config="c1"] input[aria-label="选择配置2"]').checked);
  await page.locator('#batch-profit-price').click();await page.locator('input[name="bpp-scope"][value="selected"]').check();await page.locator('#bpp-target').fill('100');await page.locator('#bpp-99').selectOption('on');
+ await page.locator('#bpp-rows tr').first().waitFor();
  assert.equal(await page.locator('#bpp-rows tr').count(),2);assert.match(await page.locator('#bpp-rows').textContent(),/整链设置/);await page.locator('#bpp-apply').click();
  assert.equal((await config('c1')).price%100,99);assert.equal((await config('c1')).overviewPrice99,true);
  // 另一条链接展开时切到首套，收起不切换；滚到底后左栏与编辑项一同跟随。

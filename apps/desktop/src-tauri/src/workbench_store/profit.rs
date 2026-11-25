@@ -3,7 +3,7 @@
 //! and cached ERP values are never changed or treated as a live cost observation.
 use super::*;
 
-const FORMULA: &str = "profit/v3";
+const FORMULA: &str = "overview-cost-rate-v1";
 const SOURCE: &str = "offline-manual";
 const ERP_UNKNOWN: &str = "ERP 未实时采集；本轮仅检测已保存的本地核算利润";
 
@@ -168,7 +168,8 @@ fn snapshot(config: &Value, configs: &[Value], shop_settings: &Value) -> Result<
         }
         let name = part["name"].as_str().unwrap_or("");
         let goods = identity(&part["goodsId"]);
-        if (name.is_empty() && goods.is_empty()) || part["specialComponent"] == true {
+        let special = part["specialComponent"] == true;
+        if name.is_empty() && goods.is_empty() && !special {
             continue;
         }
         // Existing editors save the override into tax as well. Honor a valid
@@ -189,7 +190,7 @@ fn snapshot(config: &Value, configs: &[Value], shop_settings: &Value) -> Result<
             .map(str::to_owned)
             .unwrap_or_else(|| format!("{index}:{slot}"));
         rows.push(json!({"lineId":line,"slot":slot,"name":name,"goodsId":goods,
-            "qty":quantity(&part["qty"]),"taxCents":money(tax),"taxUpdatedAt":config["taxUpdatedAt"]}));
+            "qty":if special {Some(1)} else {quantity(&part["qty"])},"taxCents":if special {Some(0)} else {money(tax)},"taxUpdatedAt":config["taxUpdatedAt"]}));
     }
     let price = money(&config["price"]);
     let installment = term(config);
@@ -201,10 +202,22 @@ fn snapshot(config: &Value, configs: &[Value], shop_settings: &Value) -> Result<
                 && !truthy(&c["deletedAt"])
         })
         .all(|c| term(c).is_some() && term(c) == installment);
-    let rule = pricing_rule(&config["pricingRule"])
-        .or_else(|| pricing_rule(&shop_settings["pricingRule"]))
-        .unwrap_or(DEFAULT_RULE);
-    let commission = price.and_then(|p| charge(p, rule[1]));
+    // 离线检测同样按含税成本加运营费；旧链接扣点只保留存储兼容。
+    let rule = pricing_rule(&shop_settings["pricingRule"]).unwrap_or(DEFAULT_RULE);
+    let rate = config["overviewFeeRate"]
+        .as_f64()
+        .filter(|v| v.is_finite() && *v >= 0.0 && *v <= 30.0)
+        .unwrap_or(4.0);
+    let rate_units = decimal(&json!(rate))
+        .and_then(|(n, d)| round_ratio(n.checked_mul(10000)?, d))
+        .unwrap_or(40000);
+    let total = rows.iter().try_fold(0_i64, |sum, part| {
+        part["taxCents"]
+            .as_i64()?
+            .checked_mul(part["qty"].as_i64()?)?
+            .checked_add(sum)
+    });
+    let commission = total.and_then(|cost| charge(cost, rate_units));
     let fee = if consistent {
         installment.and_then(|t| {
             charge(
@@ -212,7 +225,7 @@ fn snapshot(config: &Value, configs: &[Value], shop_settings: &Value) -> Result<
                 match t {
                     6 => rule[4],
                     12 => rule[5],
-                    24 => rule[6],
+                    24 => 100000,
                     _ => 0,
                 },
             )
@@ -225,7 +238,7 @@ fn snapshot(config: &Value, configs: &[Value], shop_settings: &Value) -> Result<
         "product":config["product"].as_str().unwrap_or(""),"configId":config["id"],
         "name":config["name"].as_str().unwrap_or(""),"revision":config["updatedAt"],
         "priceCents":price,"installment":config.get("installment").cloned().unwrap_or(json!(0)),
-        "feeCents":fee,"commissionCents":commission,"taxFixedCents":rule[3],"pricingRuleUnits":rule,"parts":rows}),
+        "feeCents":fee,"commissionCents":commission,"taxFixedCents":10000,"overviewFeeRate":rate,"formulaVersion":FORMULA,"parts":rows}),
     )
 }
 
@@ -261,7 +274,9 @@ fn accounting(snapshot: &Value) -> (Option<i64>, Option<i64>, String) {
     if !issues.is_empty() {
         return (None, None, issues.join("；"));
     }
-    let commission = snapshot["commissionCents"].as_i64().unwrap_or_default();
+    let Some(commission) = snapshot["commissionCents"].as_i64() else {
+        return (None, None, "成本金额超过核算范围".into());
+    };
     let fixed = snapshot["taxFixedCents"].as_i64().unwrap_or_default();
     match price
         .checked_sub(total)
@@ -503,14 +518,8 @@ fn causes(details: &mut Value, snapshot: &Value, old: &Value) {
     }
     let old_price = old["snapshot"]["priceCents"].as_i64().unwrap();
     let price = snapshot["priceCents"].as_i64().unwrap();
-    let price_impact = i128::from(price)
-        - i128::from(old_price)
-        - i128::from(
-            snapshot["commissionCents"].as_i64().unwrap_or_default()
-                - old["snapshot"]["commissionCents"]
-                    .as_i64()
-                    .unwrap_or_default(),
-        );
+    // 价格变化不再携带运营费；成本运营费的差异归入核算口径影响。
+    let price_impact = i128::from(price) - i128::from(old_price);
     let fee_impact = i128::from(old["snapshot"]["feeCents"].as_i64().unwrap())
         - i128::from(snapshot["feeCents"].as_i64().unwrap());
     let cost_impact: i128 = changes

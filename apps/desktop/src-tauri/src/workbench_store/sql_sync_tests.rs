@@ -75,6 +75,19 @@ fn plan_preserves_manual_cost_names_bom_missing_and_asterisk_policy() {
     assert_eq!(before, initial());
 }
 
+// 可销和成本不变时，单独变化的待入数量也必须持久化并进入预览差异。
+#[test]
+fn incoming_only_change_is_reported_and_preserves_cost_and_stock() {
+    let before = stock_plan(&initial(), &rows(), "t1").unwrap().next;
+    let mut observations = rows();
+    observations[0]["stockIncomingAvailable"] = json!(-4);
+    let plan = stock_plan(&before, &observations, "t2").unwrap();
+    assert_eq!(plan.changes.len(), 4);
+    assert!(plan.changes.iter().all(|row| row["incomingAfter"] == -4 && row["before"] == row["after"]));
+    assert_eq!(plan.next["costSource"][0]["stockIncomingAvailable"], -4);
+    assert_eq!(plan.next["configs"][0]["actualParts"][0]["stockIncomingAvailable"], -4);
+}
+
 #[test]
 fn unknown_is_null_and_saved_starred_parts_still_refresh() {
     let mut before = initial();
@@ -204,6 +217,7 @@ fn invalid_normalized_rows_and_conflicting_manual_prices_are_not_silently_coerce
         json!([]),
         json!([{"goodsId":9007199254740993u64,"name":"CPU","erp":1,"stockAvailable":1}]),
         json!([{"goodsId":"1","name":"CPU","erp":-1,"stockAvailable":1}]),
+        json!([{"goodsId":"1","name":"CPU","erp":2,"stockAvailable":1,"stockIncomingAvailable":"4"}]),
         json!([{"goodsId":"1","name":"CPU","erp":1}]),
     ] {
         assert!(sql_preview(&store, invalid, &settings(), "operator").is_err());
@@ -354,6 +368,7 @@ fn live_sql_observations_apply_to_isolated_backup() {
         "erpUnknown",
         "erpUpdatedAt",
         "stockAvailable",
+        "stockIncomingAvailable",
         "stockUpdatedAt",
         "stockSource",
     ];
@@ -380,7 +395,7 @@ fn live_sql_observations_apply_to_isolated_backup() {
         remove_local(&mut result, &local_fields);
         result
     };
-    // Removing only the seven permitted local-observation fields leaves tax,
+    // Removing only the permitted local-observation fields leaves tax,
     // taxOverride, independent actualParts, identities, layouts and names intact.
     assert!(
         scrub(&before["configs"]) == scrub(&after["configs"]),

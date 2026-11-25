@@ -11,7 +11,7 @@ pub(super) fn download_matches(url: &Url, tag: &str, name: &str) -> bool {
         && url.path() == format!("/{REPO}/releases/download/{tag}/{name}")
 }
 fn tag_valid(tag: &str) -> bool {
-    tag == CHANNEL_TAG
+    tag == CHANNEL_TAG || tag == component::TAG
         || tag.strip_prefix(TAG_PREFIX).is_some_and(|text| {
             Version::parse(text)
                 .is_ok_and(|v| v.pre.is_empty() && v.build.is_empty() && v.to_string() == text)
@@ -33,6 +33,9 @@ fn allowed(url: &Url) -> bool {
         .strip_prefix(&format!("/{REPO}/releases/download/"))
     {
         if let Some((tag, name)) = path.split_once('/') {
+            if tag == component::TAG {
+                return name == component::MANIFEST_NAME || component::valid_artifact_name(name);
+            }
             return tag_valid(tag)
                 && (name == MANIFEST_NAME
                     || (tag.starts_with(TAG_PREFIX)
@@ -45,7 +48,7 @@ fn allowed(url: &Url) -> bool {
         .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok())
 }
 // 连接失败或服务不可用才切换备用源；格式、签名与地址错误必须明确失败。
-fn response(
+pub(super) fn response(
     client: &Client,
     url: &Url,
     metadata: bool,
@@ -89,7 +92,7 @@ fn response(
     }
     Ok(None)
 }
-fn release_asset(client: &Client, tag: &str, name: &str) -> Result<Option<Url>, String> {
+pub(super) fn release_asset(client: &Client, tag: &str, name: &str) -> Result<Option<Url>, String> {
     let url = Url::parse(&format!(
         "https://{HOST}/api/v1/repos/{REPO}/releases/tags/{tag}"
     ))

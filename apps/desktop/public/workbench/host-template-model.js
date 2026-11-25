@@ -37,13 +37,13 @@ const commonVram={'5070':12,'5070TI':16,'5080':16,'5090':32,'5090D':32,'9070XT':
 export function gpuSpec(part){
  const text=partText(part).toUpperCase();
  const codename=text.match(/\b(?:GV-)?([NR])(\d{4}|\d{3})(GRE|XT|[TSX])?(?=[A-Z-]|\b)/);
- const match=text.match(/\b(RTX|RX)[\s-]*(\d{4})[\s-]*(TI\s*SUPER|TI|XT|SUPER|GRE|D\b)?/)||
+ const match=text.match(/\b(RTX|RX)[\s-]*(\d{4})[\s-]*(TI\s*SUPER|TI|XT|SUPER|GRE|D(?=V\d|\b))?/)||
   (/(显卡|技嘉|华硕|七彩虹|微星|GIGABYTE|ASUS|MSI)/.test(text)?
-   text.match(/(?:^|[^A-Z0-9])(RTX|RX)?[\s-]*([2-9]\d{3})\s*(TI\s*SUPER|TI|XT|SUPER|GRE|D\b)?(?=\b|[^A-Z0-9])(?=.{0,30}\d{1,2}\s*G)/):null);
+   text.match(/(?:^|[^A-Z0-9])(RTX|RX)?[\s-]*([2-9]\d{3})\s*(TI\s*SUPER|TI|XT|SUPER|GRE|D(?=V\d|\b))?(?=\b|[^A-Z0-9]|V\d)(?=.{0,30}\d{1,2}\s*G)/):null);
  const codeSuffix={T:'TI',S:'SUPER',X:'XT',XT:'XT',GRE:'GRE'};
  const model=match?match[2]+(match[3]||'').replace(/\s/g,''):codename?
   codename[2].padEnd(4,'0')+(codeSuffix[codename[3]]||''):'';
- if(!model||/延长线|支架|机箱|ITX\/|一体水冷/.test(text))return null;
+ if(!model||/延长线|支架|机箱|ITX\/|一体水冷|内存|DDR[45]|马甲|\bC\d{2}\b/.test(text))return null;
  const maker=(match?.[1]==='RX'||codename?.[1]==='R'||!match?.[1]&&/(?:XT|GRE)$/.test(model))?'RX':'RTX';
  const capacity=partCapacity(part,'vramGb');
  const namedVram=Number(text.match(/(?:^|[^0-9])(\d{1,2})\s*G[BD]?\b/)?.[1]);
@@ -68,7 +68,7 @@ export function templateCatalog(catalog,configs=[]){
   const text=partText(row),category=row.slot||slots.get(row.sourceId)||slots.get(row.goodsId)||row.erpCategory||'';
   const slot=templateSlots.includes(category)||['散热','机箱','风扇'].includes(category)||category.startsWith('配件')?category:
    gpuSpec(row)?'显卡':boardSocket(text)?'主板':/CPU|处理器|酷睿|锐龙|RYZEN|\b1[2-4]\d{3}(KF?|F)\b/i.test(text)?'CPU':
-   /内存|DDR[45]|UDIMM/i.test(text)?'内存':/固态|硬盘|\bSSD\b|\bNVME\b/i.test(text)?'硬盘':
+   /内存|DDR[45]|UDIMM|马甲|\bC\d{2}\b/i.test(text)?'内存':/固态|硬盘|\bSSD\b|\bNVME\b/i.test(text)?'硬盘':
    /电源|\b\d{3,4}W\b/i.test(text)?'电源':/机箱/.test(text)?'机箱':/水冷|散热器/.test(text)?'散热':
    /风扇|\b(?:ZE|ZA|XA)-/.test(text)?'风扇':'配件';
   return {...row,templateSlot:slot};

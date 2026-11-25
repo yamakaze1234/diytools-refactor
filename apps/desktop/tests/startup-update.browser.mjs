@@ -105,6 +105,9 @@ try {
           if (scenario === 'view-only') return { ...release, canInstall: false, notes: ' \r\n ' };
           return release;
         }
+        // 主程序已最新时仍然独立提示组件更新，两个检查共用原生互斥锁。
+        if(command==='erp_runtime_check')return {status:scenario==='current'?'outdated':'ready',hasLocal:true};
+        if(command==='erp_runtime_install')return {status:'ready'};
         if (command === 'plugin:app|version') return release.currentVersion;
         if (command === 'plugin:event|listen') return 1;
         if (command === 'updater_download') return download.promise;
@@ -189,6 +192,12 @@ try {
         }
         assert.equal(await notice.count(), 0);
       }
+      if(scenario==='current'){
+        await page.getByRole('button',{name:'一键更新组件',exact:true}).click();
+        await page.getByText('ERP 匹配组件已更新。',{exact:false}).first().waitFor();
+        assert.equal(calls.filter(cmd=>cmd==='erp_runtime_install').length,1);
+      }
+      assert.equal(calls.filter(cmd=>cmd==='erp_runtime_check').length,1);
       const manualAfterDismiss = scenario === 'light' || scenario === 'dark';
       assert.equal(calls.filter(command => command === 'updater_check').length, manualAfterDismiss ? 2 : 1);
       if (scenario !== 'small') assert.ok(!calls.includes('updater_download') && !calls.includes('updater_install'));

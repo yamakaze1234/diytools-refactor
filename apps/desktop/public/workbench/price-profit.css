@@ -1,3 +1,4 @@
+@import url('./erp-matching.css');
 /* 价格与利润确认稿：页标题、操作行、状态行、公式栏和工作表共用一套尺寸。 */
 body:has(.price-profit-active) { --desktop-toolbar-height: 52px; }
 body.has-reui-rail:has(.price-profit-active) { padding-left: 57px; }
@@ -46,9 +47,9 @@ html.dark #price-profit-page {
 #price-profit-page .pp-field > span { color: var(--pp-muted); font-size: 11px; }
 #price-profit-page :is(.pp-field select,.pp-search input) { min-width: 0; min-height: 0; height: 28px; border: 0; background: transparent; font-size: 12px; }
 #price-profit-page .pp-field select { max-width: 170px; padding: 0 6px 0 0; }
-#price-profit-page .pp-search { position: relative; padding: 0 8px 0 26px; }
-.pp-search::before { content: ''; position: absolute; top: 8px; left: 9px; width: 9px; height: 9px; border: 1px solid var(--pp-muted); border-radius: 50%; pointer-events: none; }
-.pp-search::after { content: ''; position: absolute; top: 18px; left: 17px; width: 5px; height: 1px; background: var(--pp-muted); transform: rotate(48deg); pointer-events: none; }
+#price-profit-page .pp-toolbar .pp-control.pp-search { position: relative; padding: 0 8px 0 28px; }
+.pp-search::before { content: ''; position: absolute; top: calc(50% - 6px); left: 9px; width: 9px; height: 9px; border: 1px solid var(--pp-muted); border-radius: 50%; pointer-events: none; }
+.pp-search::after { content: ''; position: absolute; top: calc(50% + 4px); left: 17px; width: 5px; height: 1px; background: var(--pp-muted); transform: rotate(48deg); pointer-events: none; }
 #price-profit-page .pp-search input { width: clamp(126px,15vw,230px); padding: 0; }
 #price-profit-page .pp-switcher { display: flex; height: 31px; border: 1px solid var(--pp-control); border-radius: 2px; padding: 2px; background: var(--pp-soft); }
 #price-profit-page .pp-switcher button { height: auto; min-width: 52px; padding: 0 7px; border: 0; border-radius: 1px; background: transparent; color: var(--pp-muted); }
@@ -75,7 +76,7 @@ html.dark #price-profit-page {
 .pp-letters th[data-current] { background: var(--pp-accent); color: #161616; font-weight: 700; }
 .pp-fields th { top: 24px; height: 32px; background: var(--pp-head); color: #fff; border-color: #464641; font-size: 12px; font-weight: 650; }
 .pp-fields th[data-pp-head="5"] { background: #3b3b33; border-color: #57574c; }
-.pp-fields th:is([data-pp-head="6"],[data-pp-head="7"],[data-pp-head="8"],[data-pp-head="15"]) { background: #454139; color: #fff0c6; border-color: #69655b; }
+.pp-fields th:is([data-pp-head="7"],[data-pp-head="8"],[data-pp-head="9"],[data-pp-head="16"]) { background: #454139; color: #fff0c6; border-color: #69655b; }
 .pp-fields th:has(button) { padding: 0; }
 #price-profit-page .pp-fields button { display: flex; align-items: center; justify-content: center; position: relative; width: 100%; height: 31px; min-height: 0; padding: 0 10px; border: 0; background: transparent; color: inherit; font: inherit; }
 #price-profit-page .pp-fields button:hover { background: #ffffff1a; }
@@ -98,8 +99,6 @@ html.dark #price-profit-page {
 .pp-config-cell { display: flex; align-items: center; height: 31px; min-width: 0; }
 #price-profit-page .pp-config-link { display: grid; place-items: center; flex: 0 0 27px; height: 31px; min-height: 0; padding: 0; border: 0; background: transparent; }
 #price-profit-page .pp-config-link:is(:hover,[aria-expanded=true]) { background: #f3edac; color: #161616; }
-.pp-fields th:first-child #pp-select-all { opacity: 0; }
-.pp-fields th:first-child:is(:hover,:focus-within) #pp-select-all, .pp-fields th:first-child #pp-select-all:checked { opacity: 1; }
 #price-profit-page .pp-cell { min-width: 0; width: 100%; height: 29px; min-height: 0; border: 1px solid transparent; padding: 0 4px; border-radius: 1px; background: transparent; }
 #price-profit-page .pp-cell:hover { border-color: var(--pp-control); }
 #price-profit-page .pp-cell:focus { outline: none; border-color: var(--pp-ink); background: var(--pp-panel); }
@@ -109,7 +108,7 @@ html.dark #price-profit-page {
 .pp-table td.pp-number { text-align: right; }
 .pp-table > tbody > tr > td[data-pp-col="4"] { color: #bd242b; font-weight: 700; }
 .pp-table > tbody > tr > td[data-pp-col="5"] { background: var(--pp-arrival); }
-.pp-table > tbody > tr > td[data-pp-col="14"] { background: var(--pp-profit); font-weight: 650; }
+.pp-table > tbody > tr > td[data-pp-col="15"] { background: var(--pp-profit); font-weight: 650; }
 .pp-table > tbody > tr > td[data-profit-tone] { background: var(--pp-profit); font-weight: 650; }
 .pp-table > tbody > tr > td[data-profit-tone=positive] { background: var(--pp-profit-good); color: var(--pp-good); }
 .pp-table > tbody > tr > td:is([data-profit-tone=loss],[data-profit-tone=negative],.pp-out) { background: var(--pp-profit-loss); color: var(--pp-loss); }
@@ -196,3 +195,83 @@ html.dark #price-profit-page {
 /* 状态筛选使用整行勾选标签，便于键盘操作。 */
 .pp-status-options { display:grid; gap:10px; margin:14px 0; }
 .pp-status-options label { display:flex; align-items:center; gap:8px; }
+
+/* 主表拖选只接管数据行；展开卡片继续使用总表的原生文字编辑和选字。 */
+.pp-table > tbody > [data-pp-row] { user-select:none; }
+body.pp-selecting, body.pp-selecting * { user-select:none !important; cursor:cell !important; }
+.pp-table > tbody > .pp-expanded { user-select:text; }
+.pp-table > tbody > [data-pp-row] > td { position:relative; }
+.pp-table > tbody > [data-pp-row] > td:is(.pp-frozen-number,.pp-frozen-config) { position:sticky; }
+.pp-table td[data-pp-dirty]::before { content:''; position:absolute; top:0; left:0; border-top:7px solid #ed8b24; border-right:7px solid transparent; z-index:4; pointer-events:none; }
+.pp-fields th { position:relative; }
+.pp-resizer { position:absolute; right:-3px; top:0; width:7px; height:100%; cursor:col-resize; z-index:10; touch-action:none; }
+.pp-resizer:hover { background:#fffa0066; }
+.pp-link-controls { display:flex; align-items:center; gap:14px; }
+.pp-link-controls label { display:flex; align-items:center; gap:4px; white-space:nowrap; }
+#price-profit-page .pp-link-controls :is(input:not([type=checkbox]),select) { width:auto; min-height:24px; height:24px; border:1px solid var(--pp-control); padding:1px 4px; background:var(--pp-panel); font-size:11px; }
+#price-profit-page .pp-cell[data-pp-cell$="Target"], #price-profit-page .pp-cell[data-pp-cell="rate"] { text-align:right; font-variant-numeric:tabular-nums; }
+#price-profit-page .pp-number-cell { font-size:12px; text-align:right; }
+/* 现货与待入各占一行，在默认行高中完整显示。 */
+.pp-table > tbody > tr[data-pp-row] > td[data-pp-col="10"] { padding:0 4px; line-height:1.1; }
+.pp-incoming { display:block; font-size:10px; line-height:1.1; color:var(--pp-muted); font-weight:600; }
+.pp-detail .reui-continuous { height:auto; padding:0; }
+.pp-detail .ov-config { margin:0; }
+.pp-detail { padding:10px 12px; }
+
+/* 单独核算价聚合提醒固定一行，更多配件收进汇总；展开卡片内仍可正常选字。 */
+.pp-tax-banner { display:flex; align-items:center; gap:12px; height:44px; min-height:44px; overflow:hidden; white-space:nowrap; padding:0 12px; border-bottom:1px solid #efcf84; background:#fff7e4; color:#805616; font-size:12px; }
+.pp-tax-banner[hidden],#pp-tax-reopen[hidden] { display:none; }
+.pp-tax-banner>strong { flex:none; font-weight:600; }
+.pp-tax-banner small { font-weight:400; }
+.pp-tax-chips { display:flex; flex:1; min-width:0; gap:6px; overflow:hidden; }
+.pp-tax-chips button { max-width:180px; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+.pp-tax-actions { display:flex; flex:none; gap:6px; margin-left:auto; }
+.pp-tax-banner button,.pp-tax-pill { border:1px solid #e9cb87; color:inherit; background:#fffaf0; padding:4px 7px; font-size:11px; border-radius:4px; white-space:nowrap; }
+.pp-tax-pill { color:#805616; cursor:pointer; }
+.pp-tax-changed { background:#fff6dc!important; color:#8b601a; }
+.pp-tax-cost { width:100%; border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; display:flex; justify-content:flex-end; gap:5px; }
+.pp-tax-cost small { font-size:10px; padding:1px 3px; background:#ffe5ad; border-radius:3px; }
+.pp-tax-tabs { display:flex; gap:8px; margin-bottom:14px; }
+.pp-tax-tabs [aria-selected=true] { background:#f3f134; color:#181a19; }
+.pp-tax-scroll { max-height:52vh; overflow:auto; margin:12px 0; }
+.pp-tax-summary-table { width:100%; border-collapse:collapse; font-size:12px; }
+.pp-tax-summary-table :is(th,td) { padding:9px 8px; text-align:left; border-bottom:1px solid #ddd; }
+.pp-tax-summary-table small { display:block; color:#78786d; margin-top:3px; }
+.pp-tax-summary-table td:last-child { white-space:nowrap; }
+.ov-tax-reminder { display:flex; align-items:center; gap:12px; padding:9px 12px; background:#fff7e4; color:#805616; border-bottom:1px solid #efcf84; font-size:12px; }
+.ov-tax-reminder span { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ov-tax-reminder button { flex:none; }
+html.dark .pp-table > tbody > tr > td[data-pp-col="4"] { color:var(--pp-loss); }
+html.dark :is(.pp-tax-banner,.ov-tax-reminder) { background:#332c1c; color:#ecd39d; border-color:#695737; }
+html.dark #price-profit-page :is(.pp-tax-banner button,.pp-tax-pill,.pp-tax-cost small),
+html.dark .ov-tax-reminder button { background:#493c24; color:#f0d69d; border-color:#79643d; }
+html.dark .pp-tax-changed { background:#382f1d!important; color:#f0d69d; }
+
+/* ERP 任务条在弹窗外保持存活，表格编辑与卡片根不受轮询影响。 */
+.erp-match-floating { position:fixed; right:22px; bottom:22px; z-index:180; display:flex; gap:16px; align-items:center; padding:12px 16px; border:1px solid #aaa; background:var(--pp-panel,#fff); color:var(--pp-ink,#181a19); box-shadow:0 4px 18px #0002; font-size:12px; }
+.erp-match-floating[hidden] { display:none; }
+.erp-match-scroll { max-height:48vh; overflow:auto; }
+.erp-match-scroll table,.shop-extras-table { width:100%; border-collapse:collapse; font-size:12px; }
+.erp-match-scroll :is(th,td),.shop-extras-table :is(th,td) { text-align:left; padding:8px; border-bottom:1px solid #ccc; }
+.erp-match-scroll small { display:block; color:#777; margin-top:4px; }
+.shop-settings-tabs { display:flex; gap:6px; border-bottom:1px solid #ccc; margin-bottom:16px; }
+.shop-settings-tabs [aria-selected=true] { border-bottom:3px solid #d4cb31; font-weight:700; }
+.shop-erp-identity { display:grid; grid-template-columns:1fr 2fr; gap:14px; }
+.shop-extras-table input { width:80px; }
+#shop-extra-add { margin-top:12px; padding:12px; border:1px solid #ccc; }
+#shop-extra-add[hidden],[data-shop-panel][hidden] { display:none!important; }
+/* 搜索结果单行一个配件，商品码独立显示；色块同时用于键盘和鼠标选择。 */
+#shop-extra-results { display:grid; gap:4px; margin:8px 0; max-height:220px; overflow:auto; }
+#shop-extra-results button { display:flex; justify-content:space-between; align-items:center; gap:12px; width:100%; height:auto; padding:8px 12px; text-align:left; }
+#shop-extra-results button strong { overflow-wrap:anywhere; }
+#shop-extra-results button span { flex:none; font-variant-numeric:tabular-nums; }
+#shop-extra-results button[aria-pressed="true"] { border-color:#9c7800; background:#fff0ac; color:#342b00; }
+.erp-session-status,.erp-rematch-warning { padding:7px 10px; margin:8px 0; border-inline-start:3px solid #b87a15; background:#fff3d5; color:#684211; }
+.erp-session-status[data-connected="true"] { border-color:#18825a; background:#e7f6ed; color:#145336; }
+#erp-match-summary { font-weight:600; }
+#erp-match-panel [hidden],#shop-extra-add [hidden] { display:none!important; }
+
+/* ERP 会话提示沿用当前主题的对比度。 */
+[data-workbench-theme="dark"] :is(.erp-session-status,.erp-rematch-warning) { background:#423319; color:#ffda93; }
+[data-workbench-theme="dark"] .erp-session-status[data-connected="true"] { background:#193b2b; color:#99eac1; }
+[data-workbench-theme="dark"] #shop-extra-results button[aria-pressed="true"] { background:#4a3d1a; color:#ffdc86; }

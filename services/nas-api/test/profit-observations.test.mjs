@@ -27,7 +27,7 @@ async function fixture(name,role){
   await db.exec(migration);return db;
  }catch(error){await db.close();throw error;}
 }
-const price=(id,tax,version='1')=>({id,shopId:'intel',name:id,product:'测试链接',productId:'product',nasVersion:version,installment:0,price:1000,
+const price=(id,tax,version='1')=>({id,shopId:'intel',name:id,product:'测试链接',productId:'product',nasVersion:version,installment:0,price:1000,overviewFeeRate:0,
  parts:[{name:'展示项',tax:0,qty:1}],actualParts:[{name:'实际件',slot:'CPU',goodsId:'00003',tax,qty:1}]});
 const rules={pricingRule:{taxRate:0,taxFixed:0}};
 
@@ -48,7 +48,8 @@ test('正式隔离库保存检测、推进有效基准，校验最新快照重�
   await setActor(db,'first','operator');
   assert.deepEqual(await call('history'),{runs:[]});
   const repeat=randomUUID(),first=await start(repeat);assert.deepEqual(await start(repeat),first);assert.equal(loads,1);
-  const before=(await status(first.runId)).results[0];assert.equal(before.profit_cents,50000);assert.equal(before.previous_delta_cents,null);
+  const before=(await status(first.runId)).results[0];assert.equal(before.profit_cents,40000);assert.equal(before.previous_delta_cents,null);
+  assert.equal(before.snapshot.overviewFeeRate,0);assert.equal(before.snapshot.formulaVersion,'overview-cost-rate-v1');
   assert.equal(before.snapshot.parts[0].name,'实际件');assert.equal((await status(first.runId)).run.erpCollected,false);
   await assert.rejects(()=>start(repeat,['config-02']),{code:'OPERATION_REUSED'});
   tax=600;const exact=(await status((await start()).runId)).results[0];
@@ -100,4 +101,22 @@ test('试验角色隔离且其它库被安装守卫拒绝',async()=>{
  }finally{await db.close();}
  const wrong=new PGlite();
  try{await assert.rejects(()=>wrong.exec(migration),/只允许英特尔正式库或试验库/);}finally{await wrong.close();}
+});
+
+test('运营费率进入服务端快照指纹，旧检测不能跨费率重设基准',async()=>{
+ const db=await fixture(formal,formalRole);
+ try{
+  await db.exec('SET ROLE '+formalRole);await setActor(db,'first','operator');
+  let rate=4;
+  const load=async()=>({configs:[{...price('config-01',500),overviewFeeRate:rate}],settings:rules});
+  const call=(action,input)=>runNasProfit(db,action,{shopId:'intel',...input},load);
+  const first=await call('start',{requestId:randomUUID(),configIds:['config-01']});
+  const row=(await call('status',{runId:first.runId})).results[0];
+  assert.equal(row.profit_cents,38000);assert.equal(row.snapshot.overviewFeeRate,4);
+  assert.equal(row.snapshot.formulaVersion,'overview-cost-rate-v1');
+  rate=8;
+  await assert.rejects(()=>call('reset',{requestId:randomUUID(),configId:'config-01',metric:'accounting',resultId:row.id}),{code:'PROFIT_RESULT_STALE'});
+  const second=await call('start',{requestId:randomUUID(),configIds:['config-01']});
+  assert.equal((await call('status',{runId:second.runId})).results[0].profit_cents,36000);
+ }finally{await db.close();}
 });

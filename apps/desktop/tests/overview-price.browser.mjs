@@ -255,6 +255,8 @@ try{
  for(const [goodsId,unit,formatted] of [['1020',20,'20'],['1520',1520,'1,520']]){
   await pasteQuantity(goodsId,1);
   assert.equal(await cpuRow.locator('.ov-line-calc').count(),0);
+  // 配件写入先完成，React 卡片随后提交显示值。
+  await page.waitForFunction(({selector,value})=>document.querySelector(selector)?.value===value,{selector:'[data-continuous-config="c0"] [aria-label="配置1 CPU含税单价"]',value:formatted});
   assert.equal(await taxUnit.inputValue(),formatted);
   assert.equal(await taxUnit.evaluate(input=>input.getBoundingClientRect().width<=input.closest('td').clientWidth),true);
   await pasteQuantity(goodsId,5);
@@ -369,15 +371,15 @@ try{
  const sheet=page.locator('#price-profit-page');await sheet.waitFor();
  if(screenshots)await page.screenshot({path:join(screenshots,'workbench-price-closed.png')});
  assert.equal(await sheet.locator('[data-pp-row]').count(),2);
- assert.deepEqual(await sheet.locator('.pp-fields th:visible').allTextContents(),['序','SPU','SKU','简称','售价','到手价↕','核算利润↕','ERP 利润↕','核算利润率↕','可销','核算成本','ERP 成本','状态','机箱 / 颜色','尾数99']);
+ assert.deepEqual(await sheet.locator('.pp-fields th:visible').allTextContents(),['序','SPU','SKU','SKU 名称 / 简称','售价','到手价↕','运营费率','核算利润↕','ERP 利润↕','核算利润率↕','可销','含税成本','ERP 成本','状态','机箱 / 颜色','费率成本']);
  assert.equal(await sheet.locator('.pp-fields th').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(38, 38, 38)');
  const expand=sheet.locator('[data-pp-expand="c0"]').first();
  assert.equal(await expand.getAttribute('aria-expanded'),'false');
  assert.equal(await sheet.locator('[data-pp-collapse]').first().getAttribute('aria-expanded'),'true');
  await expand.click();
- assert.equal(await sheet.getByRole('table',{name:'展开的实际配件'}).locator('tbody tr').count(),2);
+ assert.equal(await sheet.locator('[data-continuous-config="c0"] .ov-table tbody tr').count(),9);
  if(screenshots)await page.screenshot({path:join(screenshots,'workbench-price.png')});
- await edit(sheet.locator('[data-pp-config="c0"][data-pp-qty="CPU"]'),'2');
+ await edit(sheet.locator('[data-continuous-config="c0"]').getByRole('textbox',{name:'配置1 CPU实际数量'}),'2');
  await waitQuantity(2);
  await edit(sheet.locator('[data-row-id="c0"][data-pp-cell="shortName"]'),'测试简称');
  await page.waitForFunction(()=>window.overviewProbe.snapshot().configs.find(c=>c.id==='c0').shortName==='测试简称');

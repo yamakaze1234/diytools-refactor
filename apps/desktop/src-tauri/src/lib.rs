@@ -17,6 +17,7 @@ mod local_store;
 mod migration_store;
 mod workbench_store;
 mod updater;
+mod cache_cleanup;
 mod embedded_assets;
 mod agent_commands;
 #[cfg(feature = "agent-tools")]
@@ -199,6 +200,9 @@ pub fn run() {
             updater::updater_download,
             updater::updater_install,
             updater::updater_recovery_status,
+            updater::workbench_clear_cache,
+            updater::component::erp_runtime_check,
+            updater::component::erp_runtime_install,
             updater::access::updater_access_status,
             updater::access::updater_access_save,
             updater::access::updater_access_clear,
