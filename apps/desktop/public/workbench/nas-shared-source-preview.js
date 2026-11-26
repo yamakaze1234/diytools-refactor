@@ -71,7 +71,7 @@ export function createSharedSourcePreview({snapshots,shop,storage,scope}) {
  };
  rebuild();
  const record=row=>bySource.get(row.sourceId);
- return {record,preview:true,rows:()=>catalog,canCreate:shops.length===3,defaultScope:shops.length===3?'shared':shop,
+ return {record,preview:true,rows:()=>catalog,entries:()=>[...entries.values()],canCreate:shops.length===3,defaultScope:shops.length===3?'shared':shop,
   scopes:shops.length===3?['shared',...shops]:shops,
   searchNames:row=>{
    const entry=record(row);

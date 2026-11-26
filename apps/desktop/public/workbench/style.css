@@ -240,7 +240,8 @@ dialog.overview-dialog{width:min(1040px,calc(100vw - 32px))}
 .part-model [data-part-name]{text-align:left}.part-model .product-result{color:var(--text,#132b50)}
 .display-name-field{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--legacy-muted,#6b7e98);white-space:nowrap}.display-name-field input{flex:1;min-width:0;font-size:12px;padding:7px 9px;color:var(--text,#132b50)}
 
-.config-item[draggable=true]{cursor:grab}.config-item.config-dragging{opacity:.45}.config-item.config-drop-before{box-shadow:0 -3px 0 #1677ff}.config-item.config-drop-after{box-shadow:0 3px 0 #1677ff}
+/* 避让式拖动：拿起的卡片浮起跟随指针，其余卡片动画让位 */
+.sortable-handle{cursor:grab;user-select:none;-webkit-user-select:none}.sortable-active,.sortable-active *{cursor:grabbing!important;user-select:none}.sortable-lifted{box-shadow:0 10px 24px rgba(0,0,0,.22);opacity:.96}
 
 #clear-selection{padding:2px 6px;font-size:11px;margin-left:5px}#editing-context{flex-wrap:wrap}#editing-context>div{flex:1;min-width:120px}#editing-context strong{white-space:normal;overflow-wrap:anywhere}#locate-editing{white-space:nowrap}.config-item.config-located{outline:2px solid #1677ff;background:#e5f0ff}
 .erp-price-warning{grid-column:1/-1;margin:2px 0 0;padding:8px 10px;border:1px solid #e4b63c;border-radius:8px;background:#fff8d8;color:#946000;font-size:12px;font-weight:650;line-height:1.5}.erp-price-warning.hidden{display:none}.erp-fallback-note{display:block;margin-top:2px;color:#946000;font-size:11px;font-weight:650}

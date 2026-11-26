@@ -74,9 +74,9 @@ try{
  const open=async()=>{await page.goto(base+'/workbench/p2-fixture');await page.waitForFunction(()=>window.workbenchReady);await page.getByRole('button',{name:'价格',exact:true}).click();await page.locator('#price-profit-title').waitFor();};
  await page.addInitScript(()=>{
   // 只模拟组件通道，登录和匹配仍走真实 JSONL 测试 worker。
-  window.fixtureRuntimeStatus='missing';window.fixtureInstalls=0;
+  window.fixtureRuntimeStatus=sessionStorage.getItem('fixture-runtime')||'missing';window.fixtureInstalls=0;
   window.workbenchErpRuntime=async action=>{
-   if(action==='install'){window.fixtureInstalls++;window.fixtureRuntimeStatus='ready';}
+   if(action==='install'){window.fixtureInstalls++;window.fixtureRuntimeStatus='ready';sessionStorage.setItem('fixture-runtime','ready');}
    return {status:window.fixtureRuntimeStatus,hasLocal:window.fixtureRuntimeStatus!=='missing'};
   };
  });
@@ -208,12 +208,19 @@ try{
  await page.waitForFunction(()=>document.querySelector('.erp-match-floating').textContent.includes('已完成'));
  await page.locator('[data-erp-dismiss]').click();await page.locator('.erp-match-floating').waitFor({state:'hidden'});
  assert.equal((await control({})).result.writes.length,18);
+ // 重建页面后等待旧回执真正到达，避免仅断言浮条初始化时的隐藏状态。
+ await page.reload();await page.waitForFunction(()=>window.workbenchReady);
+ await page.waitForFunction(()=>document.querySelector('.erp-match-floating strong')?.textContent.includes('已完成'));
+ assert.equal(await page.locator('.erp-match-floating').evaluate(el=>el.hidden),true);
+ await page.getByRole('button',{name:'价格',exact:true}).click();await page.locator('#price-profit-title').waitFor();
  // 写入超时后只提供远端只读核验，反复点击不能降级成可重新写入状态。
  await checks('c2').uncheck();await checks('c3').check();await control({failWrite:'save_bom'});
  await page.locator('#pp-erp-match').click();await page.locator('#erp-match-preview').click();
  await page.waitForFunction(()=>!document.querySelector('#erp-match-execute').hidden&&!document.querySelector('#erp-match-execute').disabled);
  page.once('dialog',dialog=>dialog.accept());await page.locator('#erp-match-execute').click();
  await page.waitForFunction(()=>document.querySelector('#erp-match-message').textContent.includes('未确认'));
+ assert.equal(await page.locator('.erp-match-floating').evaluate(el=>el.hidden),false);
+ assert.equal(await page.evaluate(()=>localStorage.getItem('diy-erp-matching-dismissed-v1')),null);
  const count=(await control({})).result.writes.length;
  for(let i=0;i<2;i++){
   await page.locator('#erp-match-recover').click();await page.waitForFunction(()=>!document.querySelector('#erp-match-recover').hidden&&document.querySelector('#erp-match-message').textContent.includes('需要只读核验'));

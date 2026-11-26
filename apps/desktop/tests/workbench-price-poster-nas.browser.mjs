@@ -300,13 +300,12 @@ try{
 
  // 从实际侧栏拖动最后一套到最前面，再进入价格表读取新索引。
  await returnToConfig();
- await page.evaluate(([from,to])=>{
-  const source=document.querySelector(`.config-item[data-id="${from}"]`);
-  const target=document.querySelector(`.config-item[data-id="${to}"]`);
-  const dataTransfer=new DataTransfer();
-  source.dispatchEvent(new DragEvent('dragstart',{bubbles:true,dataTransfer}));
-  target.dispatchEvent(new DragEvent('drop',{bubbles:true,dataTransfer,clientY:target.getBoundingClientRect().top}));
- },[target,row('a',1)]);
+ {
+  const source=page.locator(`.config-item[data-id="${target}"]`),first=page.locator(`.config-item[data-id="${row('a',1)}"]`);
+  await source.scrollIntoViewIfNeeded();const from=await source.boundingBox(),to=await first.boundingBox();
+  await page.mouse.move(from.x+from.width/2,from.y+from.height/2);await page.mouse.down();
+  await page.mouse.move(from.x+from.width/2,to.y+2,{steps:10});await page.mouse.up();
+ }
  await page.waitForFunction(id=>document.querySelector('[data-list-product="price-fix-a"] .config-item')?.dataset.id===id,target);
  const newOrder=(await sidebar()).filter(id=>id.startsWith(link('a')));
  await page.getByRole('button',{name:'价格',exact:true}).click();

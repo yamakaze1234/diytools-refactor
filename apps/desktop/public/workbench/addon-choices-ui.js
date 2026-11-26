@@ -5,7 +5,7 @@ import {choiceDescription,choiceAddon,validateAddon} from './addon-data.js';
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 /** 只调整表单投影，历史 customText 字段按原值保留，不再提供新建该模式的选项。 */
-export function mountAddonChoices(root,{initial=[],getCosts,sourceId,onChange=()=>{},renderCheck=()=>'',react,statusModel}){
+export function mountAddonChoices(root,{initial=[],getCosts,sourceId,onChange=()=>{},renderCheck=()=>'',react,statusModel,preserveSelection=false}){
  let choices=structuredClone(initial);
  const textOnly=new Map(choices.map(c=>[c.id,!c.goodsId]));
  root.classList.add('addon-choices-editor');
@@ -49,7 +49,7 @@ export function mountAddonChoices(root,{initial=[],getCosts,sourceId,onChange=()
    <button type="button" data-choice-add>＋ 添加加购商品 / 说明</button><div class="addon-merged-preview"><span>合并展示预览</span><p data-choice-preview class="addon-choice-preview"></p></div>`;
   for(const c of choices){
    const node=nodeFor(c.id);
-   const picker=mountProductSearch(node.querySelector('[data-choice-product]'),{getRows:()=>selectableComponents(getCosts()),getCosts,selected:c.goodsId,label:'加购商品',compact:true,onChange:row=>{
+   const picker=mountProductSearch(node.querySelector('[data-choice-product]'),{getRows:()=>selectableComponents(getCosts()),getCosts,selected:c.goodsId,label:'加购商品',compact:true,preserveSelection,onChange:row=>{
     c.goodsId=row?.goodsId||'';const label=node.querySelector('[data-choice-label]');
     if(!label.value.trim()&&row)label.value='升级'+row.name;
     refresh();

@@ -218,6 +218,13 @@ body.pp-selecting, body.pp-selecting * { user-select:none !important; cursor:cel
 .pp-detail .ov-config { margin:0; }
 .pp-detail { padding:10px 12px; }
 
+/* 模板摘要沿用弹窗主题，跳过明细单独滚动。 */
+.pp-price-template-summary p { margin-block:0 8px; }
+.pp-price-template-reasons,.pp-price-template-skipped { margin-block:8px; padding-inline-start:22px; }
+.pp-price-template-summary summary { cursor:pointer; }
+.pp-price-template-skipped { max-height:min(240px,30vh); overflow:auto; overflow-wrap:anywhere; }
+.pp-price-template-summary li { margin-block:4px; }
+
 /* 单独核算价聚合提醒固定一行，更多配件收进汇总；展开卡片内仍可正常选字。 */
 .pp-tax-banner { display:flex; align-items:center; gap:12px; height:44px; min-height:44px; overflow:hidden; white-space:nowrap; padding:0 12px; border-bottom:1px solid #efcf84; background:#fff7e4; color:#805616; font-size:12px; }
 .pp-tax-banner[hidden],#pp-tax-reopen[hidden] { display:none; }

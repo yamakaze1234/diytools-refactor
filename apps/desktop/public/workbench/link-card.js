@@ -10,13 +10,13 @@ export function linkCardHeading(group,{expanded,editing,esc}){
  return `<div class="product-select-row compact-link-card"><input type="checkbox" data-group-select="${esc(group.id)}" aria-label="全选链接 ${esc(raw)}"><button class="product-toggle" data-product-toggle="${esc(group.id)}" aria-expanded="${expanded}"><span class="link-arrow" title="${expanded?'收起配置':'展开配置'}">▸</span><span class="link-card-text"><span class="link-card-title"><strong title="${esc(raw)}">${esc(name)}</strong><small>${group.configs.length} 套</small></span><span class="link-card-spu" title="SPU ${esc(spu||'未填写')}">${spu?esc(spu):'未填写 SPU'}</span><span class="link-card-meta"><span class="link-category-chip" title="${esc(group.category||'未分类')}">${esc(group.category||'未分类')}</span>${editing?'<span class="link-editing">编辑中</span>':''}</span></span></button><button class="link-card-more" data-link-menu="${esc(group.id)}" aria-label="${esc(name)}的链接操作" aria-expanded="false" title="链接操作">⋯</button></div>`;
 }
 /** 将卡片菜单动作委托给宿主回调，保持数据修改入口集中。 */
-export function bindLinkCardMenus(container,{groups,esc,onEdit,onCategory,onColor,onDelete,onDraft}){
+export function bindLinkCardMenus(container,{groups,esc,onEdit,onCategory,onColor,onDelete,onDraft,onDuplicate}){
  container.querySelectorAll('[data-link-menu]').forEach(button=>button.onclick=()=>{
   const wasOpen=button.getAttribute('aria-expanded')==='true';closeLinkCardMenu();if(wasOpen)return;
   const group=groups().find(g=>g.id===button.dataset.linkMenu);if(!group)return;
   const menu=document.createElement('div');menu.className='link-card-menu';menu.setAttribute('role','dialog');menu.setAttribute('aria-label','链接操作');
   const draft=group.configs.some(c=>c.productDraft);
-  menu.innerHTML=`<button data-edit-link>编辑链接</button>${onDraft?`<button data-draft-link>${draft?'移回链接区':'移到草稿区'}</button>`:''}<button data-edit-category>修改分类</button><div class="link-menu-label">卡片配色</div><div class="link-color-picker">${colors.filter(([color])=>color).map(([color,label])=>`<button data-card-color="${color}" aria-label="${label}" title="${label}" aria-pressed="${color===group.cardColor}" style="--card-swatch:${cardDisplayColor(color)};background:${cardDisplayColor(color)}"></button>`).join('')}</div><button data-reset-color>恢复默认配色</button><button class="link-delete-action" data-delete-link>删除链接（${group.configs.length} 套）</button>`;
+  menu.innerHTML=`<button data-edit-link>编辑链接</button>${onDuplicate?'<button data-duplicate-link>创建副本</button>':''}${onDraft?`<button data-draft-link>${draft?'移回链接区':'移到草稿区'}</button>`:''}<button data-edit-category>修改分类</button><div class="link-menu-label">卡片配色</div><div class="link-color-picker">${colors.filter(([color])=>color).map(([color,label])=>`<button data-card-color="${color}" aria-label="${label}" title="${label}" aria-pressed="${color===group.cardColor}" style="--card-swatch:${cardDisplayColor(color)};background:${cardDisplayColor(color)}"></button>`).join('')}</div><button data-reset-color>恢复默认配色</button><button class="link-delete-action" data-delete-link>删除链接（${group.configs.length} 套）</button>`;
   document.body.append(menu);button.setAttribute('aria-expanded','true');
   const controller=new AbortController(),{signal}=controller;
   const close=(focus=false)=>{controller.abort();menu.remove();button.setAttribute('aria-expanded','false');closeMenu=null;if(focus&&button.isConnected)button.focus();};closeMenu=close;
@@ -28,6 +28,7 @@ export function bindLinkCardMenus(container,{groups,esc,onEdit,onCategory,onColo
   menu.querySelector('[data-edit-link]').onclick=()=>{close();onEdit(group);};menu.querySelector('[data-edit-category]').onclick=()=>{close();onCategory(group);};
   menu.querySelector('[data-delete-link]').onclick=()=>{close();onDelete(group);};
   menu.querySelector('[data-draft-link]')?.addEventListener('click',()=>{close();onDraft(group,!draft);});
+  menu.querySelector('[data-duplicate-link]')?.addEventListener('click',()=>{close();onDuplicate(group);});
   menu.querySelector('[data-reset-color]').onclick=()=>{close(true);onColor(group,'');};
   menu.querySelectorAll('[data-card-color]').forEach(choice=>choice.onclick=()=>{close(true);onColor(group,choice.dataset.cardColor);});menu.querySelector('button').focus();
  });

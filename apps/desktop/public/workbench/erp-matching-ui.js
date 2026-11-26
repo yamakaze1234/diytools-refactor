@@ -18,22 +18,35 @@ const panelHtml=`<section id="erp-match-panel">
 
 export function createErpMatchingUi(api){
  let job=null,selected=0,panel=null,timer=null,disposed=false,offset=0,filter='all',revision=0;
- let previewStamp=null,previewIds=[],previewJobId=null,dismissedId=null,connected=false,available=true,submitting=false,lastRows=null;
+ let previewStamp=null,previewIds=[],previewJobId=null,dismissed=null,connected=false,available=true,submitting=false,lastRows=null;
  let panelError='';
+ const dismissalKey='diy-erp-matching-dismissed-v1';
+ const storage=()=>api.storage===undefined?globalThis.localStorage:api.storage;
+ try{dismissed=JSON.parse(storage()?.getItem(dismissalKey)??'null');}catch{}
+ // 只记住这一次终态回执，新操作即使复用任务编号也应重新显示。
+ function rememberDismissal(value){
+  dismissed=value;
+  try{if(value)storage()?.setItem(dismissalKey,JSON.stringify(value));else storage()?.removeItem(dismissalKey);}catch{}
+ }
+ function dismiss(){if(dismissible())rememberDismissal({id:job.id,phase:job.phase,finished:job.finished??0});}
+
  const details=new Map(),busy=()=>Boolean(job?.active);
  const dismissible=()=>job&&!busy()&&['done','partial','failed','stopped'].includes(job.phase);
  const floating=document.createElement('aside');
  floating.className='erp-match-floating';floating.hidden=true;floating.setAttribute('aria-label','ERP 后台匹配进度');document.body.append(floating);
- const request=(action,payload={})=>api.request({action,payload});
+ const request=(action,payload={})=>{
+  if(['match_preview','match_execute','match_recover'].includes(action))rememberDismissal(null);
+  return api.request({action,payload});
+ };
  const partName=id=>api.partName?.(String(id));
  function update(){
   api.onLabel?.(busy()?`ERP 匹配中 (${job.finished}/${job.total})`:`ERP 勾选匹配 (${selected})`,!busy()&&selected===0);
-  floating.hidden=!job||Boolean(dismissible()&&dismissedId===job.id);
+  floating.hidden=!job||Boolean(dismissible()&&dismissed&&dismissed.id===job.id&&dismissed.phase===job.phase&&dismissed.finished===(job.finished??0));
   floating.innerHTML=job?`<strong>${esc(phases[job.phase]??job.phase)} ${esc(job.finished??0)}/${esc(job.total??job.items.length)}</strong><button data-erp-task type="button">查看任务</button>${dismissible()?'<button data-erp-dismiss aria-label="关闭匹配回执" type="button">×</button>':''}`:'';
   if(panel?.isConnected)renderJob();
  }
  floating.onclick=event=>{
-  if(event.target.closest('[data-erp-dismiss]')){dismissedId=job.id;update();}
+  if(event.target.closest('[data-erp-dismiss]')){dismiss();update();}
   if(event.target.closest('[data-erp-task]'))void open(false);
  };
  async function refresh(){
@@ -159,7 +172,7 @@ export function createErpMatchingUi(api){
    void safe(async()=>{const id=job.id,result=await request('match_detail',{jobId:id,configId:button.dataset.erpDetail});if(panel===own&&job?.id===id){const item=result.job.items[0];details.set(id+':'+item.configId,item);}})(event);
   };
   $('#erp-match-close').onclick=$('#erp-match-background').onclick=()=>api.closeDialog();
-  own.closest('dialog').addEventListener('close',()=>{if(panel!==own)return;if(dismissible())dismissedId=job.id;panel=null;update();},{once:true});
+  own.closest('dialog').addEventListener('close',()=>{if(panel!==own)return;dismiss();panel=null;update();},{once:true});
   renderJob();await Promise.all([refreshSession(),refresh()]);
  }
  void refresh();

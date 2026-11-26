@@ -151,7 +151,7 @@ export function mountSharedScope(root,{row,entry,scope,scopes,edits,editable,onS
 }
 
 /** 保留旧加购组合的原始结构，只有实际修改商品卡片时生成新的选项。 */
-export function mountSharedAddons(root,{row,getCosts,getOriginal,onChange}) {
+export function mountSharedAddons(root,{row,getCosts,getOriginal,onChange,preserveSelection=false}) {
  const original = sourceFields(row).addon;
  const normalized = {...original,sourceId:row.sourceId};
  root.innerHTML = '<div data-shared-choices></div><label class="field">加购备注<textarea data-shared-addon-note rows="2"></textarea></label>';
@@ -159,7 +159,7 @@ export function mountSharedAddons(root,{row,getCosts,getOriginal,onChange}) {
  note.value=original.addonNote??'';
  let ready=false;
  const editor=mountAddonChoices(root.querySelector('[data-shared-choices]'),{
-  initial:initialChoices(normalized),sourceId:row.sourceId,getCosts,
+  initial:initialChoices(normalized),sourceId:row.sourceId,getCosts,preserveSelection,
   onChange:()=>{if(ready)onChange();}, renderCheck:choice=>addonChoiceStatusHtml(choice,getCosts(),[getOriginal()]),
  });
  let baseline;

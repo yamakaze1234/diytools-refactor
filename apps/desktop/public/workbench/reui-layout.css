@@ -138,13 +138,13 @@ body.preview-collapsed .preview-side:not(.preview-expanded) { display: none; }
 }
 
 /* 双页签设计稿：外层继续使用工作台导航，页头和表格的尺寸独立于旧编辑器。 */
-body.overview-mode, body:has(.price-profit-active) {
+body.overview-mode, body:has(:is(.price-profit-active,.source-sheet-active)) {
  --ov-gutter: clamp(12px,1.12vw,22px);
  --ov-ink: #181a19; --ov-muted: #5d645f; --ov-line: #dbdfdb;
  --ov-page: #f1f3f0; --ov-sheet: #fff; --ov-columns: #f5f7f4; --ov-display: #faf9ed;
  --ov-numbers: 'Cascadia Mono',Consolas,'Microsoft YaHei UI',monospace;
 }
-html.dark body.overview-mode, html.dark body:has(.price-profit-active) {
+html.dark body.overview-mode, html.dark body:has(:is(.price-profit-active,.source-sheet-active)) {
  --ov-ink: var(--ef-ink); --ov-muted: var(--ef-ink-2); --ov-line: var(--ef-rule);
  --ov-page: var(--ef-paper); --ov-sheet: var(--ef-panel); --ov-columns: var(--ef-chip); --ov-display: var(--ef-chip);
 }

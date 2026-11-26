@@ -122,12 +122,16 @@ test('collapsed link groups create no hidden config DOM; searching renders only 
  const rows=Array.from({length:3000},(_,i)=>({...config('c'+i),product:'链接',name:'配置'+i,version:'',parts:[{slot:'CPU',name:'CPU'}]}));
  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{value:'',innerHTML:'',classList:{toggle(){}},querySelectorAll:()=>[]});return nodes.get(id);};
  // 测试使用真实兼容桥接收列表标记，React 节点稳定性另由浏览器专项覆盖。
- const context=vm.createContext({configurationSummaryHtml,reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){},collapsedZones:new Set(),paintZones(){},syncScrollHighlight(){}});
+ const context=vm.createContext({configurationSummaryHtml,reactWorkbench:createReactWorkbenchAdapter(null,{}),document:{querySelector:()=>null},$:node,$$:()=>[],closeLinkCardMenu(){},productGroups,ordinaryConfigs:x=>x,available:()=>rows,linkCategories:()=>[],categoryMatches:()=>true,listedConfigs:()=>rows,selected:new Set(),recentDeletedConfigs:()=>[],listPinnedProduct:null,current:()=>null,collapsedProducts:new Set(['link']),searchCollapse:{q:'',products:new Set(),zones:new Set()},active:null,esc:String,linkCardHeading:g=>`<header>${g.name}</header>`,mountTemplateArea(){},templateSectionOpen:false,bindLinkCardMenus(){},fullAction:f=>f,bindConfigDrag(){},bindLinkDrag(){},collapsedZones:new Set(),paintZones(){},syncScrollHighlight(){}});
  Object.assign(context,{savedHostTemplates:()=>[],openHostTemplate(){},renderHostTemplateView(){},openCreateHostTemplate(){},importHostTemplate(){},
   canCreateTemplateLink:()=>true,renameHostTemplate(){},hostTemplateView:null});
  vm.runInContext('var nasMain=false;\n'+implementation,context);context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert.match(node('#config-list').innerHTML,/<header>链接<\/header>/);
  node('#search').value='配置2999';context.renderList();assert.equal((node('#config-list').innerHTML.match(/class="config-item/g)||[]).length,1);assert.match(node('#config-list').innerHTML,/data-id="c2999"/);
  assert(context.collapsedProducts.has('link'));
+ // 搜索结果里的链接可以单独收起；收起只在本次搜索有效，不动平时的折叠记录。
+ context.searchCollapse.products.add('link');context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);
+ node('#search').value='配置299';context.renderList();assert.match(node('#config-list').innerHTML,/data-id="c2999"/);assert.equal(context.searchCollapse.products.size,0);
+ node('#search').value='';context.renderList();assert.doesNotMatch(node('#config-list').innerHTML,/class="config-item/);assert(context.collapsedProducts.has('link'));
 });
 
 test('template cards never inspect configuration details or construct config children',()=>{

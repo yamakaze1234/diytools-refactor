@@ -1,7 +1,9 @@
 import {profitTone} from './profit-tone.js';
 import {copyPlainText} from './clipboard.js';
-import {DEFAULT_PROFIT_ALERT,DEFAULT_PRICING_RULE,normalizeProfitAlert,normalizeProfitAlerts,validatePricingRule,productInstallment} from './pricing.js';
+import {DEFAULT_PROFIT_ALERT,DEFAULT_PRICING_RULE,normalizeProfitAlert,normalizeProfitAlerts,validatePricingRule,productInstallment,moneyCents} from './pricing.js';
 import {flagsFor,linkKey,parseArrival,planPriceMatrix,priceProfitRow} from './price-profit-model.js';
+import {planPriceTemplateExport,priceTemplateWorkbook} from './price-template-export.js';
+import {saveExportFolder} from './folder-export.js';
 import {overviewFeeRate,readOverviewFeeRate} from './overview-table-model.js';
 import {snap99} from './batch-profit-price.js';
 import {mountTaxOverrideTools,deltaLabel} from './tax-override-ui.js';
@@ -71,7 +73,7 @@ export function mountPriceProfit(root,api){
  let baseRows=new Map(),selectedRows=new Map(),removeRange=false,copyAligned=true;
  let renderedRows=new Map(),renderedLinks=new Map(),paintedCells=new Set(),paintedCurrent=null;
  let pendingWrites=0,writeTail=Promise.resolve(),savedState=null,saving=false,fullDrawRequested=false;
- const pendingInputResults=new Set();let inputRejected=false;
+ const pendingInputResults=new Set();let inputRejected=null;
  const pendingInputs=new WeakSet(),dirtyRows=new Set();
  let rowCache=new Map(),stockIndex=new Map(),linkScope=[];
  const focusClass=index=>index===0?' pp-frozen-number':index===3?' pp-frozen-config':'';
@@ -102,7 +104,7 @@ export function mountPriceProfit(root,api){
  <header class="pp-header">
   <div><h1 id="price-profit-title">价格与利润</h1><p>与配置总表共用成本、利润与配置编辑。展开即可换件、改数量和展示明细。</p></div>
   <div class="pp-actions"><button id="pp-undo" disabled>撤销</button><button id="pp-redo" disabled>重做</button>
-   <button id="pp-batch">批量按利润定价</button><button id="pp-erp-match">ERP 勾选匹配 (0)</button><button id="pp-save">保存到本机</button><span id="pp-save-count" role="status" hidden></span>
+   <button id="pp-batch">批量按利润定价</button><button id="pp-erp-match">ERP 勾选匹配 (0)</button><button id="pp-export-price-template">导出全店价格模板</button><button id="pp-save">保存到本机</button><span id="pp-save-count" role="status" hidden></span>
    <details class="pp-menu"><summary>更多</summary><div><button id="pp-back">返回配置</button><button id="pp-shop-settings">店铺设置</button><button id="pp-new-link">新建链接</button><button id="pp-status-filter" aria-label="筛选状态">全部状态 ▾</button></div></details>
   </div>
  </header>
@@ -142,6 +144,7 @@ export function mountPriceProfit(root,api){
  </aside><span id="pp-status" class="pp-sr" role="status"></span>`;
  const body=$('#pp-rows');
  const grid=$('.pp-grid');
+ const exportButton=$('#pp-export-price-template');
  const widthKey='diy-price-column-widths-v3';
  let widths=columns.map(c=>c[1]),resize=null,suppressSortUntil=0;
  try{const saved=JSON.parse(localStorage.getItem(widthKey));if(Array.isArray(saved)&&saved.length===columns.length&&saved.every(v=>Number.isFinite(v)&&v>=38&&v<=640))widths=saved;}catch{}
@@ -304,6 +307,8 @@ export function mountPriceProfit(root,api){
    $('#pp-alert').disabled=shop==='all';
    $('#pp-shop-settings').title=shop==='all'?'请选择需要修改的店铺':'';
    $('#pp-alert').title=shop==='all'?'请选择需要修改的店铺':'';
+   exportButton.disabled=shop==='all';
+   exportButton.title=shop==='all'?'请选择需要导出的店铺':'导出当前店铺完整的抖店批量改价模板';
    linkScope=inShop.filter(r=>(!product||product===linkKey(r.config))&&match(r,needle));
    if(partPanel.matches(':popover-open'))collectPartChoices();
    const scope=linkScope.filter(r=>matchesParts(r.config));
@@ -459,10 +464,13 @@ export function mountPriceProfit(root,api){
   clearTimeout(renderTimer);
   renderTimer=setTimeout(flushRowRefresh,0);
  }
+ function rejectInput(error){
+  inputRejected=error;announce(api.errorText?.(error)||error.message);return false;
+ }
  function commitInput(el){
   if(pendingInputs.has(el))return false;
   if(!isEdited(el))return true;
-  inputRejected=false;
+  inputRejected=null;
   const {ppCell:key,rowId:id}=el.dataset;
   try{
    const current=currentPriceRow(id);if(!current)throw Error('配置范围已变化，请重新选择。');
@@ -486,12 +494,12 @@ export function mountPriceProfit(root,api){
    },error=>{
     el.value=el.defaultValue;
     if(preciseKeys.has(key)&&document.activeElement!==el)formatAmount(el);
-    inputRejected=true;announce(api.errorText?.(error)||error.message);return false;
+    return rejectInput(error);
    }).finally(()=>{
     pendingInputs.delete(el);pendingInputResults.delete(result);el.readOnly=false;
    });
    pendingInputResults.add(result);return result;
-  }catch(error){el.value=el.defaultValue;inputRejected=true;announce(api.errorText?.(error)||error.message);return false;}
+  }catch(error){el.value=el.defaultValue;return rejectInput(error);}
  }
  function formatAmount(field){
   const precise=field.dataset.ppPrecise;
@@ -702,6 +710,7 @@ export function mountPriceProfit(root,api){
  $('#pp-new-link').onclick=()=>api.newLink(shop==='all'?api.activeShop():shop);
  $('#pp-batch').onclick=()=>api.batchProfit?.(drawnIds.filter(id=>chosen.has(id)),product,shop);
  $('#pp-erp-match').onclick=()=>api.openErpMatching?.();
+ exportButton.onclick=()=>openPriceTemplateExport().catch(error=>announce(api.errorText?.(error)||error.message));
  const replay=async operation=>{
   try{
    await mutate(operation);
@@ -865,6 +874,70 @@ export function mountPriceProfit(root,api){
   formulaEditor.blur();
  };
 
+ async function flush(){
+  const field=document.activeElement;
+  if(field===formulaEditor)formulaEditor.blur();
+  else if(root.contains(field)&&isEdited(field)&&!pendingInputs.has(field))commitInput(field);
+  // 鼠标点击工具栏时可能先触发失焦，须检查该次提交的结果再读取全店数据。
+  const results=await Promise.all([...pendingInputResults]);
+  while(pendingWrites)await writeTail;
+  if(inputRejected||results.includes(false)){
+   const error=inputRejected??Error('请先修正当前输入');
+   inputRejected=null;
+   throw error;
+  }
+ }
+ function hasUnsavedPrices(configs,targetShop){
+  if(savedState?.count>0)return true;
+  if(!api.accepted)return false;
+  const inShop=c=>(c.shopId||'intel')===targetShop&&!c.deletedAt&&!c.emptyLinkDraft;
+  const current=configs.filter(inShop),accepted=new Map(api.accepted().filter(inShop).map(c=>[c.id,c]));
+  return current.length!==accepted.size||current.some(c=>{
+   const before=accepted.get(c.id);
+   return !before||['spu','skuId','price','productDraft'].some(key=>c[key]!==before[key]);
+  });
+ }
+ async function openPriceTemplateExport(){
+  const targetShop=shop;
+  if(targetShop==='all'){announce('请先选择具体店铺再导出全店价格模板');return;}
+  await flush();
+  if(shop!==targetShop||!visible())return;
+  // 直接从全店数据源读取，筛选、排序和折叠只影响页面显示。
+  const configs=api.rows(),settings=api.settings(targetShop),name=shopName(targetShop);
+  const plan=planPriceTemplateExport(configs,{shopId:targetShop,settings,links:api.links?.()??configs});
+  const coupon=(moneyCents(settings.coupon??0)??0)/100;
+  const skippedByReason=new Map();
+  for(const {reason} of plan.skipped)skippedByReason.set(reason,(skippedByReason.get(reason)||0)+1);
+  const skippedDetails=plan.skipped.length?`<ul class="pp-price-template-reasons">${Array.from(skippedByReason,([reason,count])=>`<li>${esc(reason)} · ${count} 条</li>`).join('')}</ul>
+   <details><summary>查看跳过明细</summary><ul class="pp-price-template-skipped">${plan.skipped.map(({product,name,reason})=>`<li>${esc(product||'未命名链接')} / ${esc(name||'未命名配置')} / ${esc(reason)}</li>`).join('')}</ul></details>`:'';
+  api.openDialog('导出全店价格模板',`<section class="pp-price-template-summary">
+   <p><strong>${esc(name)}</strong> · 可导出 ${plan.rows.length} 个 SKU（${plan.spuCount} 个商品 SPU） · 跳过 ${plan.skipped.length} 条</p>
+   <p>${coupon>0?'售价 = 到手价 + 店铺券 '+money(coupon):'售价 = 到手价'}</p>
+   <p class="hint">全店范围导出，不受当前筛选影响。同商品 ID 已自动聚拢连续，模板保留空白列。</p>
+   ${hasUnsavedPrices(configs,targetShop)?'<p><strong>当前包含未保存修改，将按表格当前最新售价导出</strong></p>':''}
+   ${skippedDetails}</section>
+   <div class="actions"><button id="pp-price-template-close">关闭</button><button id="pp-price-template-download" class="primary"${plan.rows.length?'':' disabled'}>导出 Excel 模板 (.xlsx)</button></div>`);
+  dialog().querySelector('#pp-price-template-close').onclick=()=>api.closeDialog();
+  const exportButton=dialog().querySelector('#pp-price-template-download');
+  exportButton.onclick=async()=>{
+   exportButton.disabled=true;
+   try{
+    const folderName=`${name}_全店价格模板_${new Date().toLocaleDateString('sv-SE')}`;
+    const fileName=folderName+'.xlsx',workbook=priceTemplateWorkbook(plan.rows);
+    // 桌面端沿用图片目录选择，收到实际写入回执后才提示导出成功。
+    const result=await saveExportFolder([{name:fileName,bytes:new Uint8Array(await workbook.arrayBuffer())}],folderName);
+    if(result?.cancelled){announce('已取消价格模板导出');return;}
+    if(result){
+     if(!result.ok||!result.files?.includes(fileName))throw Error(result.error||'价格模板未保存，请重试');
+    }else await api.download(workbook,fileName);
+    if(exportButton.isConnected)api.closeDialog();
+    const summary=`${plan.rows.length} 条价格，跳过 ${plan.skipped.length} 条`;
+    announce(result?`已导出 ${summary}。保存到：${result.directory}`:`已开始下载 ${summary}，请查看浏览器下载记录`);
+   }catch(error){announce(api.errorText?.(error)||error.message);}
+   finally{exportButton.disabled=false;}
+  };
+ }
+
  const saveButton=$('#pp-save');
  const saveCount=$('#pp-save-count');
  function saveStatus(next=savedState){
@@ -960,11 +1033,11 @@ export function mountPriceProfit(root,api){
   leaving=true;
   try{
    const field=document.activeElement;
-   if(root.contains(field)&&isEdited(field)&&!pendingInputs.has(field)&&!await commitInput(field)){inputRejected=false;return;}
+   if(root.contains(field)&&isEdited(field)&&!pendingInputs.has(field)&&!await commitInput(field)){inputRejected=null;return;}
    // 先提交当前输入并等待已入队的失焦写入，再交还焦点或定位配置。
    const inputResults=await Promise.all([...pendingInputResults]);
    while(pendingWrites)await writeTail;
-   if(inputRejected||inputResults.includes(false)){inputRejected=false;return;}
+   if(inputRejected||inputResults.includes(false)){inputRejected=null;return;}
    if(partPanel.matches(':popover-open'))partPanel.hidePopover();
    for(const id of cards.keys())releaseCard(id);
    root.hidden=true;workspace.classList.remove('price-profit-active');pointerDown=false;rangePointer=null;
@@ -973,5 +1046,5 @@ export function mountPriceProfit(root,api){
   }catch(error){announce(api.errorText?.(error)||error.message);}
   finally{leaving=false;}
  }
- return {show,hide,visible,refresh,historyButtons,saveStatus,selectedIds:()=>[...chosen],flush:async()=>{const field=document.activeElement;if(root.contains(field)&&isEdited(field)&&!await commitInput(field))throw Error('请先修正当前输入');await Promise.all([...pendingInputResults]);while(pendingWrites)await writeTail;},clearCaches:()=>{for(const id of cards.keys())releaseCard(id);rowCache.clear();stockIndex.clear();}};
+ return {show,hide,visible,refresh,historyButtons,saveStatus,selectedIds:()=>[...chosen],flush,clearCaches:()=>{for(const id of cards.keys())releaseCard(id);rowCache.clear();stockIndex.clear();}};
 }

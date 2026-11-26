@@ -21,9 +21,17 @@ import {mountAddonBenefits,mountAddonPackEditor,openAddonPackMaintenance} from '
 import {createNasErpUiAdapter,lookupNasSourceProduct} from './nas-erp-ui-adapter.js';
 import {createNasAutosave} from './nas-autosave.js';
 import {erpCatalogIndex,searchErpParts,splitErpName} from './erp-part-description.js';
+import {openSourceSheet} from './source-sheet-ui.js';
 import {validateSnapshot as validateErpSnapshot} from './erp-sync.js';
+import {createNasDraftStorage} from './nas-draft-storage.js';
 const nasMain=nasMainMode(location.search);
-const nasWorkspace=nasMain?createNasMainWorkspace({nativeRequest:(path,options)=>fetch('/api/native-nas'+path,options),storage:localStorage,requestedShop:new URLSearchParams(location.search).get('nas_shop')}):null;
+const configDraftStorage=globalThis.indexedDB?createNasDraftStorage({legacyStorage:localStorage}):null;
+const nasWorkspace=nasMain?createNasMainWorkspace({nativeRequest:(path,options)=>fetch('/api/native-nas'+path,options),storage:localStorage,
+ draftStorage:configDraftStorage,onDraftStorageError:reportDraftWrite,requestedShop:new URLSearchParams(location.search).get('nas_shop')}):null;
+async function flushConfigDrafts(){
+ try{if(nasWorkspace)await nasWorkspace.flushDrafts();else await configDraftStorage?.flush();}
+ catch(error){throw Error(nasErrorText(error));}
+}
 let nasBusy=false,nasDraftFailure=null,nasSaveSummary=null;
 let nasDataTime={updatedAt:null,firstImport:false,state:'checking'},nasDataTimeGeneration=0,nasDataTimeTimer;
 let nasAutosave;
@@ -66,6 +74,7 @@ import {linkCardHeading,bindLinkCardMenus,closeLinkCardMenu,cardDisplayColor} fr
 import {mountPartSort} from './part-sort.js';
 import {bindModuleDrag} from './module-drag.js';
 import {bindConfigDrag,moveConfig} from './config-drag.js';
+import {moveLink,linkOrderValues,duplicateLinkConfigs,bindLinkDrag} from './link-order.js';
 import {insertConfigAfter,planConfigRenumber,applyConfigRenumber,configAfterRemoval} from './config-order.js';
 import './font-choice.js';
 import {bindScrollPreview,syncScrollHighlight} from './scroll-spy.js';
@@ -106,7 +115,7 @@ import {copyPartPayload,pastePartPayload,overviewProfits} from "./part-transfer.
 let copiedPart=null,previewNavigation;
 import {doubleMemoryUpgrade,displayUpgrade,memoryUpgradeKey} from './memory-upgrade.js';
 import {openActivity} from './activity-ui.js';
-window.workbenchBeforeQuit=async()=>{if(erpMatching&&!await erpMatching.confirmClose())throw Error("已取消关闭，ERP 匹配继续运行。");if(hostTemplateHasDrafts())throw Error('请先保存主机模板或恢复到已保存版本。');if(nasMain){if(exportJobs)throw Error('请等待图片导出完成再更新或关闭');if(nasBusy)throw Error('请等 NAS 保存或回执查询结束再关闭');if(nasDraftFailure)throw Error(nasErrorText(nasDraftFailure));if(addonPackDrafts?.hasFailure())throw Error('有加购草稿未写入本机，请先保存加购包。');if(window.workbenchSourceEditor?.hasPending())throw Error('请先处理输出源窗口中的未提交修改。');return;}await window.workbenchPauseCloud?.();if(window.workbenchSourceEditor?.hasPending())await window.workbenchSourceEditor.save();try{await save();}catch(error){if(!confirm('当前修改尚未正常保存。是否将草稿保存到本机恢复文件后退出？\n下次可从恢复文件找回修改。'))throw error;const result=await request('/api/recovery-draft',{method:'POST',body:JSON.stringify(await recoverySnapshot())});if(!result.ok)throw Error('恢复草稿保存失败');}};
+window.workbenchBeforeQuit=async()=>{if(erpMatching&&!await erpMatching.confirmClose())throw Error("已取消关闭，ERP 匹配继续运行。");if(hostTemplateHasDrafts())throw Error('请先保存主机模板或恢复到已保存版本。');if(window.workbenchSourceEditor?.sheet&&window.workbenchSourceEditor.hasPending())throw Error('请先处理输出源工作表的未保存修改。');await flushConfigDrafts();if(nasMain){if(exportJobs)throw Error('请等待图片导出完成再更新或关闭');if(nasBusy)throw Error('请等 NAS 保存或回执查询结束再关闭');if(nasDraftFailure)throw Error(nasErrorText(nasDraftFailure));if(addonPackDrafts?.hasFailure())throw Error('有加购草稿未写入本机，请先保存加购包。');if(window.workbenchSourceEditor?.hasPending())throw Error('请先处理输出源窗口中的未提交修改。');return;}await window.workbenchPauseCloud?.();if(window.workbenchSourceEditor?.hasPending())await window.workbenchSourceEditor.save();try{await save();}catch(error){if(!confirm('当前修改尚未正常保存。是否将草稿保存到本机恢复文件后退出？\n下次可从恢复文件找回修改。'))throw error;const result=await request('/api/recovery-draft',{method:'POST',body:JSON.stringify(await recoverySnapshot())});if(!result.ok)throw Error('恢复草稿保存失败');}};
 import {applySourceSync} from './source-sync-data.js';
 import {selectableComponents} from './component-policy.js';
 import {openAddonEditor,addonStatusHtml} from './addon-ui.js';
@@ -173,11 +182,16 @@ const moneyFormatter=new Intl.NumberFormat('zh-CN',{minimumFractionDigits:0,maxi
 const money=x=>moneyFormatter.format(Number(x||0));
 const financeMoney=n=>n==null?'—':'¥'+n.toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2});
 let session,operator,state,catalog,baseCatalog,active,activeShopId='intel',tab='parts',selected=new Set(),dirty=false,savePromise=null,batchPromise=null,batchPending=null,ordinaryPending=null,timer,previewToken=0,previewResult,history=[],redoHistory=[],restoringHistory=false,conflict=false,copyKind='parts',pendingImages=new Set(),imageRecords=new Map(),selectedModule='parts',changeCounter=0,posterEditor;
-window.workbenchHasPendingChanges=()=>hostTemplateHasDrafts()||(nasMain?Boolean(nasBusy||nasDraftFailure||addonPackDrafts?.hasFailure()||window.workbenchSourceEditor?.hasPending()):Boolean(dirty||savePromise||batchPromise||batchPending||ordinaryPending||window.workbenchSourceEditor?.hasPending()));
+window.workbenchHasPendingChanges=()=>Boolean(configDraftStorage?.hasPendingWrites())||hostTemplateHasDrafts()||(nasMain?Boolean(nasBusy||nasDraftFailure||addonPackDrafts?.hasFailure()||window.workbenchSourceEditor?.hasPending()):Boolean(dirty||savePromise||batchPromise||batchPending||ordinaryPending||window.workbenchSourceEditor?.hasPending()));
 window.workbenchGetSnapshot=async()=>(await recoverySnapshot()).state;
-// 缓存入口必须检查已经落到 localStorage 的 NAS 草稿，退出前检查并不涵盖这些草稿。
+// 缓存入口必须检查已经落盘的 NAS 草稿，退出前检查并不涵盖这些草稿。
 const cacheCleanup=createCacheCleanupBridge({
- flush:async()=>{if(!window.workbenchReady)throw Error('工作台尚未就绪。');document.activeElement?.blur?.();await globalThis.workbenchPriceProfitView?.flush?.();await Promise.resolve();},
+ flush:async()=>{
+  if(!window.workbenchReady)throw Error('工作台尚未就绪。');
+  document.activeElement?.blur?.();
+  await globalThis.workbenchPriceProfitView?.flush?.();
+  if(nasWorkspace)await nasWorkspace.settleDrafts();else await configDraftStorage?.settle();
+ },
  inspect:async()=>{
   let blocker=exportJobs?'请等待图片导出完成。':hostTemplateHasDrafts()?'请先保存主机模板或恢复到已保存版本。':window.workbenchSourceEditor?.hasPending()?'请先处理输出源窗口中的未提交修改。':null;
   if(nasMain){
@@ -194,7 +208,7 @@ const cacheCleanup=createCacheCleanupBridge({
  save:()=>nasMain?saveAllNasConfigurations():save(),
  discard:async drafts=>{
   clearTimeout(timer);
-  if(nasMain){nasWorkspace.discardLocalDrafts(drafts.map(row=>row.id));nasWorkspace.priceDraft([]);nasStageFailures.clear();nasDraftFailure=null;}
+  if(nasMain){await nasWorkspace.discardLocalDrafts(drafts.map(row=>row.id));nasWorkspace.priceDraft([]);nasStageFailures.clear();nasWriteFailures.clear();nasDraftFailure=null;}
   // 已明确确认放弃，只回到本窗口的已确认基线，不清除其它账号、店铺的草稿。
   state=cloneEditorState(acceptedState);dirty=false;history=[];redoHistory=[];
  },
@@ -221,8 +235,10 @@ const currentSettings=()=>settingsFor(state,activeShopId);
 const currentPricingSettings=()=>({...currentSettings(),linkInstallment:currentProduct()?.installment});
 const currentCatalog=()=>sourcesFor(state,activeShopId);
 let erpCandidateFlight=null,erpCandidateCache=null;
-async function findErpCandidates(query){
- if(!nasMain||!nasWorkspace.canManage()||!nasWorkspace.canPlan()||!nasWorkspace.hasSharedSources())return [];
+async function findErpCandidates(query,existing=null){
+ // 工作表离线时沿用相同搜索口径，只从本机已经缓存的 ERP 配件读出候选。
+ if(!nasMain)return existing?searchErpParts(erpCatalogIndex(state.costSource.map(row=>({...row,name:row.erpName||row.name||''}))),query,existing):[];
+ if(!nasWorkspace.canManage()||!nasWorkspace.canPlan()||!nasWorkspace.hasSharedSources())return [];
  if(!erpCandidateCache||Date.now()>=erpCandidateCache.until){
   erpCandidateFlight??=nasWorkspace.readErp('erp-catalog').then(snapshot=>{
    erpCandidateCache={rows:erpCatalogIndex(validateErpSnapshot(snapshot)),until:Date.now()+300000};
@@ -230,7 +246,39 @@ async function findErpCandidates(query){
   }).finally(()=>{erpCandidateFlight=null;});
   await erpCandidateFlight;
  }
- return searchErpParts(erpCandidateCache.rows,query,new Set(currentCatalog().map(row=>row.goodsId)));
+ return searchErpParts(erpCandidateCache.rows,query,existing??new Set(currentCatalog().map(row=>row.goodsId)));
+}
+async function readSourceSheetTax(goodsId){
+ const cached=state.costSource.find(row=>row.goodsId===goodsId)?.tax;
+ if(Number.isFinite(cached)&&cached>=0)return cached;
+ if(!nasMain||!nasWorkspace.canPlan())return null;
+ try{
+  const prices=await nasWorkspace.readErp('tax-current',[goodsId]);
+  const price=prices.rows.find(row=>row.goods_id===goodsId)?.tax;
+  return Number.isFinite(price)&&price>=0?price:null;
+ }catch(error){
+  if(['MEMBER_CHANGED','UNAUTHENTICATED','FORBIDDEN'].includes(error.code))throw error;
+  return null;
+ }
+}
+/** 单店建源沿用正式 adopt_erp 目录事务，收到回执后才刷新表格。 */
+async function adoptSourceSheetErp(item,tax){
+ const {goodsId,name,erp,stockAvailable,stockIncomingAvailable,sku}=item,shop=activeShopId;
+ const found=currentCatalog().find(row=>row.goodsId===goodsId&&!row.deletedAt);
+ if(found)return found.sourceId;
+ const erpAdoption={name:name.trim(),erp:erp??null,stockAvailable:stockAvailable??null,stockIncomingAvailable:stockIncomingAvailable??null,
+  sku:sku??'',...(Number.isFinite(tax)?{tableTax:tax}:{})};
+ try{
+  const receipt=await nasWorkspace.catalog().save('shared-sources',goodsId,'create',{
+   document:{id:goodsId,name:splitErpName(name).main||name,erpAdoption},
+  });
+  if(activeShopId!==shop)throw Error('店铺已切换，请重新打开输出源');
+  await readNasIndex();await loadNasCatalog('sources');renderAll();scheduleNasDataTime();
+  const selected=currentCatalog().find(row=>row.sourceId===receipt.document?.sourceId&&row.goodsId===goodsId);
+  if(!selected)throw Error('已确认建源，当前店铺目录尚未读到该配件');
+  return selected.sourceId;
+ }catch(error){throw Error(nasErrorText(error));}
+ finally{syncNasControls();}
 }
 /** 从正式 ERP 选入新品，只有收到本店目录回执并读回来源后才允许填格。 */
 async function adoptErpCandidate(id,slot,item){
@@ -266,6 +314,8 @@ async function adoptErpCandidate(id,slot,item){
  return selected.sourceId;
 }
 const collapsedProducts=new Set();
+// 搜索期间的展开/收起单独记，换关键词或清空搜索就作废，不改动平时的折叠状态。
+const searchCollapse={q:'',products:new Set(),zones:new Set()};
 let templateSectionOpen=false,hostTemplateView=null,pendingHostTemplate=null;
 const hostTemplateDrafts=new Map();
 // 按内容高度调整配件文本框，保持长名称可见。
@@ -400,7 +450,7 @@ let compactionFlight=null;
 async function compactWorkspace(){
  if(nasMain)return;
  if(compactionFlight)return compactionFlight;
- const blocked=()=>window.workbenchAgentBusy||!fullWorkspace||workspaceLoad||fullActionBusy||globalThis.workbenchPriceProfitView?.visible()||dirty||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending();
+ const blocked=()=>window.workbenchAgentBusy||!fullWorkspace||workspaceLoad||fullActionBusy||globalThis.workbenchPriceProfitView?.visible()||window.workbenchSourceEditor?.sheet||dirty||savePromise||batchPromise||ordinaryPending||batchPending||conflict||$('#dialog').open||window.workbenchSourceEditor?.hasPending();
  if(blocked())return;
  const beforeState=state,beforeBase=acceptedState,selectedId=active,generation=activationGeneration,stacks=[history.slice(),redoHistory.slice()];
  const compacted=compactConfigHistory(stacks,state);if(!compacted)return;
@@ -596,7 +646,7 @@ function refreshPriceSaveMarkers(){
 }
 // 串行保存草稿；请求失败复用操作编号，回执期间的新输入继续下一轮保存。
 async function save(){
- if(nasMain){if(nasDraftFailure)throw nasDraftFailure;return;} // 导出、关闭等旧流程仅核对本机草稿，不提交 NAS。
+ if(nasMain){await flushConfigDrafts();if(nasDraftFailure)throw nasDraftFailure;return;} // 导出、关闭等旧流程仅核对本机草稿，不提交 NAS。
  // 单次循环只确认一份快照；增量请求失败时保留原 payload，成功后再保存飞行期间新增输入。
  if(conflict){openConflict('当前草稿尚未保存，请重新比较后选择保存版本。');throw Object.assign(Error('请在弹窗中处理保存冲突，当前输入已保留'),{status:409});}
  if(batchPromise){await batchPromise;return dirty?save():undefined;}
@@ -1242,14 +1292,14 @@ function openHostTemplateLink(view,ids){
  };
 }
 // 按店铺、链接和筛选条件绘制左侧列表，折叠组不创建隐藏配置节点。
-function renderList(){closeLinkCardMenu();const listMenu=document.querySelector('.list-actions-menu');if(listMenu)listMenu.open=false;const q=$('#search').value.trim().toLowerCase(),allGroups=productGroups(ordinaryConfigs(available())),filter=$('#link-category-filter'),filterValue=filter.value;filter.innerHTML='<option value="">全部分类</option><option value="none">未分类</option>'+linkCategories().map(cat=>`<option value="cat:${esc(cat)}">${esc(cat)}（${allGroups.filter(g=>g.category===cat).length}）</option>`).join('');filter.value=filterValue;const groups=allGroups.filter(g=>categoryMatches(g.configs[0])),listed=listedConfigs();$('#count').textContent=groups.length+' 个 · '+groups.reduce((n,g)=>n+g.configs.length,0)+' 套';$('#selected-count').textContent='批量已选 '+selected.size+' 套';$('#batch-export').textContent=selected.size?`导出勾选（${selected.size}）`:'导出勾选';$('#batch-export').disabled=!selected.size;let clearSelection=$('#clear-selection');if(!clearSelection){clearSelection=document.createElement('button');clearSelection.id='clear-selection';$('#selected-count').after(clearSelection);}clearSelection.textContent='清空';clearSelection.disabled=!selected.size;clearSelection.onclick=()=>{selected.clear();renderList();};$('#select-all').checked=listed.length>0&&listed.every(c=>selected.has(c.id));$('#select-all').indeterminate=listed.some(c=>selected.has(c.id))&&!$('#select-all').checked;$('#select-all').disabled=!listed.length;$('#delete-selected').disabled=!selected.size;$('#deleted-configs').textContent='已删除配置（'+recentDeletedConfigs().length+'）';
- const renderGroup=group=>{const matchGroup=[group.name,group.url,group.spu].join(' ').toLowerCase().includes(q);const configs=group.configs.filter(c=>matchGroup||[c.name,c.shortName,c.skuId,...c.parts.map(p=>p.name)].join(' ').toLowerCase().includes(q));if(!configs.length)return '';const expanded=!!q||!collapsedProducts.has(group.id);return `<section class="product-group ${expanded?'expanded':''} ${group.id===current()?.productId?'editing-product':''}" data-list-product="${esc(group.id)}" ${group.cardColor?`style="--link-card-color:${group.cardColor};--link-card-display-color:${cardDisplayColor(group.cardColor)}" data-link-colored`:""}>${linkCardHeading(group,{expanded,editing:group.id===current()?.productId,esc})}<div ${expanded?'':'hidden'}>${expanded?configs.map(c=>`<div class="config-item ${active===c.id?'active':''}" data-id="${esc(c.id)}" tabindex="0" role="button" aria-current="${active===c.id?'true':'false'}" aria-label="打开 ${esc(c.name)}"><input type="checkbox" ${selected.has(c.id)?'checked':''} aria-label="勾选 ${esc(c.name)}"><div><strong>${esc(c.name)} · ${esc(c.version)}</strong>${configurationSummaryHtml(c,esc)}</div></div>`).join(''):''}</div></section>`;};
+function renderList(){closeLinkCardMenu();const listMenu=document.querySelector('.list-actions-menu');if(listMenu)listMenu.open=false;const q=$('#search').value.trim().toLowerCase();if(searchCollapse.q!==q){searchCollapse.q=q;searchCollapse.products.clear();searchCollapse.zones.clear();}const productCollapse=q?searchCollapse.products:collapsedProducts,zoneCollapse=q?searchCollapse.zones:collapsedZones,allGroups=productGroups(ordinaryConfigs(available())),filter=$('#link-category-filter'),filterValue=filter.value;filter.innerHTML='<option value="">全部分类</option><option value="none">未分类</option>'+linkCategories().map(cat=>`<option value="cat:${esc(cat)}">${esc(cat)}（${allGroups.filter(g=>g.category===cat).length}）</option>`).join('');filter.value=filterValue;const groups=allGroups.filter(g=>categoryMatches(g.configs[0])),listed=listedConfigs();$('#count').textContent=groups.length+' 个 · '+groups.reduce((n,g)=>n+g.configs.length,0)+' 套';$('#selected-count').textContent='批量已选 '+selected.size+' 套';$('#batch-export').textContent=selected.size?`导出勾选（${selected.size}）`:'导出勾选';$('#batch-export').disabled=!selected.size;let clearSelection=$('#clear-selection');if(!clearSelection){clearSelection=document.createElement('button');clearSelection.id='clear-selection';$('#selected-count').after(clearSelection);}clearSelection.textContent='清空';clearSelection.disabled=!selected.size;clearSelection.onclick=()=>{selected.clear();renderList();};$('#select-all').checked=listed.length>0&&listed.every(c=>selected.has(c.id));$('#select-all').indeterminate=listed.some(c=>selected.has(c.id))&&!$('#select-all').checked;$('#select-all').disabled=!listed.length;$('#delete-selected').disabled=!selected.size;$('#deleted-configs').textContent='已删除配置（'+recentDeletedConfigs().length+'）';
+ const renderGroup=group=>{const matchGroup=[group.name,group.url,group.spu].join(' ').toLowerCase().includes(q);const configs=group.configs.filter(c=>matchGroup||[c.name,c.shortName,c.skuId,...c.parts.map(p=>p.name)].join(' ').toLowerCase().includes(q));if(!configs.length)return '';const expanded=!productCollapse.has(group.id);return `<section class="product-group ${expanded?'expanded':''} ${group.id===current()?.productId?'editing-product':''}" data-list-product="${esc(group.id)}" ${group.cardColor?`style="--link-card-color:${group.cardColor};--link-card-display-color:${cardDisplayColor(group.cardColor)}" data-link-colored`:""}>${linkCardHeading(group,{expanded,editing:group.id===current()?.productId,esc})}<div ${expanded?'':'hidden'}>${expanded?configs.map(c=>`<div class="config-item ${active===c.id?'active':''}" data-id="${esc(c.id)}" tabindex="0" role="button" aria-current="${active===c.id?'true':'false'}" aria-label="打开 ${esc(c.name)}"><input type="checkbox" ${selected.has(c.id)?'checked':''} aria-label="勾选 ${esc(c.name)}"><div><strong>${esc(c.name)} · ${esc(c.version)}</strong>${configurationSummaryHtml(c,esc)}</div></div>`).join(''):''}</div></section>`;};
  // 主机模板位于草稿区上方；普通链接仍可用卡片菜单移入或移出草稿区。
  const isDraft=g=>g.configs.some(c=>c.productDraft),drafts=groups.filter(isDraft),linked=groups.filter(g=>!isDraft(g));
- const zone=(key,title,list,empty)=>{const open=!!q||!collapsedZones.has(key),body=list.map(renderGroup).join('');return `<button type="button" class="list-zone-heading list-zone-${key}" data-zone-toggle="${key}" aria-expanded="${open}"><span class="zone-arrow">${open?'▼':'▶'}</span><span class="zone-title">${title}</span><small>${list.length} 个</small></button>${open?(body||`<p class="hint list-zone-empty">${empty}</p>`):''}`;};
+ const zone=(key,title,list,empty)=>{const open=!zoneCollapse.has(key),body=list.map(renderGroup).join('');return `<button type="button" class="list-zone-heading list-zone-${key}" data-zone-toggle="${key}" aria-expanded="${open}"><span class="zone-arrow">${open?'▼':'▶'}</span><span class="zone-title">${title}</span><small>${list.length} 个</small></button>${open?(body||`<p class="hint list-zone-empty">${empty}</p>`):''}`;};
  reactWorkbench.list($('#config-list'),zone('draft','草稿区',drafts,'暂无草稿。链接卡片右侧「⋯」可移到草稿区')+zone('links','链接区',linked,'暂无链接'));
  $$('[data-zone-toggle]').forEach(b=>b.onclick=e=>{const key=b.dataset.zoneToggle,list=$('#config-list'),keep=list.scrollTop;
-  if(e.target.closest('.zone-arrow')||selectedZone===key)collapsedZones.has(key)?collapsedZones.delete(key):collapsedZones.add(key);
+  if(e.target.closest('.zone-arrow')||selectedZone===key)zoneCollapse.has(key)?zoneCollapse.delete(key):zoneCollapse.add(key);
   else{showHostTemplate();selectZone(key);}
   renderList();list.scrollTop=keep;});
  mountTemplateArea({render:model=>reactWorkbench.templates($('#config-list'),model),container:$('#config-list'),configs:available(),
@@ -1280,6 +1330,7 @@ function renderList(){closeLinkCardMenu();const listMenu=document.querySelector(
     changed(label,ids,false,null,true);renderList();toast(group.name+' 已'+label);
    }catch(error){toast(error.message);}finally{fullActionBusy--;}
   },
+  onDuplicate:group=>duplicateLinkToDraft(group),
   onDelete:async group=>{try{if(nasMain)return archiveNasConfigs(group.configs.map(c=>c.id),group);await save();await removeConfigurations(available().filter(c=>c.productId===group.id).map(c=>c.id));await save();}catch(error){toast(error.message);}},
   onColor:async(group,color)=>{
    const shopId=activeShopId,ids=group.configs.map(c=>c.id);fullActionBusy++;
@@ -1306,9 +1357,9 @@ function renderList(){closeLinkCardMenu();const listMenu=document.querySelector(
  $$('[data-product-toggle]').forEach(b=>b.onclick=event=>{const id=b.dataset.productToggle,list=$('#config-list'),keep=list.scrollTop;
   // 点箭头：原地展开或收起，列表不跳动、不置顶。
   // 箭头先转 150ms 再重绘列表，让展开/收起有「跟着动」的过程。
-  const flip=()=>{const open=collapsedProducts.has(id);open?collapsedProducts.delete(id):collapsedProducts.add(id);const arrow=b.querySelector('.link-arrow');if(arrow)arrow.style.transform=open?'rotate(90deg)':'rotate(0deg)';b.setAttribute('aria-expanded',String(open));setTimeout(()=>{renderList();$('#config-list').scrollTop=keep;},150);};
+  const flip=()=>{const open=productCollapse.has(id);open?productCollapse.delete(id):productCollapse.add(id);const arrow=b.querySelector('.link-arrow');if(arrow)arrow.style.transform=open?'rotate(90deg)':'rotate(0deg)';b.setAttribute('aria-expanded',String(open));setTimeout(()=>{renderList();$('#config-list').scrollTop=keep;},150);};
   if(event.target.closest('.link-arrow')){
-   const opening=collapsedProducts.has(id);flip();
+   const opening=productCollapse.has(id);flip();
    // 展开其他链接才跟到首套；保留左栏原滚动位置。
    const first=opening&&current()?.productId!==id&&productGroups(available()).find(g=>g.id===id)?.configs[0];
    if(first){selectZone(first.productDraft?'draft':'links');void activate(first.id).finally(()=>{list.scrollTop=keep;});}
@@ -1317,10 +1368,11 @@ function renderList(){closeLinkCardMenu();const listMenu=document.querySelector(
   // 点卡片：打开该链接；只有开了「点开时展开」才展开，且都不置顶。
   // 11-19：已经选中的链接，再点一下就展开/收起（箭头跟着转），不切换配置、不置顶。
   if(current()?.productId===id){flip();return;}
-  if(expandOnOpen())collapsedProducts.delete(id);
+  if(expandOnOpen())productCollapse.delete(id);
   const first=productGroups(available()).find(g=>g.id===id)?.configs[0];
   if(first&&current()?.productId!==id)Promise.resolve(activate(first.id)).finally(()=>{list.scrollTop=keep;});else{renderList();list.scrollTop=keep;}
  });
+ bindLinkDrag($('#config-list'),(fromId,target)=>moveLinkTo(fromId,target));
  bindConfigDrag($('#config-list'),nasMain?moveNasConfig:fullAction((from,to,after)=>{const next=moveConfig(state.configs,from,to,after);if(!next)return;checkpoint();state.configs=next;changed('调整配置顺序',[],true);const scroll=$('#config-list').scrollTop;renderList();$('#config-list').scrollTop=scroll;}));
  $$('.config-item[data-id]').forEach(el=>{el.querySelector('input').onclick=e=>{e.stopPropagation();el.querySelector('input').checked?selected.add(el.dataset.id):selected.delete(el.dataset.id);renderList();};const locate=async()=>{await activate(el.dataset.id);if(current()?.id===el.dataset.id)continuousWorkbench?.locate(el.dataset.id);};el.onclick=locate;el.onkeydown=e=>{if(e.target===el&&e.key==='Enter')locate();};});
  syncScrollHighlight(current());
@@ -1335,7 +1387,7 @@ function renderProduct(){const p=currentProduct();$('#product-panel').innerHTML=
   quoteButton.onclick=()=>openNasWorkbookQuotes(p.configs.map(row=>row.id));
   $('.ov-link-more .action-menu-body').append(quoteButton);
  }
- const copyLink=document.createElement('button');copyLink.id='duplicate-product';copyLink.type='button';copyLink.textContent='复制整个链接';copyLink.onclick=()=>duplicateNasProduct(p);$('#overview').before(copyLink);for(const id of ['edit-product','duplicate-product','add-special-page'])$('#'+id).hidden=!nasWorkspace.canPlan();}$('#save-product-template').onclick=openSaveProductTemplate;$('#poster-title-settings').onclick=openPosterTitles;$('#product-stock-check').onclick=(nasMain?fn=>nasScopeAction(fn,()=>p.configs):fullAction)(()=>openStockCheckFull(p));$('#add-special-page').onclick=nasMain?()=>addNasToProduct(p,true):fullAction(()=>{const capacityError=configCapacityMessage(state.configs,activeShopId,1);if(capacityError)return toast(capacityError);if(p.installment===null){toast('请先统一本链接的分期设置');return openProduct(true);}checkpoint();const c=blankConfig(null,p,'颜值升级包',defaultServiceText(state,activeShopId));c.version='';c.posterFields={name:true,version:false,subtitle:false};c.footer='';c.modules=modulesDefault(c.shopId,c.theme).map(m=>({...m,visible:m.type==='header',...(m.type==='service'?{text:defaultServiceText(state,activeShopId)}:{})}));const m=c.modules.find(m=>m.type==='parts');if(m)m.visible=false;c.modules.push({id:crypto.randomUUID(),type:'custom',title:'颜值升级包',text:'点击预览文字编辑内容',visible:true,size:22,weight:600,gap:16});state.configs.push(c);active=c.id;selected=new Set([c.id]);changed('新增特殊页面');renderAll();});}
+ const copyLink=document.createElement('button');copyLink.id='duplicate-product';copyLink.type='button';copyLink.textContent='创建副本';copyLink.title='整条链接复制到草稿区';copyLink.onclick=()=>duplicateLinkToDraft(p);$('#overview').before(copyLink);for(const id of ['edit-product','duplicate-product','add-special-page'])$('#'+id).hidden=!nasWorkspace.canPlan();}$('#save-product-template').onclick=openSaveProductTemplate;$('#poster-title-settings').onclick=openPosterTitles;$('#product-stock-check').onclick=(nasMain?fn=>nasScopeAction(fn,()=>p.configs):fullAction)(()=>openStockCheckFull(p));$('#add-special-page').onclick=nasMain?()=>addNasToProduct(p,true):fullAction(()=>{const capacityError=configCapacityMessage(state.configs,activeShopId,1);if(capacityError)return toast(capacityError);if(p.installment===null){toast('请先统一本链接的分期设置');return openProduct(true);}checkpoint();const c=blankConfig(null,p,'颜值升级包',defaultServiceText(state,activeShopId));c.version='';c.posterFields={name:true,version:false,subtitle:false};c.footer='';c.modules=modulesDefault(c.shopId,c.theme).map(m=>({...m,visible:m.type==='header',...(m.type==='service'?{text:defaultServiceText(state,activeShopId)}:{})}));const m=c.modules.find(m=>m.type==='parts');if(m)m.visible=false;c.modules.push({id:crypto.randomUUID(),type:'custom',title:'颜值升级包',text:'点击预览文字编辑内容',visible:true,size:22,weight:600,gap:16});state.configs.push(c);active=c.id;selected=new Set([c.id]);changed('新增特殊页面');renderAll();});}
 // 通过导航令牌忽略较早点击的迟到结果，成功后才切换当前配置。
 async function activate(id){
  const token=++activationGeneration;
@@ -1515,7 +1567,7 @@ function openDialog(title,html){window.workbenchSourceEditor?.detachForDialog?.(
 // 关闭当前业务弹窗，保留工作台和草稿状态。
 function closeDialog(){$('#dialog').close();}
 // NAS 试验入口只在原生明确配置后显示；不替换本机保存、同步或其他店铺入口。
-if(!nasMain)installNasWorkspace({openDialog,esc,notify:message=>toast(message)}).catch(()=>{});
+if(!nasMain)installNasWorkspace({openDialog,esc,draftStorage:configDraftStorage,notify:message=>toast(message)}).catch(()=>{});
 // 格式化配件库存展示，区分未知库存与真实零库存。
 function componentStockHtml(part){const stock=componentStockView(part,state.costSource||[]);return `<small class="component-stock stock-${stock.status}" title="${esc(stock.detail)}">${esc(stock.label)}${stock.status==='unknown'?`<span>${esc(stock.detail)}</span>`:''}</small>`;}
 // 复制配置时通过完整工作区创建新标识，避免复用旧配置身份。
@@ -1980,7 +2032,46 @@ function openProfitFull(){
 // 检查配置配件库存并为可用替换方案提供入口。
 function openStockCheckFull(product=null){openInventoryCheck({openDialog,esc,product,getConfigs:()=>state.configs.filter(config=>!isLegacyTemplateConfig(config)),getCosts:()=>state.costSource,getCatalog:currentCatalog,shop:currentShop(),save,download:downloadBlob,locate:id=>{const target=available().find(c=>c.id===id);if(!target)return toast('配置已变化，请重新检查');closeDialog();$('#search').value='';$('#link-category-filter').value='';listPinnedProduct=target.productId;activate(id);$('#locate-editing')?.click();switchTab('parts');},apply:async plan=>{await save();validateStockReplacement(plan,state.configs,state.costSource,currentCatalog());await applyBatchChanges(plan,`库存检查批量替换展示与实际配件：${plan.changes.length} 套配置`);}});}
 // 打开输出源维护，来源编辑状态参与退出及保存保护。
-function openSourcesFull(options={}){openSourceEditor({...options,openDialog,render:(container,model)=>reactWorkbench.dialog(container,'source-editor',model),renderDetail:(container,model)=>reactWorkbench.dialog(container,'source-editor-detail',model),release:container=>reactWorkbench.release(container),updateLinkCosts:async anchorId=>{await save();checkpoint();const result=updateLinkConfigCosts(ordinaryAvailable(),activeShopId,anchorId,state.costSource||[]);if(result.ids.length){changed(`链接恢复共用核算价：${result.count} 项`,result.ids);renderAll();await save();}return result;},lookupProduct:goodsId=>request('/api/sql-sync/product',{method:'POST',body:JSON.stringify({goodsId})}),flush:save,applyBatch:async changes=>{await save();const result=sourceBatch(state,changes);checkpoint();state=result.next;catalog=sourceCatalog(state.sourceCatalog);changed(`批量维护输出源与加购：${result.count} 条`,result.configIds);renderAll();await save();return result;},download:downloadBlob,applySync:async plan=>{applySourceSync(plan,clone(ordinaryAvailable()),currentCatalog());checkpoint();const ids=applySourceSync(plan,ordinaryAvailable(),currentCatalog());for(const id of ids)displayBaseline.set(id,clone(state.configs.find(c=>c.id===id).parts));changed(`${plan.action==='restore'?'还原输出源差异修改':plan.action==='ignore'?'保留手动内容并忽略本次源版本':'确认更新输出源差异'}：${ids.length} 套配置`,plan.action==='ignore'?[]:ids);renderAll();await save();},validateImage:async c=>{const live=available().find(r=>r.id===c.id);if(!live||JSON.stringify({...c,layout:live.layout})!==JSON.stringify(live))throw Error('配置已变化，请重新预览后导出');},getCosts:()=>state.costSource,getRows:currentCatalog,getAllRows:()=>selectableComponents(state.sourceCatalog,state.costSource),shopId:()=>activeShopId,setDeleted:async(id,deleted)=>{checkpoint();if(!state.sourceCatalog.some(r=>r.sourceId===id)){const preset=currentCatalog().find(r=>r.sourceId===id);if(preset&&isSpecialComponent(preset))state.sourceCatalog.push(clone(preset));}setSourceDeleted(state.sourceCatalog,id,deleted);catalog=sourceCatalog(state.sourceCatalog);changed(deleted?'删除本店输出源':'恢复本店输出源',[]);await save();},saveSkuMode,getConfigs:ordinaryAvailable,currentProductId:()=>current()?.productId,selectedIds:()=>[...selected]});}
+function leaveSourceSheet(){
+ const editor=window.workbenchSourceEditor;
+ return !editor?.sheet||editor.leave();
+}
+async function openSourceMaintenance(api){
+ if(api.quickEdit)return openSourceEditor(api);
+ const current=window.workbenchSourceEditor;
+ if(current?.sheet||current?.hasPending()){
+  current.restore();
+  if(api.focusSourceId)current.locate?.(api.focusSourceId);
+  return current;
+ }
+ const price=window.workbenchPriceProfitView;
+ if(price?.visible()){
+  await price.hide();
+  if(price.visible())return;
+ }
+ if($('#dialog').open)closeDialog();
+ return openSourceSheet($('#source-sheet-page'),{...api,closeDialog,toast,
+  getAllRows:api.getSheetRows??api.getAllRows,
+  changeShop:id=>{
+   const picker=$('#shop-picker');
+   picker.value=id;
+   picker.dispatchEvent(new Event('change',{bubbles:true}));
+  },
+  onClose:()=>{renderAll();setTimeout(()=>compactWorkspace().catch(()=>{}),0);},
+ });
+}
+function openSourcesFull(options={}){return openSourceMaintenance({...options,shopIds:shops.map(shop=>shop.id),
+ erpSearch:findErpCandidates,readTaxCurrent:readSourceSheetTax,
+ getSheetRows:()=>{
+  const existing=new Set(state.sourceCatalog.map(row=>row.sourceId));
+  const costs=new Map(state.costSource.map(row=>[row.goodsId,row]));
+  return [...state.sourceCatalog,...currentCatalog().filter(row=>!existing.has(row.sourceId))].map(row=>{
+   // 本机批次校验以共用成本源为基线，工作表显示与保存使用同一个核算价。
+   const tax=costs.get(row.goodsId)?.tax;
+   return tax==null||row.specialComponent?row:{...row,tax};
+  });
+ },
+ getSheetConfigs:()=>ordinaryConfigs(liveConfigs(listConfigs())),openDialog,render:(container,model)=>reactWorkbench.dialog(container,'source-editor',model),renderDetail:(container,model)=>reactWorkbench.dialog(container,'source-editor-detail',model),release:container=>reactWorkbench.release(container),updateLinkCosts:async anchorId=>{await save();checkpoint();const result=updateLinkConfigCosts(ordinaryAvailable(),activeShopId,anchorId,state.costSource||[]);if(result.ids.length){changed(`链接恢复共用核算价：${result.count} 项`,result.ids);renderAll();await save();}return result;},lookupProduct:goodsId=>request('/api/sql-sync/product',{method:'POST',body:JSON.stringify({goodsId})}),flush:save,applyBatch:async changes=>{await save();const result=sourceBatch(state,changes);checkpoint();state=result.next;catalog=sourceCatalog(state.sourceCatalog);changed(`批量维护输出源与加购：${result.count} 条`,result.configIds);renderAll();await save();return result;},download:downloadBlob,applySync:async plan=>{applySourceSync(plan,clone(ordinaryAvailable()),currentCatalog());checkpoint();const ids=applySourceSync(plan,ordinaryAvailable(),currentCatalog());for(const id of ids)displayBaseline.set(id,clone(state.configs.find(c=>c.id===id).parts));changed(`${plan.action==='restore'?'还原输出源差异修改':plan.action==='ignore'?'保留手动内容并忽略本次源版本':'确认更新输出源差异'}：${ids.length} 套配置`,plan.action==='ignore'?[]:ids);renderAll();await save();},validateImage:async c=>{const live=available().find(r=>r.id===c.id);if(!live||JSON.stringify({...c,layout:live.layout})!==JSON.stringify(live))throw Error('配置已变化，请重新预览后导出');},getCosts:()=>state.costSource,getRows:currentCatalog,getAllRows:()=>selectableComponents(state.sourceCatalog,state.costSource),shopId:()=>activeShopId,setDeleted:async(id,deleted)=>{checkpoint();if(!state.sourceCatalog.some(r=>r.sourceId===id)){const preset=currentCatalog().find(r=>r.sourceId===id);if(preset&&isSpecialComponent(preset))state.sourceCatalog.push(clone(preset));}setSourceDeleted(state.sourceCatalog,id,deleted);catalog=sourceCatalog(state.sourceCatalog);changed(deleted?'删除本店输出源':'恢复本店输出源',[]);await save();},saveSkuMode,getConfigs:ordinaryAvailable,currentProductId:()=>current()?.productId,selectedIds:()=>[...selected]});}
 // 对选定范围批量维护升级描述并预览差异。
 function openUpgradeDescriptionsFull(local=false,field='upgrade'){const scope=local?available:ordinaryAvailable;openUpgradeDescriptionBatch({errorText:error=>nasErrorText(error,listConfigs()),loadExportConfigs:nasMain?loadNasBatchExportConfigs:null,projectExportConfig:config=>withAddonPackText(config,false),render:model=>reactWorkbench.dialog($('#dialog-body'),'batch-description',model),openDialog,esc,save,saveSkuMode,download:downloadBlob,field,openDisplayNames:()=>openUpgradeDescriptions(local,'displayName'),getConfigs:scope,...(local?{productId:currentProduct()?.id,getSelectedIds:()=>chosen().map(c=>c.id)}:{}),apply:async plan=>applyBatchChanges(plan,`${plan.undo?'还原批量':'批量修改'}${field==='displayName'?'配件展示名称':'加购描述'}：${plan.changes.length} 套配置`)});}
 // 预览并应用链接内配件更换，支持导出本次发生变化的配置图片。
@@ -2133,13 +2224,21 @@ async function showActivity(){await save();openActivity({openDialog,esc,request,
   const index=c.parts.findIndex(p=>p.slot===target.slot),element=index>=0?document.querySelector(target.field==='upgrade'?`[data-upgrade="${index}"]`:`[data-part-name="${index}"]`):target.field==='addons'?$('#add-addon'):target.field==='benefits'?$('#add-benefit'):document.querySelector(`[data-config="${target.field}"]`)||$('#editor');element?.scrollIntoView({block:'center'});element?.focus();return;
  }
  active=fullWorkspace?(ordinaryConfigs(available())[0]?.id||null):null;renderAll();
- if(target.type==='source'){await openSources();const input=$('#source-search');input.value=target.goodsId||target.id;input.oninput();[...document.querySelectorAll('[data-source-id]')].find(b=>b.dataset.sourceId===target.id)?.click();}
+ if(target.type==='source'){await openSources({focusSourceId:target.id||target.goodsId});}
  else if(target.type==='component'){await openCosts();const input=$('#cost-source-search');input.value=target.goodsId||target.id.split('|').at(-1);input.oninput();}
  else if(target.type==='gallery'){await openGallery();[...document.querySelectorAll('[data-gallery-open]')].find(b=>b.dataset.galleryOpen===target.id)?.click();}
  else if(target.type==='template')openTemplates();else if(target.type==='settings')openShopSettings();else openCosts();
  }});}
 // NAS 模式下原编辑器继续工作；只让配置正文进入 NAS 草稿，其他实体维护保持关闭。
-const nasStageFailures=new Map();
+const nasStageFailures=new Map(),nasWriteFailures=new Map();
+// 只有同一笔落盘错误被修复时才撤销顶栏警告，其他编辑错误继续保留。
+function reportDraftWrite(id,error){
+ const previous=nasWriteFailures.get(id);
+ if(error){nasWriteFailures.set(id,error);nasStageFailures.set(id,error);}
+ else{nasWriteFailures.delete(id);if(nasStageFailures.get(id)===previous)nasStageFailures.delete(id);}
+ nasDraftFailure=nasStageFailures.values().next().value||null;
+ if(window.workbenchReady)syncNasControls();
+}
 const nasSavedVersions=new Map();
 const nasCatalogRows=new Map();
 // 三店操作复用当前账号、原配置草稿和持久操作回执。
@@ -2167,7 +2266,7 @@ const overviewNas=()=>nasOverviewActions??=createNasOverviewActions({
     const live=targets.map(row=>state.configs.find(c=>c.id===row.id));
     if(live.some((c,i)=>!c||!sameNasDocument(c,targets[i].before)))throw Error('配置已变化，请重新预览');
     const ids=targets.map(row=>row.id);
-    nasWorkspace.acceptSourceVersions(ids,sourceVersions);
+    await nasWorkspace.acceptSourceVersions(ids,sourceVersions);
     checkpointConfig(ids);
     live.forEach((c,i)=>{c.parts=targets[i].after.parts;c.addons=targets[i].after.addons;});
     // 补齐明确来源绑定也不应触发展示清单覆盖独立的实际 BOM。
@@ -2292,12 +2391,12 @@ async function refreshNasPlanButton(){
  try{const upgrade=await overviewNas().pending();button.hidden=!upgrade&&!(await nasWorkspace.queue().read());button.textContent=upgrade?'继续加购应用':'NAS 批量操作';}
  catch(error){toast(nasErrorText(error));}
 }
-function acceptNasArchivedDrafts(plan){
+async function acceptNasArchivedDrafts(plan){
  if(plan.kind!=='configurations')return;
  // 只处理已核对的归档回执，失败或未收到回执时保留对应本机草稿。
  const archived=nasApplied(plan).filter(entry=>entry.archived===true);
  if(!archived.length)return;
- nasWorkspace.discardArchivedDrafts(archived);
+ await nasWorkspace.discardArchivedDrafts(archived);
  for(const entry of archived)nasStageFailures.delete(entry.configuration_id);
  nasDraftFailure=nasStageFailures.values().next().value||null;
 }
@@ -2307,7 +2406,7 @@ async function acceptNasPlan(plan,{selectId=null}={}){
  const listScroll=$('#config-list').scrollTop,sheetScroll=$('.ov-sheet-scroll')?.scrollTop??0,sheetLeft=$('.ov-sheet-scroll')?.scrollLeft??0;
  const reordered=applied.flatMap(row=>row.reordered??[]);
  // 多批可能重复返回同一配置的不同版本，只应用控制器本次实际接续的那一行。
- const rebased=new Set(nasWorkspace.acceptRenumber(reordered,row=>{
+ const rebased=new Set(await nasWorkspace.acceptRenumber(reordered,row=>{
   applyNasRenumber(state.configs.find(c=>c.id===row.configuration_id),row);
   applyNasRenumber(acceptedState.configs.find(c=>c.id===row.configuration_id),row,false);
  }));
@@ -2320,7 +2419,7 @@ async function acceptNasPlan(plan,{selectId=null}={}){
   releasePreview();
   $('#saved-image').classList.add('hidden');$('#saved-image').removeAttribute('href');
  }
- acceptNasArchivedDrafts(plan);
+ await acceptNasArchivedDrafts(plan);
  if(plan.kind==='configurations'&&plan.title==='保存价格利润表'){
   nasWorkspace.priceDraft(acknowledgeNasPriceDraft(plan,nasWorkspace.priceDraft(),sameNasDocument));
  }
@@ -2474,8 +2573,7 @@ function openNasActivity(){
    return $('#locate-editing')?.click();
   }
   if(target.type==='source'){
-   await openNasSources();const row=catalogRow('sources',target.id)?.document,input=$('#source-search');
-   if(input&&row){input.value=row.goodsId||row.name;input.dispatchEvent(new Event('input'));[...$$('[data-source-id]')].find(b=>b.dataset.sourceId===target.id)?.click();}
+   await openNasSources({focusSourceId:target.id});
   }else if(target.type==='component'){
    openNasCosts();const input=$('#cost-source-search');if(input){input.value=target.goodsId;input.dispatchEvent(new Event('input'));}
   }else if(target.type==='gallery'){
@@ -2703,7 +2801,7 @@ async function openNasPlanStatus(){
   const clear=$('#nas-plan-clear');
   if(clear)clear.onclick=async()=>{try{
    const latest=await queue.read();
-   if(latest)acceptNasArchivedDrafts(latest);
+   if(latest)await acceptNasArchivedDrafts(latest);
    await queue.clear();
    await registerNasPartUndo(latest);
    syncNasControls();closeDialog();await refreshNasPlanButton();
@@ -2847,17 +2945,59 @@ async function addNasToProduct(product,special=false,afterId=null){
   await createNasConfigs([c],special?'新增升级展示页':'新增链接配置',nasGroup(product),afterId);
  }catch(error){toast(nasErrorText(error));}
 }
-async function duplicateNasProduct(product){
- if(!confirm(`将“${product.name}”下 ${product.configs.length} 套配置复制为新链接？新链接不沿用平台 SPU、SKU 或网址。`))return;
- try{
-  const ids=product.configs.map(c=>c.id);
-  if(ids.some(id=>nasWorkspace.pending(id)))return toast('请先确认该链接内未核实的提交。');
-  await loadNasScope(ids);
-  const productId=crypto.randomUUID();
-  const rows=ids.map(id=>({...nasWorkspace.documentFor(state.configs.find(c=>c.id===id)),
-   id:crypto.randomUUID(),productId,product:product.name+' · 副本',spu:'',productUrl:''}));
-  await createNasConfigs(rows,'复制商品链接');
- }catch(error){toast(nasErrorText(error));}
+// 链接卡片「创建副本」：整条链接复制到草稿区，不沿用平台 SPU、SKU 或网址。
+async function duplicateLinkToDraft(group){
+ const shopId=activeShopId,ids=group.configs.map(c=>c.id),productId=crypto.randomUUID();
+ if(nasMain&&!nasWorkspace.canPlan())return toast('当前 NAS 服务未开放商品维护。');
+ const reveal=firstId=>{selectZone('draft');collapsedZones.delete('draft');collapsedProducts.delete(productId);searchCollapse.products.delete(productId);if(firstId){active=firstId;selected=new Set([firstId]);}};
+ if(nasMain){
+  try{
+   if(ids.some(id=>nasWorkspace.pending(id)))return toast('请先确认该链接内未核实的提交。');
+   await loadNasScope(ids);
+   const rows=duplicateLinkConfigs(ids.map(id=>nasWorkspace.documentFor(state.configs.find(c=>c.id===id))),{productId});
+   if(!rows.length)return;
+   if(!await createNasConfigs(rows,'创建链接副本'))return;
+   reveal(null);renderList();toast(`已创建副本「${rows[0].product}」，放在草稿区。`);
+  }catch(error){toast(nasErrorText(error));}
+  return;
+ }
+ try{await fullAction(()=>{
+  if(activeShopId!==shopId)throw Error('店铺已切换，请重试');
+  const sources=state.configs.filter(c=>c.shopId===shopId&&!c.deletedAt&&ids.includes(c.id));
+  if(sources.length!==ids.length)throw Error('链接范围已变化，请重试');
+  const capacityError=configCapacityMessage(state.configs,shopId,sources.length);if(capacityError)return toast(capacityError);
+  const rows=duplicateLinkConfigs(sources,{productId});
+  checkpoint();state.configs.push(...rows);reveal(rows[0].id);
+  changed('创建链接副本',rows.map(c=>c.id));renderAll();
+  toast(`已创建副本「${rows[0].product}」，放在草稿区。`);
+ })();}catch{}
+}
+// 拖动链接卡片：同区上下移动，或拖进另一区（草稿区 / 链接区）。
+async function moveLinkTo(fromId,{toId,after,zone}){
+ const draft=zone==='draft',list=$('#config-list'),keep=list.scrollTop;
+ const groups=productGroups(ordinaryConfigs(available())),source=groups.find(g=>g.id===fromId);
+ if(!source)return;
+ const isDraft=g=>g.configs.some(c=>c.productDraft),zoneChanged=isDraft(source)!==draft;
+ if(!toId){const first=groups.find(g=>g.id!==fromId&&isDraft(g)===draft);if(first){toId=first.id;after=false;}}
+ const label=zoneChanged?(draft?'移到草稿区':'移回链接区'):'调整链接顺序';
+ if(nasMain){
+  if(!nasWorkspace.canPlan())return toast('当前 NAS 服务未开放商品维护，不能调整链接顺序。');
+  try{
+   const values=linkOrderValues(groups,fromId,toId,after);
+   if(!values&&!zoneChanged)return;
+   const fields=source.configs.map((c,i)=>({id:c.id,fields:{...(values?{workspaceOrder:values[i]}:{}),...(zoneChanged?{productDraft:draft}:{})}}));
+   await replaceNasFields(fields,label,nasGroup(source));
+  }catch(error){toast(nasErrorText(error));}
+  return;
+ }
+ try{await fullAction(()=>{
+  const next=moveLink(state.configs,{shopId:activeShopId,fromId,toId,after,draft});
+  if(!next)return;
+  checkpoint();state.configs=next;
+  if(zoneChanged)changed(label,source.configs.map(c=>c.id),false,null,true);else changed(label,[],true);
+  renderList();list.scrollTop=keep;
+  if(zoneChanged)toast(source.name+' 已'+label);
+ })();}catch{}
 }
 async function duplicateNasConfig(id=current()?.id){
  const c=state.configs.find(row=>row.id===id&&!row.deletedAt);if(!c)return;
@@ -2957,19 +3097,20 @@ function showNasCatalogReceipts(){
 async function openSharedSourceSession(shop){
  const client=nasWorkspace.catalog(),scopes=nasWorkspace.shops();
  const canCreate=scopes.length===3;
- let bySource;
+ let bySource,documents;
  const confirmed=new Map();
  const reload=async()=>{
   const entries=await client.list('shared-sources');
   if(!Array.isArray(entries)||entries.some(row=>row.document?.id!==row.id||typeof row.version!=='string'||
    !row.document?.stores||Object.values(row.document.stores).some(aliases=>!Array.isArray(aliases))||
    !row.document?.common))throw Error('共用输出源返回不完整。');
-  // 目录包含有权限的各店来源，只有当前店的别名进入维护列表。
-  bySource=new Map(entries.flatMap(row=>(row.document.stores[shop]??[]).map(alias=>[alias.sourceId,{...row.document,version:row.version}])));
+  // 完整授权目录用于全屏投影，旧快捷弹窗仍按当前店限制范围。
+  documents=entries.map(row=>({...row.document,version:row.version}));
+  bySource=new Map(documents.flatMap(row=>Object.values(row.stores).flat().map(alias=>[alias.sourceId,row])));
  };
  await reload();
  const record=row=>bySource.get(row.sourceId);
- return {record,canCreate,defaultScope:canCreate?'shared':shop,scopes:canCreate?['shared',...scopes]:scopes,
+ return {record,entries:()=>documents,canCreate,defaultScope:canCreate?'shared':shop,scopes:canCreate?['shared',...scopes]:scopes,
   searchNames:row=>{
    const entry=record(row);
    return entry?[entry.common.name,...Object.values(entry.stores).flatMap(aliases=>aliases.map(alias=>alias.fields.name))]:[];
@@ -3014,6 +3155,11 @@ async function openSharedSourceSession(shop){
 }
 async function openNasSources({storeOnly=false,focusSourceId=null,quickEdit=false}={}){
  if(window.workbenchSourceEditor?.hasPending()){window.workbenchSourceEditor.restore();return;}
+ if(!quickEdit&&!storeOnly&&window.workbenchSourceEditor?.sheet){
+  window.workbenchSourceEditor.restore();
+  if(focusSourceId)window.workbenchSourceEditor.locate(focusSourceId);
+  return;
+ }
  try{
   const rows=await loadNasCatalog('sources');
   const read=()=>catalogRows('sources').filter(row=>row.document.shopId===activeShopId).map(row=>row.document);
@@ -3037,9 +3183,13 @@ async function openNasSources({storeOnly=false,focusSourceId=null,quickEdit=fals
    return nasWorkspace.readErp(kind,ids);
   },goodsId):undefined;
   let follow;
-  openSourceEditor({nas:true,focusSourceId,quickEdit,canManage:nasWorkspace.canManage(),project:projectNasEdits,lookupProduct,sharedSources,
+  await openSourceMaintenance({nas:true,focusSourceId,quickEdit,canManage:nasWorkspace.canManage(),project:projectNasEdits,lookupProduct,sharedSources,
+   shopIds:storeOnly?[shop]:nasWorkspace.shops(),
+   erpSearch:nasWorkspace.canManage()&&nasWorkspace.canPlan()&&nasWorkspace.hasSharedSources()?findErpCandidates:null,
+   readTaxCurrent:readSourceSheetTax,adoptErp:!sharedSources?.preview&&nasWorkspace.hasSharedSources()?adoptSourceSheetErp:null,
+   getSheetRows:sharedSources?.preview?sharedSources.rows:()=>catalogRows('sources').map(row=>row.document),
    openStoreOnly:sharedSources?.preview?()=>openNasSources({storeOnly:true}):null,
-   canEdit:row=>nasWorkspace.canManage()&&(sharedSources?!!sharedSources.record(row)||sharedSources.canCreate&&!rows.some(x=>x.id===row.sourceId):
+   canEdit:row=>nasWorkspace.canManage()&&(sharedSources?row.deletedAt?catalogRow('sources',row.sourceId)?.editable===true:!!sharedSources.record(row)||sharedSources.canCreate&&!rows.some(x=>x.id===row.sourceId):
     catalogRow('sources',row.sourceId)?.editable??!rows.some(x=>x.id===row.sourceId)),
    openDialog,render:(container,model)=>reactWorkbench.dialog(container,'source-editor',model),
    renderDetail:(container,model)=>reactWorkbench.dialog(container,'source-editor-detail',model),release:container=>reactWorkbench.release(container),
@@ -3163,7 +3313,7 @@ function stageNasDrafts(ids){
  for(const id of ids){
   const config=state.configs.find(c=>c.id===id);
   if(!config)continue;
-  try{nasWorkspace.stage(config);nasSavedVersions.delete(id);nasStageFailures.delete(id);}
+  try{nasWorkspace.stage(config);nasSavedVersions.delete(id);if(!nasWriteFailures.has(id))nasStageFailures.delete(id);}
   catch(error){nasStageFailures.set(id,error);}
  }
  nasDraftFailure=nasStageFailures.values().next().value||null;
@@ -3302,7 +3452,7 @@ async function runNasDraftSaves(rows,{retry=false,automatic=false,fromPricePage=
     const config=state.configs.find(c=>c.id===row.id);
     if(!row.pending&&nasStageFailures.has(row.id)){
      if(!config)throw nasStageFailures.get(row.id);
-     nasWorkspace.stage(config);nasStageFailures.delete(row.id);
+     nasWorkspace.stage(config);if(!nasWriteFailures.has(row.id))nasStageFailures.delete(row.id);
     }
     const saved=await nasWorkspace.submitDraft(row.id,{config,retry});
     nasSavedVersions.set(row.id,saved.version);
@@ -3452,7 +3602,7 @@ function bindNasMain(){
  const picker=$('#shop-picker'),allowed=nasWorkspace.shops();
  for(const option of [...picker.options])if(!allowed.includes(option.value))option.remove();
  picker.disabled=allowed.length<2;
- picker.onchange=()=>{
+ picker.onchange=async()=>{
   const next=picker.value;picker.value=activeShopId;
   if(next===activeShopId||!allowed.includes(next))return;
   if(hostTemplateHasDrafts())return toast('请先保存主机模板或恢复到已保存版本。');
@@ -3460,8 +3610,10 @@ function bindNasMain(){
     window.parent.workbenchClosePending||window.parent.workbenchUpdatePending){
    toast('请先完成当前操作，处理未写入本机的草稿并关闭编辑窗口。');return;
   }
+  if(!leaveSourceSheet())return;
   // 重建编辑器以隔开同 ID 的配置、选中项、撤销记录、成本缓存和图片预览。
   // 草稿和未知回执已按店存到本机；切店不调用保存和重试。
+  try{await flushConfigDrafts();}catch(error){toast(error.message);return;}
   nasAutosave?.dispose();nasWorkspace.close();reactWorkbench?.dispose?.();
   const nextUrl=new URL(location.href);nextUrl.searchParams.set('nas_shop',next);location.replace(nextUrl.href);
  };
@@ -3483,7 +3635,7 @@ function bindNasMain(){
  const retrySave=document.createElement('button');retrySave.type='button';retrySave.id='nas-retry-save';
  retrySave.textContent='重试原提交';retrySave.hidden=true;retrySave.onclick=()=>retryNasConfiguration(current()?.id);$('#save').before(retrySave);
  $('#workspace-sync').textContent='刷新配置';
- $('#workspace-sync').onclick=()=>{if(hostTemplateHasDrafts())return toast('请先保存主机模板或恢复到已保存版本。');if(addonPackDrafts?.hasFailure())return toast('有加购草稿未写入本机，请先保存加购包。');if(!nasBusy&&!nasDraftFailure)location.reload();};
+ $('#workspace-sync').onclick=async()=>{if(hostTemplateHasDrafts())return toast('请先保存主机模板或恢复到已保存版本。');if(addonPackDrafts?.hasFailure())return toast('有加购草稿未写入本机，请先保存加购包。');try{await flushConfigDrafts();if(!nasBusy&&!nasDraftFailure)location.reload();}catch(error){toast(error.message);}};
  const serverStatus=document.createElement('div');serverStatus.id='nas-server-status';
  serverStatus.setAttribute('role','status');serverStatus.title='工作区时间取自服务端操作记录，以北京时间显示。';
  serverStatus.innerHTML='<small id="nas-server-version"></small><small><span id="nas-data-time-label"></span><time id="nas-data-time"></time><span id="nas-data-time-state"></span></small>';
@@ -3499,6 +3651,7 @@ function bindNasMain(){
   try{
    // 退出后 iframe 关闭监听会卸载，须先确认并等 ERP 停止，避免登录页关闭绕过保护。
    if(erpMatching&&!await erpMatching.stopForLeave('后台 ERP 匹配尚未结束。确认停止后续配置、等待当前配置完成后退出工作台账号？'))return;
+   await flushConfigDrafts();
    const result=await fetch('/api/native-nas-identity/logout',{method:'POST',body:'{}'});
    if(!result.ok)throw Error('账号未退出，请重试');
    const logout=await result.json();
@@ -3524,7 +3677,7 @@ function bindNasMain(){
 function bind(){
  // 原生关闭事件可能排在再次打开之后，只清理仍关闭的对话框，避免释放新表单。
  $('#dialog').addEventListener('close',()=>{if($('#dialog').open)return;window.workbenchSourceEditor?.detachForDialog?.();$('#dialog-body').querySelectorAll('.product-search').forEach(destroyProductSearch);reactWorkbench.release($('#dialog-body'));});
- $('#dialog').addEventListener('close',()=>setTimeout(()=>{if($('#dialog').open||window.workbenchSourceEditor?.hasPending())return;reactWorkbench.release($('#dialog-body'));$('#dialog-body').replaceChildren();compactWorkspace().catch(()=>{});},0));
+ $('#dialog').addEventListener('close',()=>setTimeout(()=>{if($('#dialog').open||!window.workbenchSourceEditor?.sheet&&window.workbenchSourceEditor?.hasPending())return;reactWorkbench.release($('#dialog-body'));$('#dialog-body').replaceChildren();compactWorkspace().catch(()=>{});},0));
  // 独立区域复用工作区草稿、历史记录、冲突检查以及正式保存路径。
  const priceConfigs=()=>ordinaryConfigs(liveConfigs(listConfigs()));
  // 价格页和配置页共用草稿，隐藏的基本信息、链接、总表和预览也跟随最新草稿。
@@ -3585,7 +3738,7 @@ function bind(){
   save:()=>nasMain?saveAllNasConfigurations({fromPricePage:true}):$('#save').onclick(),
   oldPriceDraft:()=>nasMain?nasWorkspace.priceDraft():[],
   discard:()=>{if(nasMain&&nasWorkspace.priceDraft().length&&confirm('放弃旧版价格利润草稿？当前配置草稿仍保留。')){nasWorkspace.priceDraft([]);syncNasControls();}},
-  openDialog,closeDialog,toast,
+  openDialog,closeDialog,toast,download:downloadBlob,
   onClose:()=>{renderAll();setTimeout(()=>compactWorkspace().catch(()=>{}),0);},
   locate:async c=>{if(activeShopId!==c.shopId){activeShopId=c.shopId;localStorage.setItem('diy-active-shop',activeShopId);selected.clear();collapsedProducts.clear();}await activate(c.id);if(current()?.id===c.id){switchTab('parts');continuousWorkbench?.locate(c.id);}}
  });
@@ -3633,6 +3786,7 @@ function bind(){
  });
  window.addEventListener('unload',()=>erpMatching?.dispose(),{once:true});
  $('#price-profit-open').onclick=async()=>{
+  if(!leaveSourceSheet())return;
   if(!nasMain)return fullAction(()=>priceProfitView.show())().catch(()=>{});
   const button=$('#price-profit-open');if(button.disabled||nasBusy)return;
   button.disabled=true;nasBusy=true;syncNasControls();
@@ -3648,7 +3802,7 @@ function bind(){
  };
  mountNameFormatEntry(openNameFormats);
  $('#operator-open').textContent='操作人：'+operator;$('#operator-open').onclick=()=>workspaceSyncUi?.open();$('#shop-settings').onclick=()=>openShopSettings();
- $('#shop-picker').onchange=async()=>{const next=$('#shop-picker').value;if(next===activeShopId)return;const previous=activeShopId;try{await save();posterEditor?.clear();activeShopId=next;templateSectionOpen=false;localStorage.setItem('diy-active-shop',next);active=fullWorkspace?(ordinaryConfigs(available())[0]?.id||null):null;selected=new Set(active?[active]:[]);collapsedProducts.clear();if(!fullWorkspace)productGroups(available()).forEach(p=>collapsedProducts.add(p.id));listPinnedProduct=null;$('#search').value='';$('#link-category-filter').value='';renderAll();}catch(e){activeShopId=previous;$('#shop-picker').value=previous;toast(e.message);}};
+ $('#shop-picker').onchange=async()=>{const next=$('#shop-picker').value;if(next===activeShopId)return;const previous=activeShopId;if(!leaveSourceSheet()){$('#shop-picker').value=previous;return;}try{await save();posterEditor?.clear();activeShopId=next;templateSectionOpen=false;localStorage.setItem('diy-active-shop',next);active=fullWorkspace?(ordinaryConfigs(available())[0]?.id||null):null;selected=new Set(active?[active]:[]);collapsedProducts.clear();if(!fullWorkspace)productGroups(available()).forEach(p=>collapsedProducts.add(p.id));listPinnedProduct=null;$('#search').value='';$('#link-category-filter').value='';renderAll();}catch(e){activeShopId=previous;$('#shop-picker').value=previous;toast(e.message);}};
  if(!nasMain)bindErpSync({openDialog,toast,operator:()=>operator,flush:save,receive:result=>receiveErpForPrices(result,{syncDialog:true}),afterApply:checkPriceChanges,context:()=>JSON.stringify([state.revision,changeCounter,activeShopId,active,tab]),hasPending:()=>window.workbenchHasPendingChanges()||conflict});
  if($('#product-sync-open'))$('#product-sync-open').onclick=fullAction(openLocalStandardProduct);
  $$('[data-config]').forEach(input=>{input.onfocus=()=>checkpointConfig();input.oninput=()=>{current()[input.dataset.config]=input.value;if(input.dataset.config==='shortName'){current().shortNameAuto=false;syncPosterShortName(current());}changed('编辑配置基本信息');};});
@@ -3759,7 +3913,7 @@ $('#name-generate').onclick=()=>{checkpointConfig();current().shortNameAuto=true
   try{await navigator.clipboard.writeText(text);toast('已复制当前配置清单');}
   catch{toast('无法访问剪贴板，请重试');}
  };window.addEventListener('keydown',e=>{if(e.key==='Escape'){expandPreview(false);document.querySelectorAll('.action-menu[open]').forEach(el=>el.open=false);}});
- $$('[data-nav]').forEach(b=>b.onclick=async()=>{if(b.dataset.nav==='gallery')openGallery();else if(b.dataset.nav==='cost-source')openCosts();else if(b.dataset.nav==='source')openSources();else if(b.dataset.nav==='templates')openTemplates();else if(b.dataset.nav==='configs'){await globalThis.workbenchPriceProfitView?.hide();$('#config-list').scrollIntoView({block:'nearest'});}else if(b.dataset.nav==='exports')openDialog('图片与导出',`<p class="hint">已勾选 ${selected.size} 套。保存配置后，详情图默认 1000px、方图默认 1400px，图片自动保存到本机；也可在右侧导出指定宽度的 PNG 或 ZIP。</p>${[...imageRecords].map(([id,r])=>`<div class="list-card"><span>${esc(state.configs.find(c=>c.id===id)?.name)} · r${r.revision}</span><a href="${esc(globalThis.resolveWorkbenchAsset?.(r.url)||r.url)}" target="_blank">查看图片</a></div>`).join('')||'<p class="hint">暂无本次会话生成的图片，点击“保存配置”开始生成。</p>'}`);else if(b.dataset.nav==='logs')showActivity().catch(e=>toast(e.message));});
+ $$('[data-nav]').forEach(b=>b.onclick=async()=>{if(b.dataset.nav==='gallery')openGallery();else if(b.dataset.nav==='cost-source')openCosts();else if(b.dataset.nav==='source')openSources();else if(b.dataset.nav==='templates')openTemplates();else if(b.dataset.nav==='configs'){if(!leaveSourceSheet())return;await globalThis.workbenchPriceProfitView?.hide();$('#config-list').scrollIntoView({block:'nearest'});}else if(b.dataset.nav==='exports')openDialog('图片与导出',`<p class="hint">已勾选 ${selected.size} 套。保存配置后，详情图默认 1000px、方图默认 1400px，图片自动保存到本机；也可在右侧导出指定宽度的 PNG 或 ZIP。</p>${[...imageRecords].map(([id,r])=>`<div class="list-card"><span>${esc(state.configs.find(c=>c.id===id)?.name)} · r${r.revision}</span><a href="${esc(globalThis.resolveWorkbenchAsset?.(r.url)||r.url)}" target="_blank">查看图片</a></div>`).join('')||'<p class="hint">暂无本次会话生成的图片，点击“保存配置”开始生成。</p>'}`);else if(b.dataset.nav==='logs')showActivity().catch(e=>toast(e.message));});
  new ResizeObserver(()=>$$('textarea[data-part-name]').forEach(fitPartText)).observe($('#editor'));
  window.addEventListener('beforeunload',e=>{if(window.workbenchHasPendingChanges()){e.preventDefault();e.returnValue='';}});
 }

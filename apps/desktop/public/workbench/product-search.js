@@ -5,7 +5,7 @@ const searchMounts=new WeakMap();
 export function destroyProductSearch(root){searchMounts.get(root)?.destroy();}
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 /** 绑定搜索框和候选列表；商品与成本由读取回调提供，选中结果交给 onChange。 */
-export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',selected='',label='选择商品',placeholder='输入商品名称或 ERP ID',inputId,inputElement,describe=r=>r.goodsId?'ERP ID '+r.goodsId:'',onChange=()=>{},showEmpty=false,emptySelection='尚未选择商品',deferred=false,stableRows=false,compact=false,inlineSelection=false}){
+export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',selected='',label='选择商品',placeholder='输入商品名称或 ERP ID',inputId,inputElement,describe=r=>r.goodsId?'ERP ID '+r.goodsId:'',onChange=()=>{},showEmpty=false,emptySelection='尚未选择商品',deferred=false,stableRows=false,compact=false,inlineSelection=false,preserveSelection=false}){
  destroyProductSearch(root);
  let value=String(selected||''),searching=compact?!selected:!inputElement,revision=0,timer,frame,pendingKey='',cachedRows,documents=new WeakMap();
  const initialText=inputElement?.value||'';
@@ -17,6 +17,7 @@ export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',select
  function costIndex(){const raw=getCosts?.();if(raw instanceof Map)return raw;const map=new Map();if(Array.isArray(raw))for(const row of raw){if(!map.has(row.goodsId))map.set(row.goodsId,[]);map.get(row.goodsId).push(row);}return map;}
  function documentFor(row){let doc=stableRows&&documents.get(row);if(!doc){const description=describe(row);doc={description,text:[row.name,row.goodsId,description].join(' ').toLowerCase()};if(stableRows)documents.set(row,doc);}return doc;}
  function renderMatches(matches,costs){
+  if(preserveSelection)input.setAttribute('aria-expanded',String(matches.length>0));
   results.innerHTML=matches.slice(0,50).map(r=>`<button type="button" class="product-result ${String(r[idKey])===value?'selected':''}" data-product-id="${esc(r[idKey])}" aria-pressed="${String(r[idKey])===value}"><strong>${esc(r.name)}</strong><small>${esc(documentFor(r).description)}</small>${getCosts?componentStockHtml(r,costs):''}</button>`).join('');
   if(inputElement&&!matches.length)results.innerHTML='<p class="hint">没有匹配配件，请更换名称或 ERP ID。</p>';
   count.textContent=matches.length?`找到 ${matches.length} 项${matches.length>50?'，当前显示前 50 项，请补充关键词缩小范围':''}`:'没有匹配商品，请更换名称或 ID。';
@@ -24,6 +25,7 @@ export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',select
  }
  function paint(){
   cancel();const ticket=revision;
+  if(preserveSelection)input.setAttribute('aria-expanded','false');
   if(!deferred)results.innerHTML='';count.textContent='';
   if(inputElement&&!searching&&!value){results.innerHTML='';picked.textContent=emptySelection;return;}
   const allRows=getRows();if(cachedRows!==allRows){cachedRows=allRows;documents=new WeakMap();}
@@ -50,15 +52,31 @@ export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',select
   if(deferred){results.setAttribute('aria-busy','true');count.textContent='正在搜索…';frame=requestAnimationFrame(()=>{timer=setTimeout(scan,0);});}else scan();
  }
  results.onclick=e=>{const button=e.target.closest('[data-product-id]');if(!button||!results.contains(button)||results.hasAttribute('aria-busy'))return;const row=getRows().find(r=>String(r[idKey])===button.dataset.productId&&!r.deletedAt);if(!row)return;value=String(row[idKey]);if(inputElement){input.value=row.name;searching=false;}if(compact){input.value='';searching=false;}paint();onChange(row);};
- input.oninput=e=>{searching=true;value='';if(e.isComposing){cancel();results.innerHTML='';count.textContent='';return;}paint();onChange(null);};
- const compositionEnd=()=>{searching=true;value='';paint();onChange(null);};
+ function search(composing){
+  searching=true;if(!preserveSelection)value='';
+  if(composing){cancel();results.innerHTML='';count.textContent='';return;}
+  paint();if(!preserveSelection)onChange(null);
+ }
+ input.oninput=e=>search(e.isComposing);
+ const compositionEnd=()=>search(false);
  input.addEventListener('compositionend',compositionEnd);
  // 行内选件的输入框显示最新已选型号；其它入口继续保留原有回显。
- const restoreText=()=>inlineSelection?selectedRow()?.name||'':initialText;
- const focusOut=e=>{if(!root.contains(e.relatedTarget)){input.value=restoreText();searching=false;paint();}};
- if(inputElement){input.onfocus=()=>input.select();root.addEventListener('focusout',focusOut);}
- input.onkeydown=e=>{if(e.isComposing)return;if(e.key==='Escape'&&inputElement){e.preventDefault();input.value=restoreText();searching=false;paint();}else if(e.key==='ArrowDown'){e.preventDefault();if(results.hasAttribute('aria-busy'))pendingKey=e.key;else results.querySelector('button')?.focus();}else if(e.key==='Enter'){e.preventDefault();if(results.hasAttribute('aria-busy'))pendingKey=e.key;else{const buttons=results.querySelectorAll('button');if(buttons.length===1)buttons[0].click();}}};
- results.onkeydown=e=>{if(!['ArrowDown','ArrowUp'].includes(e.key))return;const buttons=[...results.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);e.preventDefault();buttons[Math.max(0,Math.min(buttons.length-1,i+(e.key==='ArrowDown'?1:-1)))]?.focus();};
+ const restoreText=()=>preserveSelection?'':inlineSelection?selectedRow()?.name||'':initialText;
+ const focusOut=e=>{
+  if(root.contains(e.relatedTarget))return;
+  const restore=()=>{input.value=restoreText();searching=false;paint();};
+  // “重选”重绘已选按钮后会马上聚焦输入框，等焦点稳定再判断是否已离开控件。
+  if(preserveSelection)queueMicrotask(()=>{if(root.isConnected&&!root.contains(document.activeElement))restore();});
+  else restore();
+ };
+ if(inputElement)input.onfocus=()=>input.select();
+ if(inputElement||preserveSelection)root.addEventListener('focusout',focusOut);
+ function cancelSearch(event){
+  event.preventDefault();input.value=restoreText();searching=false;paint();
+ }
+ // 工作表抽屉中按 Escape 或失焦只关候选，原商品绑定要等实际选中后才改变。
+ input.onkeydown=e=>{if(e.isComposing)return;if(e.key==='Escape'&&(inputElement||preserveSelection&&searching)){cancelSearch(e);}else if(e.key==='ArrowDown'){e.preventDefault();if(results.hasAttribute('aria-busy'))pendingKey=e.key;else results.querySelector('button')?.focus();}else if(e.key==='Enter'){e.preventDefault();if(results.hasAttribute('aria-busy'))pendingKey=e.key;else{const buttons=results.querySelectorAll('button');if(buttons.length===1)buttons[0].click();}}};
+ results.onkeydown=e=>{if(e.key==='Escape'&&preserveSelection){cancelSearch(e);(picked.querySelector('button')??input).focus();return;}if(!['ArrowDown','ArrowUp'].includes(e.key))return;const buttons=[...results.querySelectorAll('button')],i=buttons.indexOf(document.activeElement);e.preventDefault();buttons[Math.max(0,Math.min(buttons.length-1,i+(e.key==='ArrowDown'?1:-1)))]?.focus();};
  const api={value:()=>value,row:selectedRow,query:()=>input.value,clear:()=>{value='';input.value='';searching=true;paint();onChange(null);},refresh:()=>{documents=new WeakMap();paint();},destroy:()=>{
   cancel();input.removeEventListener('compositionend',compositionEnd);root.removeEventListener('focusout',focusOut);
   input.oninput=null;input.onfocus=null;input.onkeydown=null;results.onclick=null;results.onkeydown=null;

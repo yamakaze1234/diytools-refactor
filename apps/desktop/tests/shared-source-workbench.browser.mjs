@@ -16,6 +16,11 @@ const root=resolve(import.meta.dirname,'../dist');
 const headers={'x-workbench-deployment':fixtureDeployment};
 const staticServer=createServer(async(req,res)=>{
  const path=new URL(req.url,'http://localhost').pathname;
+ // 深度回归继续验证原输出源弹窗和旧版 NAS 预览。正式入口由 source-sheet.browser.mjs 验收。
+ if(path==='/workbench/source-sheet-ui.js'){
+  res.writeHead(200,{'content-type':'text/javascript'});
+  return res.end("import {openSourceEditor} from './source-editor.js'; export const openSourceSheet=(_root,api)=>openSourceEditor(api);");
+ }
  if(path.startsWith('/images/')){
   const image=await fetch(api.url+path);
   res.writeHead(image.status,{'content-type':image.headers.get('content-type')??'application/octet-stream'});

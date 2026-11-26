@@ -108,10 +108,18 @@ export async function submitNasDraftSet(rows,{submit,isPending,onProgress=()=>{}
  return results;
 }
 
-export function createNasMainWorkspace({nativeRequest,storage,createClient=createNasApiClient,planStorage=nasPlanStorage(),requestedShop=null}){
+export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,onDraftStorageError=null,createClient=createNasApiClient,planStorage=nasPlanStorage(),requestedShop=null}){
  let member=null,endpoint=null,catalogScope=null,identity=null,lookup=null,index=null,meta=null,closed=false,begin=null,catalogController=null;
  let queue=null,shopId=null,availableShops=[],capability=null;
  let client=createClient({nativeRequest});
+ // 测试与旧宿主仍支持同步存储；IndexedDB 的元数据回执则必须按原顺序等待提交。
+ const after=(result,fn)=>result?.then?result.then(fn):fn(result);
+ function each(rows,apply){
+  let task;
+  for(const row of rows)task=after(task,()=>apply(row));
+  return task;
+ }
+ const draftOptions={storage,draftStorage,onStorageError:onDraftStorageError};
  const controllers=new Map(),openings=new Map(),editors=new Map();
  const validate=()=>{if(closed)throw new NasApiError('MEMBER_CHANGED',403);};
  const ready=()=>{validate();if(!member)throw new NasApiError('UNAUTHENTICATED',401);return member;};
@@ -134,7 +142,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
    endpoint=settings.endpoint_id+':main'+(shopId==='intel'?'':':'+shopId);
    identity=JSON.stringify([me.workspace_id,me.uid]);
    member=me;client.bindIdentity(me.workspace_id,me.uid);
-   lookup=createNasDraftController({client:owned,storage,endpointId:endpoint,shopId});
+   lookup=createNasDraftController({client:owned,...draftOptions,endpointId:endpoint,shopId});
    catalogController=createNasCatalogController({client:owned,storage,scope:[endpoint,me.workspace_id,me.uid],shopId});
    queue=createNasOperationQueue({client:owned,storage:planStorage,key:JSON.stringify([endpoint,me.workspace_id,me.uid]),shopId});
    await lookup.verify();
@@ -170,7 +178,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   uploadImage:(...args)=>call(()=>client.uploadImage(...args))
  };
  const controller=id=>{
-  if(!controllers.has(id))controllers.set(id,createNasDraftController({client:owned,storage,endpointId:endpoint,shopId}));
+  if(!controllers.has(id))controllers.set(id,createNasDraftController({client:owned,...draftOptions,endpointId:endpoint,shopId}));
   return controllers.get(id);
  };
  async function open(id){
@@ -232,7 +240,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   const row=editors.get(config.id),ctrl=controllers.get(config.id);
   if(!row?.visible||!ctrl||config.shopId!==shopId)throw new NasApiError('INVALID_DRAFT');
   const proposed=projectNasEdits(row.raw,row.visible,config);
-  if(!equal(proposed,ctrl.read().document))ctrl.edit(proposed);
+  if(ctrl.needsRetry()||!equal(proposed,ctrl.read().document))ctrl.edit(proposed);
   // 后续批量文案编辑以先前已暂存的配件加购为基线，撤销也走同一份原文投影。
   if(!equal(row.visible.addons,config.addons)){
    row.raw.addons=dup(proposed.addons);
@@ -305,8 +313,11 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
  }
  const drafts=()=>lookup?.drafts()||[];
  function discardLocalDrafts(ids){
-  ready();lookup.discardLocalDrafts(ids);
-  for(const id of ids){editors.delete(id);controllers.delete(id);}
+  ready();
+  if(ids.some(id=>controllers.get(id)?.isWorking()))throw new NasApiError('SAVE_IN_PROGRESS');
+  return after(lookup.discardLocalDrafts(ids),()=>{
+   for(const id of ids){editors.delete(id);controllers.delete(id);}
+  });
  }
  const release=id=>{if(!openings.has(id)){editors.delete(id);controllers.delete(id);}};
  const close=()=>{closed=true;editors.clear();controllers.clear();openings.clear();};
@@ -378,10 +389,11 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
  function discardArchivedDrafts(changes){
   if(!changes.length)return;
   const archived=new Map(changes.map(({configuration_id,version})=>[configuration_id,version]));
-  for(const [id,version] of archived)lookup.discardArchived(id,version);
-  const oldPrices=priceDraft(),remaining=oldPrices.filter(({id,expected_version})=>
-   !archived.has(id)||!versionNumber(expected_version)||BigInt(expected_version)>=BigInt(archived.get(id)));
-  if(remaining.length!==oldPrices.length)priceDraft(remaining);
+  return after(each(archived,([id,version])=>lookup.discardArchived(id,version)),()=>{
+   const oldPrices=priceDraft(),remaining=oldPrices.filter(({id,expected_version})=>
+    !archived.has(id)||!versionNumber(expected_version)||BigInt(expected_version)>=BigInt(archived.get(id)));
+   if(remaining.length!==oldPrices.length)priceDraft(remaining);
+  });
  }
  // Agent 使用当前页面的部署和身份；跨店仍重新核对 NAS 授权，并使用各店原有草稿键。
  async function agentAccess(shop){
@@ -393,9 +405,9 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
   return {client:reader,assertWritable(){
    if(permissions.workspace_writes!==true||permissions.configuration_writes!==true)throw new NasApiError('WRITES_DISABLED',405);
   },async assertDrafts(ids){
-   const draft=shop===shopId?lookup:createNasDraftController({client:reader,storage,endpointId:scope,shopId:shop});
-   if(draft!==lookup)await draft.verify();
-   if([...draft.drafts(),...priceDraft(undefined,scope)].some(row=>ids.includes(row.id)))
+   const draft=shop===shopId?lookup:createNasDraftController({client:reader,...draftOptions,endpointId:scope,shopId:shop});
+   if(draft!==lookup)await draft.verify({preload:false});
+   if([...await draft.draftsFresh(),...priceDraft(undefined,scope)].some(row=>ids.includes(row.id)))
     throw new NasApiError('UNSAVED_DRAFT',409);
    const plans=shop===shopId?queue:createNasOperationQueue({client:reader,storage:planStorage,key:JSON.stringify([scope,member.workspace_id,member.uid]),shopId:shop});
    if(await plans.read())throw new NasApiError('WORKSPACE_PLAN_PENDING',409);
@@ -413,25 +425,31 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
  // 仅消费确认回执中的自动名称调整，显示投影与持久草稿一起接续新版本。
  function acceptRenumber(rows,onAccepted){
   const accepted=[];
-  for(const row of rows){
+  const updates=each(rows,row=>{
    if(!versionNumber(row.previous_version)||!versionNumber(row.version)||typeof row.before!=='string'||typeof row.name!=='string')throw new NasApiError('INVALID_API_RESPONSE');
    validateRenumberFields(row);
-   if(!(controllers.get(row.configuration_id)??lookup).acceptRenumber(row))continue;
-   const editor=editors.get(row.configuration_id);
-   if(editor){for(const key of ['raw','visible'])applyNasRenumber(editor[key],row);editor.remoteVersion=row.version;}
-   onAccepted?.(row);
-   accepted.push(row.configuration_id);
-  }
-  // 价格利润表有独立草稿，编号回执只推进相同基线的版本。
-  const prices=priceDraft();let changed=false;
-  for(const row of rows)for(const draft of prices)if(draft.id===row.configuration_id&&draft.expected_version===row.previous_version){draft.expected_version=row.version;changed=true;}
-  if(changed)priceDraft(prices);
-  return accepted;
+   return after((controllers.get(row.configuration_id)??lookup).acceptRenumber(row),applied=>{
+    if(!applied)return;
+    const editor=editors.get(row.configuration_id);
+    if(editor){for(const key of ['raw','visible'])applyNasRenumber(editor[key],row);editor.remoteVersion=row.version;}
+    onAccepted?.(row);
+    accepted.push(row.configuration_id);
+   });
+  });
+  return after(updates,()=>{
+   // 价格利润表有独立草稿，编号回执只推进相同基线的版本。
+   const prices=priceDraft();let changed=false;
+   for(const row of rows)for(const draft of prices)if(draft.id===row.configuration_id&&draft.expected_version===row.previous_version){draft.expected_version=row.version;changed=true;}
+   if(changed)priceDraft(prices);
+   return accepted;
+  });
  }
  return {initialize,request,refreshDependencies,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,discardLocalDrafts,release,close,documentFor,acceptRenumber,
+  settleDrafts:()=>draftStorage?.settle()??Promise.resolve(),
+  flushDrafts:()=>draftStorage?.flush()??Promise.resolve(),hasPendingDraftWrites:()=>!!draftStorage?.hasPendingWrites(),
   // 角标读取已确认 base，不能把飞行期间的新草稿当作保存回执。
   acceptedDocument:id=>dup(controllers.get(id)?.read()?.base??null),
-  acceptSourceVersions:(ids,versions)=>{ready();for(const id of ids)if(!controllers.get(id)?.acceptSourceVersions(versions))throw new NasApiError('UNSAVED_DRAFT');},
+  acceptSourceVersions:(ids,versions)=>{ready();return each(ids,id=>after(controllers.get(id)?.acceptSourceVersions(versions),ok=>{if(!ok)throw new NasApiError('UNSAVED_DRAFT');}));},
   acceptObservedDependencies:versions=>{ready();let count=0;for(const ctrl of controllers.values())if(ctrl.acceptObservedDependencies(versions))count++;return count;},
   agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],
   shop:()=>shopId,shops:()=>[...availableShops],serverVersion,serverDataTime,serverDisplayScope:()=>JSON.stringify([endpoint,identity]),
@@ -466,6 +484,7 @@ export function createNasMainWorkspace({nativeRequest,storage,createClient=creat
 }
 
 export const nasErrorText=(error,configs=[])=>{
+ if(error?.code==='DRAFT_STORAGE_UNAVAILABLE'&&error.details?.quota)return '本机磁盘或草稿空间不足，草稿未能写入，请保留窗口并清理磁盘空间后重试。';
  // 批量入口可能接到旧版仅含 message 的异常，同样映射中文并补充可定位的配置名。
  if(error?.code==='UNSAVED_DRAFT'||/\bUNSAVED_DRAFT\b/.test(error?.message??'')){
   const ids=new Set([error?.details?.configuration_id,...(error?.details?.configuration_ids??[])].filter(Boolean));

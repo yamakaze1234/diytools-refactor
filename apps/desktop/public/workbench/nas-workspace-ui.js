@@ -15,7 +15,7 @@ const text={
 };
 const readable=error=>{const message=text[error.code]||'操作未完成，请核对网络和当前账号。';return error.details?.field?message+' 字段：'+error.details.field:message;};
 
-export async function installNasWorkspace({openDialog,esc,notify}){
+export async function installNasWorkspace({openDialog,esc,notify,draftStorage=null}){
  const button=document.getElementById('nas-workspace');
  if(!button)return;
  const nativeRequest=(path,options)=>fetch('/api/native-nas'+path,options);
@@ -28,7 +28,8 @@ export async function installNasWorkspace({openDialog,esc,notify}){
  button.hidden=false;
  button.onclick=async()=>{
   const api=createNasApiClient({nativeRequest});
-  const draft=createNasDraftController({client:api,storage:localStorage,endpointId:settings.endpoint_id});
+  const draft=createNasDraftController({client:api,storage:localStorage,draftStorage,endpointId:settings.endpoint_id,
+   onStorageError:(_,error)=>{if(error)notify?.(readable(error));}});
   const dialog=document.getElementById('dialog');
   const body=document.getElementById('dialog-body');
   const title='英特尔 · NAS 试验工作区';
@@ -36,6 +37,16 @@ export async function installNasWorkspace({openDialog,esc,notify}){
   const session={};dialog.nasSession=session;
   const active=()=>dialog.open&&dialog.nasSession===session&&document.getElementById('dialog-title')?.textContent===title;
   const status=message=>{if(!active())return;const el=body.querySelector('[data-nas-message]');if(el)el.textContent=message;};
+  // 原生 dialog 的关闭按钮和 Escape 都先等这次编辑真正提交到本机。
+  const events=new AbortController();
+  const closeAfterWrite=async event=>{
+   if(!active()||!draftStorage)return;
+   event.preventDefault();
+   try{await draft.flush();if(active())dialog.close();}catch(error){status(readable(error));}
+  };
+  dialog.addEventListener('cancel',closeAfterWrite,{signal:events.signal});
+  dialog.querySelector('form[method=dialog]')?.addEventListener('submit',closeAfterWrite,{signal:events.signal});
+  dialog.addEventListener('close',()=>events.abort(),{once:true});
   let previousQuery='',offset=0,archived=false,entry=null,canWrite=false,busy=false;
   const click=(type,action)=>{const el=body.querySelector('[data-nas-'+type+']');if(el)el.onclick=action;};
   const guarded=action=>async event=>{
@@ -104,13 +115,13 @@ export async function installNasWorkspace({openDialog,esc,notify}){
      const key=input.dataset.nasField,live=draft.read().document;
      const value=input.type==='number'?(input.value===''?null:input.valueAsNumber):input.value;
      const next={...live,[key]:value};
-     draft.edit(next);complete.value=JSON.stringify(next,null,2);status('草稿已保存在本机。');
+     draft.edit(next);complete.value=JSON.stringify(next,null,2);void draft.flush().then(()=>status('草稿已保存在本机。'),e=>status(readable(e)));
     }catch(error){status(readable(error));}
    };
-   click('apply-doc',guarded(()=>{
+   click('apply-doc',guarded(async()=>{
     let next;try{next=JSON.parse(complete.value);}catch{status('完整配置内容不完整，请检查后再应用。');return;}
     if(!next||!Array.isArray(next.parts)||!Array.isArray(next.actualParts)||!Array.isArray(next.addons))throw new NasApiError('VALIDATION_FAILED');
-    show(draft.edit(next),'完整配置已保存到本机草稿。');
+    const edited=draft.edit(next);await draft.flush();show(edited,'完整配置已保存到本机草稿。');
    }));
    click('back',guarded(list));
    click('save',guarded(async()=>{

@@ -61,7 +61,7 @@ export function createContinuousWorkbench(api){
  let renderedCanUndo,renderedCanRedo,historySyncQueued=false;
  // 11-19：总表显示时，在页面任意位置按 Ctrl/⌘+Z 撤销、Ctrl+Y 或 Ctrl/⌘+Shift+Z 重做；输入框里交给浏览器自己处理。
  host.ownerDocument.addEventListener('keydown',event=>{
-   if(disposed||host.hidden||document.querySelector('.workspace.price-profit-active')||document.body.classList.contains('host-template-mode')||event.defaultPrevented||event.isComposing||event.altKey||!(event.ctrlKey||event.metaKey))return;
+   if(disposed||host.hidden||document.querySelector('.workspace:is(.price-profit-active,.source-sheet-active)')||document.body.classList.contains('host-template-mode')||event.defaultPrevented||event.isComposing||event.altKey||!(event.ctrlKey||event.metaKey))return;
   const target=event.target;if(target instanceof HTMLElement&&(target.isContentEditable||target.closest('input, textarea, select')))return;
   const key=event.key.toLowerCase(),redo=key==='y'||key==='z'&&event.shiftKey;
   if(key!=='z'&&key!=='y')return;

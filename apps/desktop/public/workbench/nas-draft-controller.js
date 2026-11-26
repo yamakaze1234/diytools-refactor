@@ -64,16 +64,28 @@ export async function nasDependencies(client,document,prior={sources:{},costs:{}
  return result;
 }
 
-export function createNasDraftController({client,storage,endpointId,shopId='intel',uuid=()=>crypto.randomUUID()}){
+export function createNasDraftController({client,storage,draftStorage=null,endpointId,shopId='intel',uuid=()=>crypto.randomUUID(),onStorageError=null}){
  let owner=null,key=null,record=null,configurationId=null,remote=null,working=false;
  const read=()=>record?clone(record):null;
- const persist=value=>{
+ let serialized=null;
+ const summaries=new Map();
+ const persist=(value,immediate=false)=>{
   if(!key)throw new NasApiError('UNAUTHENTICATED',401);
-  try{if(value)storage.setItem(key,JSON.stringify(value));else storage.removeItem(key);}
+  const text=value?JSON.stringify(value):null;
+  if(draftStorage){
+   const id=configurationId;
+   const options={expected:serialized,notify:(_,error)=>onStorageError?.(id,error)};
+   if(immediate){
+    const task=value?draftStorage.setNow(key,text,options):draftStorage.removeNow(key,options);
+    return task.then(()=>{record=value;serialized=text;});
+   }
+   if(value)draftStorage.enqueueSet(key,text,options);else draftStorage.enqueueRemove(key,options);
+   serialized=text;
+  }else try{if(value)storage.setItem(key,text);else storage.removeItem(key);}
   catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
   record=value;
  };
- async function verify(){
+ async function verify({preload=true}={}){
   const me=await client.me();
   const capability=nasOperationsCapability(me,shopId);
   if(!capability)
@@ -81,23 +93,45 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   const next=JSON.stringify([endpointId,me.workspace_id,me.uid]);
   if(owner&&owner!==next)throw new NasApiError('MEMBER_CHANGED',403);
   owner=next;client.bindIdentity?.(me.workspace_id,me.uid);
+  if(preload&&draftStorage){await draftStorage.migrateLegacy(prefix());await draftStorage.loadPrefix(prefix());}
   // 旧顶层写能力仅表示英特尔；保存与原回执重试必须使用本店的最新授权。
   return {...me,configuration_writes:capability.configuration_writes===true};
  }
- function useKey(id){
-  key=prefix()+JSON.stringify(id);
-  configurationId=id;
-  record=null;remote=null;
+ async function useKey(id){
+  const name=prefix()+JSON.stringify(id);
   try{
-   const saved=JSON.parse(storage.getItem(key)||'null');
-   if(saved&&saved.id===id&&saved.document?.id===id&&saved.document?.shopId===shopId&&saved.format===1)record=saved;
-  }catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
+   const text=draftStorage?await draftStorage.getFresh(name):storage.getItem(name);
+   const saved=JSON.parse(text||'null');
+   key=name;configurationId=id;serialized=text??null;remote=null;
+   record=saved&&saved.id===id&&saved.document?.id===id&&saved.document?.shopId===shopId&&saved.format===1?saved:null;
+  }catch(error){throw error instanceof NasApiError?error:new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
  }
  const prefix=()=>'diy-nas-draft:'+owner+':';
+ function listEntries(entries,memo){
+  const result=[];
+  for(const [key,text] of entries){
+   let entry=memo?.get(key);
+   if(entry?.text!==text){
+    const value=JSON.parse(text);
+    const summary=value?.format===1&&value.id===value.document?.id&&value.document?.shopId===shopId?
+     {id:value.id,name:value.document.name,version:value.version,pending:!!value.pending}:null;
+    entry={text,summary};memo?.set(key,entry);
+   }
+   if(entry.summary)result.push({...entry.summary});
+  }
+  if(memo)for(const key of memo.keys())if(!entries.has(key))memo.delete(key);
+  return result;
+ }
+ async function draftsFresh(){
+  if(!draftStorage)return drafts();
+  if(!owner)await verify({preload:false});
+  return listEntries(await draftStorage.listFresh(prefix()));
+ }
  function drafts(){
   if(!owner)return [];
   const result=[];
   try{
+   if(draftStorage)return listEntries(draftStorage.listCached(prefix()),summaries);
    for(let i=0;i<storage.length;i++){
     const name=storage.key(i);
     if(!name?.startsWith(prefix()))continue;
@@ -112,6 +146,11 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   // 仅供已明确确认放弃草稿的缓存清理使用；先整批检查，未知提交绝不丢弃。
   if(!owner||working)throw new NasApiError('SAVE_IN_PROGRESS');
   const targets=[...new Set(ids)].map(id=>({id,key:prefix()+JSON.stringify(id)}));
+  if(draftStorage)return draftStorage.discardBatch(targets,(text,{id})=>{
+   const value=JSON.parse(text);
+   if(value&&(value.format!==1||value.id!==id||value.document?.id!==id||value.document?.shopId!==shopId||value.pending))throw new NasApiError('SAVE_STATUS_UNKNOWN');
+   return true;
+  }).then(()=>{if(ids.includes(configurationId)){record=null;remote=null;serialized=null;}});
   try{
    const saved=targets.map(row=>({...row,value:JSON.parse(storage.getItem(row.key)||'null')}));
    if(saved.some(row=>row.value&&(row.value.id!==row.id||row.value.document?.id!==row.id||row.value.document?.shopId!==shopId||row.value.pending)))throw new NasApiError('SAVE_STATUS_UNKNOWN');
@@ -122,15 +161,19 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
  function discardArchived(id,archivedVersion){
   if(!owner)return;
   const name=prefix()+JSON.stringify(id);
+  const older=text=>{
+   const saved=JSON.parse(text);
+   return saved?.format===1&&saved.id===id&&saved.document?.id===id&&saved.document.shopId===shopId&&
+    !saved.pending&&/^[1-9]\d{0,18}$/.test(saved.version)&&BigInt(saved.version)<BigInt(archivedVersion);
+  };
+  if(draftStorage)return draftStorage.discardIf(name,older);
   try{
-   const saved=JSON.parse(storage.getItem(name)||'null');
-   if(saved?.format===1&&saved.id===id&&saved.document?.id===id&&saved.document.shopId===shopId&&
-      !saved.pending&&/^[1-9]\d{0,18}$/.test(saved.version)&&BigInt(saved.version)<BigInt(archivedVersion))storage.removeItem(name);
+   if(older(storage.getItem(name)))storage.removeItem(name);
   }catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
  }
  async function open(id,{archived=false}={}){
   if(working)throw new NasApiError('SAVE_IN_PROGRESS');
-  await verify();useKey(id);
+  await verify();await useKey(id);
   try{
    const detail=await client.detail(id,{archived});
    if(detail?.document?.shopId!==shopId||detail?.document?.id!==id)throw new NasApiError('INVALID_API_RESPONSE');
@@ -143,14 +186,14 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
  async function resume(id){
   if(working)throw new NasApiError('SAVE_IN_PROGRESS');
   if(!owner)await verify();
-  if(configurationId!==id||!record)useKey(id);
+  if(draftStorage||configurationId!==id||!record)await useKey(id);
   return read();
  }
  async function create(document){
   if(document?.shopId!==shopId)throw new NasApiError('INVALID_DRAFT');
-  await verify();useKey(document.id);
+  await verify();await useKey(document.id);
   if(record)throw new NasApiError('DRAFT_ALREADY_EXISTS');
-  persist({format:1,id:document.id,version:null,base:null,dependencies:{sources:{},costs:{}},document:clone(document),pending:null});
+  await persist({format:1,id:document.id,version:null,base:null,dependencies:{sources:{},costs:{}},document:clone(document),pending:null},true);
   return read();
  }
  function edit(document){
@@ -183,7 +226,7 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   // 已确认回执后先落本机检查点；详情回读中断也不能把已提交误判为未保存。
   const submitted=record.pending.body.document||record.document;
   const next={...record,version:receipt.version,dependencies:record.pending.body.dependencies||record.dependencies,base:submitted,document:submitted,pending:null};
-  persist(null);record=next;
+  await persist(null,true);record=next;
   return receipt;
  }
  async function submitPending(replay=false){
@@ -192,7 +235,7 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   try{receipt=await client.save(pending.action,record.id,pending.body);}
   catch(error){
    if(replay?originalVersionRejected(error):knownRejection.has(error.code)&&error.status>=400&&error.status<500)
-    persist({...record,pending:null});
+    await persist({...record,pending:null},true);
    throw error;
   }
   return finish(receipt);
@@ -212,7 +255,7 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
     body.dependencies=await nasDependencies(client,body.document,record.dependencies);
    }
    for(let refreshed=0;;refreshed++){
-    persist({...record,pending:{action,body:clone(body)}});
+    await persist({...record,pending:{action,body:clone(body)}},true);
     try{
      const result=await submitPending();
      return refreshed?{...result,dependenciesRefreshed:true}:result;
@@ -230,7 +273,7 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
       freshBase=detail.dependencies;
      }else if(record.version!==null)throw error;
      body.dependencies=await nasDependencies(client,body.document,freshBase);
-     persist({...record,dependencies:clone(body.dependencies)});
+     await persist({...record,dependencies:clone(body.dependencies)},true);
      body.operation_id=uuid();
     }
    }
@@ -255,6 +298,16 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
  }
  // 编号事务只推进名称基线，价格、数量和其它本机编辑继续保留。
  function persistConfirmedMetadata(name,before,next){
+  if(draftStorage){
+   // 干净的已打开配置可以没有磁盘记录；只允许接续当前窗口实际见过的版本。
+   const expected=name===key?serialized:draftStorage.getCached(name);
+   const value=same(next.base,next.document)?null:JSON.stringify(next);
+   working=true;
+   return draftStorage.compareAndSet(name,expected,value).then(matched=>{
+    if(!matched)throw new NasApiError('UNSAVED_DRAFT',409);
+    if(name===key)serialized=value;
+   }).finally(()=>{working=false;});
+  }
   try{
    const saved=JSON.parse(storage.getItem(name)||'null');
    // 其它窗口可能已经保存新的草稿或未知请求，只更新仍与当前基线一致的持久记录。
@@ -267,7 +320,7 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   if(!owner||working)return false;
   const loaded=record?.id===row.configuration_id,name=prefix()+JSON.stringify(row.configuration_id);
   let saved=loaded?record:null;
-  if(!loaded)try{saved=JSON.parse(storage.getItem(name)||'null');}catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
+  if(!loaded)try{saved=JSON.parse((draftStorage?draftStorage.getCached(name):storage.getItem(name))||'null');}catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
   if(!saved||saved.format!==1||saved.id!==row.configuration_id||saved.document?.id!==saved.id||saved.document.shopId!==shopId||
      saved.pending||saved.version!==row.previous_version||saved.base?.name!==row.before)return false;
   // 干净记录的 base 与 document 可能共用同一对象；分别生成基线和可编辑快照。
@@ -275,13 +328,16 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   applyNasRenumber(next.base,row,false);
   applyNasRenumber(next.document,row);
   // 重开后尚未载入的草稿也接续确认版本，不读取远端来覆盖本机输入。
-  persistConfirmedMetadata(name,saved,next);
-  if(loaded)record=next;
-  if(loaded&&remote?.version===row.previous_version){
-   const document=clone(remote.document);applyNasRenumber(document,row,false);
-   remote={...remote,version:row.version,document};
-  }
-  return true;
+  const accept=()=>{
+   if(loaded)record=next;
+   if(loaded&&remote?.version===row.previous_version){
+    const document=clone(remote.document);applyNasRenumber(document,row,false);
+    remote={...remote,version:row.version,document};
+   }
+   return true;
+  };
+  const commit=persistConfirmedMetadata(name,saved,next);
+  return commit?commit.then(accept):accept();
  }
  // 明确同步输出源时只接续本次预览核实的来源依赖；配置版本、其它成本和本机输入保持原样。
  function acceptSourceVersions(versions){
@@ -289,8 +345,9 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   if(Object.values(versions).some(value=>typeof value!=='string'||!/^[1-9]\d{0,18}$/.test(value)))throw new NasApiError('INVALID_API_RESPONSE');
   const next=clone(record);
   for(const [id,version] of Object.entries(versions))if(Object.hasOwn(next.dependencies.sources,id))next.dependencies.sources[id]=version;
-  persistConfirmedMetadata(key,record,next);record=next;
-  return true;
+  const accept=()=>{record=next;return true;};
+  const commit=persistConfirmedMetadata(key,record,next);
+  return commit?commit.then(accept):accept();
  }
  /** 本次来源保存后的已读投影只接续干净配置；草稿和未知请求仍保持原依赖。 */
  function acceptObservedDependencies(versions){
@@ -301,5 +358,5 @@ export function createNasDraftController({client,storage,endpointId,shopId='inte
   // 这里只接续当前窗口的已读基线，不清理其它窗口可能写入的同配置草稿。
   record=next;return true;
  }
- return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,discardArchived,discardLocalDrafts,acceptRenumber,acceptSourceVersions,acceptObservedDependencies};
+ return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,draftsFresh,flush:()=>draftStorage?.flush()??Promise.resolve(),isWorking:()=>working,needsRetry:()=>!!draftStorage?.hasFailure(key),discardArchived,discardLocalDrafts,acceptRenumber,acceptSourceVersions,acceptObservedDependencies};
 }
