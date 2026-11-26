@@ -1,3 +1,4 @@
+import {categoryFromErp} from './component-category.js';
 /** 配件维护资料：人工覆盖优先，ERP 原文和型号推断只作为自动值。 */
 export const boardTypes=['ATX','MATX','ITX','E-ATX'];
 export const hardwareColors=['黑','白'];
@@ -56,12 +57,15 @@ export function configHardwareIssues(config){
  if(board&&box){const issue=boardCaseIssue(board,box);if(issue.status!=='ok')result.push({...issue,label});}
  }return result;
 }
-export function copyHardware(source,part){for(const key of ['hardwareOverrides','hardwareFacts','erpSpec','erpModel']){if(source[key]!==undefined)part[key]=structuredClone(source[key]);else delete part[key];}}
+export function copyHardware(source,part){
+ // 已有的 ERP 观察只在来源带入更新类别时替换。
+ if(source.erpCategory!==undefined)part.erpCategory=source.erpCategory;
+ for(const key of ['hardwareOverrides','hardwareFacts','erpSpec','erpModel']){if(source[key]!==undefined)part[key]=structuredClone(source[key]);else delete part[key];}}
 /** 只填自动资料，绝不把推断写入人工覆盖。 */
 export function hardwareFacts(row){
- const facts={...row.hardwareFacts},s=text(row),category=row.erpCategory||'';
- if(category==='主板'||inferBoardType(row)){const type=inferBoardType(row);if(type&&!facts.boardType)facts.boardType=type;}
- if(category==='机箱'||/机箱|风扇位|风扇位置|风冷限高|散热器限高/.test(s)){const type=inferCaseType(row);if(type&&!facts.caseType)facts.caseType=type;}
+ const facts={...row.hardwareFacts},s=text(row),category=categoryFromErp(row.erpCategory);
+ if(category==='主板'||!category){const type=inferBoardType(row);if(type&&!facts.boardType)facts.boardType=type;}
+ if(category==='机箱'||!category&&/机箱|风扇位|风扇位置|风冷限高|散热器限高/.test(s)){const type=inferCaseType(row);if(type&&!facts.caseType)facts.caseType=type;}
  return Object.keys(facts).length?facts:undefined;
 }
 /** 已核对资料的批量补全仅修改识别字段，不触碰既有价格、名称、数量或加购。 */

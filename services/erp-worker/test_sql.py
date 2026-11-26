@@ -94,6 +94,7 @@ class SqlTests(unittest.TestCase):
         self.assertEqual(sql.read_bundle(CONFIG, SECRET, connector), bundle())
         self.assertEqual(connection.queries, [sql.CATALOG_QUERY])
         self.assertIn('FROM [库存].[库存查询]', connection.queries[0])
+        self.assertIn('[大分类]', connection.queries[0])
         self.assertNotIn('分库库存', connection.queries[0])
         self.assertTrue(all(query.startswith('SELECT TOP (100001)') for query in connection.queries))
         self.assertTrue(captured['readonly'])
@@ -103,6 +104,23 @@ class SqlTests(unittest.TestCase):
         self.assertTrue(captured['validate_host'])
         self.assertTrue(connection.closed)
         self.assertFalse(sql._tls_settings.trust)
+
+    def test_optional_category_uses_text_probe_and_normalizes(self):
+        # 同时覆盖 Unicode、驱动返回的字节和经 Latin-1 转存的中文。
+        category = ' 合成\t类\x85别 '
+        legacy = '合成类别'.encode('gb18030')
+        probe = '中文'.encode('gb18030')
+        for value, marker, expected in [
+                (category, '中文', '合成类别'), (None, '中文', None), (' \x00 ', '中文', None),
+                ('类' * 101, '中文', '类' * 100), (legacy, probe, '合成类别'),
+                (legacy.decode('latin1'), probe.decode('latin1'), '合成类别')]:
+            with self.subTest(value=value):
+                row = catalog(大分类=value, encoding_probe=marker)
+                self.assertEqual(sql.normalize({'catalog': [row]})[0]['erpCategory'], expected)
+        self.assertNotIn('erpCategory', sql.normalize(bundle())[0])
+        for value in [12, b'\xff']:
+            with self.subTest(value=value), self.assertRaises(sql.SqlError):
+                sql.normalize({'catalog': [catalog(大分类=value)]})
 
     def test_exact_limit_and_sentinel_rejected(self):
         connection = FakeConnection([[[catalog()] * 100000]])

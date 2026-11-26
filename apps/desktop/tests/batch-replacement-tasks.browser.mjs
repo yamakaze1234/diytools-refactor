@@ -18,6 +18,7 @@ state.sourceCatalog=[{shopId:'intel',sourceId:'s-cpu',goodsId:'1001',name:'验�
 state.sourceCatalog.push({shopId:'intel',sourceId:'new-cpu',goodsId:'2001',name:'替换CPU',erp:900,tax:950},{shopId:'intel',sourceId:'new-memory',goodsId:'2002',name:'替换内存',erp:330,tax:350});
 state.costSource=state.sourceCatalog.map(p=>({...p,stockAvailable:p.goodsId.startsWith('2')?100:0}));
 for(const c of state.configs){Object.assign(c.parts[0],state.sourceCatalog[0]);Object.assign(c.actualParts[0],state.sourceCatalog[0]);Object.assign(c.parts[3],state.sourceCatalog[1]);Object.assign(c.actualParts[3],state.sourceCatalog[1]);c.actualParts[3].qty=2;c.parts[0].upgrade='旧CPU文案';c.parts[3].upgrade='旧内存文案';}
+let failStockSave=false;
 const errors=[],requests=[],browser=await chromium.launch({channel:'msedge',headless:true});
 try{
  const topPage=await browser.newPage({viewport:{width:1500,height:1000},bypassCSP:true});let page=topPage;page.on('pageerror',e=>{errors.push(e.message);console.error(e.stack)});
@@ -27,7 +28,8 @@ try{
  await page.route('**/workbench/app.js',r=>r.fulfill({contentType:'text/javascript',body:source+`\nwindow.memoryProbe={snapshot:()=>structuredClone(state),selectForTest:ids=>{selected=new Set(ids);},close:()=>closeDialog()};`}));
  await page.route('**/catalog.json',r=>r.fulfill({json:[]}));
  await page.route('**/api/**',async route=>{
-  const req=route.request(),path=new URL(req.url()).pathname,payload=req.method()==='POST'?req.postDataJSON():null;requests.push({method:req.method(),path,ids:payload?.ids});let value={};
+  const req=route.request(),path=new URL(req.url()).pathname,payload=req.method()==='POST'?req.postDataJSON():null;requests.push({method:req.method(),path,ids:payload?.ids,operationId:payload?.operationId});let value={};
+  if(failStockSave&&path==='/api/configs/batch'){failStockSave=false;await route.fulfill({status:503,json:{error:'合成保存失败'}});return;}
   if(path==='/api/workspace/index'){const {configs,...metadata}=state;value={revision:state.revision,updatedAt:state.updatedAt,metadata,summaries:configs.map(summaryOf)};}
   else if(path==='/api/configs/load')value={revision:state.revision,configs:state.configs.filter(c=>payload.ids.includes(c.id))};
   else if(path==='/api/state'&&req.method()==='GET')value=state;
@@ -73,15 +75,47 @@ try{
  await page.locator('#global-qty').fill('3');assert.equal(await page.locator('#global-apply').isDisabled(),true);
  await page.evaluate(()=>window.memoryProbe.close());
  await page.locator('#product-stock-check').click();await page.waitForFunction(()=>document.querySelector('#stock-message')?.textContent.startsWith('检查完成'));
- await choose('stock','验收CPU','2001');await page.locator('#stock-add-task').click();await choose('stock','验收内存','2002');
- await page.locator('[data-stock-task="0"]').click();assert.match(await page.locator('#stock-picker [data-product-picked]').innerText(),/替换CPU/);assert.equal(await page.locator('[data-stock-link]').isChecked(),true);
+// 默认候选只显示有现货的同大类，关闭开关后才能搜索其他配件或缺货件。
+ await page.locator('.stock-issue').filter({hasText:'验收CPU'}).locator('[data-stock-edit]').click();
+ const choices=()=>page.locator('#stock-picker [data-product-id]').evaluateAll(nodes=>nodes.map(n=>n.dataset.productId));
+ assert.deepEqual(await choices(),['new-cpu']);
+ await page.locator('#stock-same').uncheck();
+ assert.ok((await choices()).includes('new-memory'));
+ await page.locator('#stock-available').uncheck();
+ assert.ok((await choices()).includes('s-cpu'));
+ await page.locator('#stock-same').check();await page.locator('#stock-available').check();
+
+ await choose('stock','验收CPU','2001');await page.locator('#stock-display-name').fill('海报处理器');await choose('stock','验收内存','2002');
+ await page.locator('[data-stock-task="0"]').click();assert.match(await page.locator('#stock-picker label.selected').innerText(),/替换CPU/);assert.equal(await page.locator('[data-stock-link]').isChecked(),true);assert.equal(await page.locator('#stock-display-name').inputValue(),'海报处理器');
  await page.locator('[data-stock-task="1"]').click();await page.locator('#stock-preview').click();assert.match(await page.locator('#stock-message').innerText(),/2 条任务，将修改 1 个链接、2 套配置/);
  assert.match(await page.locator('#stock-diff').innerText(),/展示配件 · CPU/);assert.match(await page.locator('#stock-diff').innerText(),/实际配置 · 内存/);
- for(const width of [1300,760]){await page.setViewportSize({width,height:1000});for(const id of ['stock-tasks','stock-task-actions']){await page.locator('#'+id).scrollIntoViewIfNeeded();const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width+1);}}
- if(process.env.BATCH_TASK_SCREENSHOT){await page.setViewportSize({width:1300,height:1000});await page.locator('#stock-tasks').scrollIntoViewIfNeeded();await page.locator('#dialog').screenshot({path:process.env.BATCH_TASK_SCREENSHOT});}
- const stockCount=savedCount();await page.locator('#stock-apply').click();await page.waitForFunction(()=>document.querySelector('#stock-message')?.textContent.startsWith('已保存'));
- assert.equal(savedCount()-stockCount,1);
+ for(const width of [1300,760]){await page.setViewportSize({width,height:1000});for(const id of ['stock-task-tabs','stock-task-actions']){await page.locator('#'+id).scrollIntoViewIfNeeded();const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width+1);}}
+ if(process.env.BATCH_TASK_SCREENSHOT){await page.setViewportSize({width:1300,height:1000});await page.locator('#stock-task-tabs').scrollIntoViewIfNeeded();await page.locator('#inventory-check-page').screenshot({path:process.env.BATCH_TASK_SCREENSHOT});}
+ assert.match(await page.locator('#stock-diff').innerText(),/海报处理器（实际：替换CPU）/);
+// 首次导图让 Canvas 编码失败，恢复真实编码后只重试 ZIP，确认配置只提交一次。
+ await page.locator('[data-stock-layout="square"]').check();
+ await page.locator('#stock-preview').click();
+ await page.evaluate(()=>{
+  window.originalStockEncoder=HTMLCanvasElement.prototype.toBlob;
+  HTMLCanvasElement.prototype.toBlob=function(done){done(null);};
+ });
+ failStockSave=true;const stockCount=savedCount();await page.locator('#stock-apply').click();
+ await page.getByRole('button',{name:'重试原保存并导出'}).waitFor();
+ await page.locator('#stock-retry').click();
+ await page.getByText(/修改已保存.*图片生成失败/).waitFor();
+ await page.locator('#stock-retry:visible').waitFor();
+ assert.match(await page.locator('#stock-message').innerText(),/修改已保存.*图片生成失败/);
+ await page.evaluate(()=>{HTMLCanvasElement.prototype.toBlob=window.originalStockEncoder;});
+ const [zip]=await Promise.all([page.waitForEvent('download'),page.locator('#stock-retry').click()]);
+ assert.match(zip.suggestedFilename(),/库存替换配置图.*\.zip$/);
+ assert.equal(await zip.failure(),null);
+ await page.waitForFunction(()=>document.querySelector('#stock-message').textContent.includes('导出 2/2'));
+
+ assert.equal(savedCount()-stockCount,2);
+ const attempts=requests.filter(r=>r.path==='/api/configs/batch').slice(-2);
+ assert.ok(attempts[0].operationId);assert.equal(attempts[0].operationId,attempts[1].operationId);
  for(const c of state.configs.slice(0,2)){assert.equal(c.parts[0].goodsId,'2001');assert.equal(c.actualParts[0].goodsId,'2001');assert.equal(c.parts[3].goodsId,'2002');assert.equal(c.actualParts[3].goodsId,'2002');assert.equal(c.actualParts[3].qty,2);assert.equal(c.parts[3].qty,1);}
- assert.deepEqual(state.configs.slice(2),baseline.slice(2));assert.equal(await page.locator('[data-stock-task]').count(),1);
- assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',checks:['global draft switch and independent link selection','global two replacements in one save','global undo','global conflicting tasks and delete','preview invalidation','stock draft switch','stock replaces display and actual in one save','stock current link scope','1300/760px layout','completed queue reset','no page errors']}));
+ for(const c of state.configs.slice(0,2)){assert.equal(c.parts[0].displayName,'海报处理器');assert.equal(c.actualParts[0].displayName,undefined);}
+ assert.deepEqual(state.configs.slice(2),baseline.slice(2));assert.equal(await page.locator('[data-stock-task]').count(),0);
+ assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',checks:['global draft switch and independent link selection','global two replacements in one save','global undo','global conflicting tasks and delete','preview invalidation','stock draft switch','stock replaces display and actual in one save','stock current link scope','candidate filters and display alias','ZIP retry without a second save','1300/760px layout','completed queue reset','no page errors']}));
 }finally{await browser.close();}

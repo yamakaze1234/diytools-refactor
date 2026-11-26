@@ -437,3 +437,86 @@ test('店铺默认固定附加保存回读、同货号合并及非法输入整�
   const catalog=await request('workspace-catalog');assert.deepEqual(catalog.body.data.shopSettings.intel.erpDefaultExtras,[{goodsId:'12',qty:5,name:'固定电源线'}]);
  }finally{roleTx=()=>false;store.workspaceWritable=false;store.catalog.workspaceWritable=false;}
 });
+
+test('回收站 HTTP 分页、彻底删除、引用数量、事务回滚及删除后回执重放',async()=>{
+ await db.exec(await readFile(new URL('../sql/032-recycle-retention.sql',import.meta.url),'utf8'));
+ store.workspaceWritable=true;store.catalog.workspaceWritable=true;store.catalog.writable=true;roleTx=()=>true;
+ const post=(path,body,member)=>request(path,{body,method:'POST',member});
+ const purge=(id,v='1')=>({id,action:'purge',expected_version:v});
+ try{
+  // 相同归档时间使用配置主键分出稳定顺序；101 条超过接口的默认和单页上限。
+  await db.query(`INSERT INTO intel_live.configurations
+   (configuration_id,shop_id,product_id,name,sku,spu,workspace_order,fields,design,archived_at)
+   SELECT 'retention-'||lpad(n::text,3,'0'),'intel','group-one','回收分页','','',n,'{"product":"回收链接","version":"样例版"}','{}',
+    '2025-01-01'::timestamptz - make_interval(days=>n/2) FROM generate_series(1,101) n`);
+  const path='configurations?archived=true&search='+encodeURIComponent('回收分页')+'&limit=100&offset=';
+  const first=(await request(path+'0')).body.data,last=(await request(path+'100')).body.data;
+  assert.equal(first.length,100);assert.equal(last.length,1);assert.equal(new Set([...first,...last].map(row=>row.configuration_id)).size,101);
+  assert.equal(first[0].configuration_id,'retention-100');assert.equal(first[1].configuration_id,'retention-101');
+  assert.equal(last[0].configuration_id,'retention-001');assert.equal(first[0].product_name,'回收链接');assert.equal(first[0].config_label,'样例版');assert.ok(first[0].archived_at);
+  const batch='workspace/configurations',id='retention-001',second='retention-002',active=(await get()).configuration_id;
+  const change={operation_id:randomUUID(),changes:[purge(id),purge(second)]};
+  assert.equal((await post(batch,change,'sales')).status,403);
+  const invalid=await post(batch,{...change,changes:[purge(id),purge(active,(await get()).version)]});
+  assert.equal(invalid.status,409);assert.equal(invalid.body.error,'INVALID_CONFIGURATION_STATE');
+  const conflict=await post(batch,{...change,changes:[purge(id),purge(second,'9')]});
+  assert.equal(conflict.status,409);assert.equal(conflict.body.error,'VERSION_CONFLICT');
+  assert.equal((await request('workspace/receipts/'+change.operation_id)).status,404);
+  assert.equal((await request('configurations/'+id+'?archived=true')).status,200);
+  // 删除前已有的普通保存回执与审计仍能按原号查询。
+  const savedOp=randomUUID(),archived=await post('configurations/'+id+'/restore',{operation_id:savedOp,expected_version:'1'});
+  assert.equal(archived.status,200);
+  const returned=await post('configurations/'+id+'/archive',{operation_id:randomUUID(),expected_version:archived.body.data.version});
+  assert.equal(returned.status,200);change.changes[0].expected_version=returned.body.data.version;
+  const done=await post(batch,change);assert.equal(done.status,200,JSON.stringify(done.body));
+  assert.deepEqual(done.body.data.changes.map(row=>row.purged),[true,true]);
+  assert.equal((await request('configurations/'+id+'?archived=true')).status,404);
+  assert.deepEqual((await post(batch,change)).body.data,done.body.data);
+  assert.deepEqual((await request('workspace/receipts/'+change.operation_id)).body.data,done.body.data);
+  assert.deepEqual((await request('save-receipts/'+savedOp)).body.data,archived.body.data);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM intel_live.workspace_audit WHERE operation_id=$1 AND action='purge'",[change.operation_id])).rows[0].n,2);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM intel_live.audit_events WHERE operation_id=$1",[savedOp])).rows[0].n,1);
+  assert.equal((await post(batch,{...change,changes:[purge(second)]})).body.error,'OPERATION_REUSED');
+
+  await db.query(`INSERT INTO intel_live.sources(source_id,owner_shop,shared,goodsid,name,attrs)
+   VALUES ('retention-block','intel',false,'5511','保护来源','{"shopId":"intel","deletedAt":"2025-01-02"}'),
+   ('retention-free','intel',false,'5522','可删来源','{"shopId":"intel","deletedAt":"2025-01-02"}')`);
+  await db.query("INSERT INTO intel_live.addons VALUES ('retention-003',1,'{\"sourceId\":\"retention-block\"}','[]')");
+  await db.query(`INSERT INTO intel_live.parts VALUES ('retention-003','actual',1,'one','CPU','5511','样例',1,'retention-block','{}'),
+   ('retention-004','actual',1,'one','CPU','5511','样例',1,'retention-block','{}')`);
+  await db.query(`INSERT INTO intel_live.templates(template_id,shop_id,name,configurations,attrs)
+   VALUES ('retention-template','intel','保护模板','[{"parts":[{"sourceId":"retention-block"},{"sourceId":"retention-block"}]}]','{}')`);
+  const list=await request('catalog/sources');
+  assert.equal(list.status,200,JSON.stringify(list.body));
+  const counts=id=>list.body.data.find(row=>row.id===id).references;
+  assert.deepEqual(counts('retention-block'),{configurations:2,templates:1});
+  assert.deepEqual(counts('retention-free'),{configurations:0,templates:0});
+  const catBody={operation_id:randomUUID(),expected_version:'1'},blockedPath='catalog/sources/retention-block/purge',freePath='catalog/sources/retention-free/purge';
+  const blocked=await post(blockedPath,catBody);
+  assert.equal(blocked.status,409);assert.equal(blocked.body.error,'CATALOG_IN_USE');assert.deepEqual(blocked.body.details,counts('retention-block'));
+  assert.equal((await request('catalog/receipts/'+catBody.operation_id)).status,404);
+  assert.equal((await post(freePath,catBody,'sales')).status,403);
+  assert.equal((await post('catalog/gallery/sample-gallery/purge',catBody)).status,405);
+  assert.equal((await post(freePath,{operation_id:randomUUID()})).status,400);
+  const src=(await request('catalog/sources/source-one')).body.data;
+  assert.equal((await post('catalog/sources/source-one/purge',{...catBody,expected_version:src.version})).body.error,'INVALID_CATALOG_STATE');
+  const sourceDone=await post(freePath,catBody);
+  assert.equal(sourceDone.status,200,JSON.stringify(sourceDone.body));assert.equal(sourceDone.body.data.purged,true);
+  assert.equal(sourceDone.body.data.document,null);
+  const orphanOp=randomUUID();
+  const orphan=await post('catalog/templates',{operation_id:orphanOp,document:{id:'orphan-source',name:'过期来源模板',shopId:'intel',configs:[
+   {id:'orphan-config',shopId:'intel',parts:[{sourceId:'retention-free'}],actualParts:[],addons:[],modules:[]}
+  ]}});
+  assert.equal(orphan.status,400);assert.equal(orphan.body.error,'INVALID_DEPENDENCY');assert.equal((await request('catalog/receipts/'+orphanOp)).status,404);
+  assert.deepEqual((await post(freePath,catBody)).body.data,sourceDone.body.data);
+  assert.deepEqual((await request('catalog/receipts/'+catBody.operation_id)).body.data,sourceDone.body.data);
+  assert.equal((await request('catalog/sources/retention-free')).status,404);assert.equal((await request('catalog/sources/retention-block')).status,200);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM intel_live.catalog_audit WHERE operation_id=$1 AND action='purge'",[catBody.operation_id])).rows[0].n,1);
+  // 实际调度入口以运行角色提交，系统审计归到配置的工作区；优先清理配置后仍被模板引用的来源继续保留。
+  const stats=await store.purgeExpiredRetention('w');
+  assert.ok(stats.purged_configs>=99);assert.ok(stats.skipped_referenced_sources>=1);
+  assert.equal((await request('configurations/retention-005?archived=true')).status,404);
+  assert.deepEqual((await request('catalog/sources/retention-block')).body.data.references,{configurations:0,templates:1});
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM intel_live.workspace_audit WHERE workspace_id='w' AND actor_uid='system:retention' AND resource_id='retention-005' AND action='purge'")).rows[0].n,1);
+ }finally{roleTx=()=>false;store.workspaceWritable=false;store.catalog.workspaceWritable=false;store.catalog.writable=false;}
+});

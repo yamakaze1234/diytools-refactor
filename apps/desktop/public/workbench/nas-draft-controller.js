@@ -35,7 +35,7 @@ const dependencyParts=document=>{
  return parts;
 };
 /** 已见依赖版本保留；只读取新引用，避免准备批处理时把已过时的版本换成新版本。 */
-export async function nasDependencies(client,document,prior={sources:{},costs:{}},memo=new Map()){
+export async function nasDependencies(client,document,prior={sources:{},costs:{}},memo=new Map(),alignDraftCosts=null){
  const result=clone(prior),parts=dependencyParts(document);
  // 跟随组的商品由来源实时展开，必须与服务端核算使用相同规则；404 来源交由保存接口判断是否有效。
  const resource=(type,id)=>{
@@ -61,10 +61,12 @@ export async function nasDependencies(client,document,prior={sources:{},costs:{}
    if(value)Object.defineProperty(known,id,{value:value.version,writable:true,enumerable:true,configurable:true});
   }
  }
+ // 新提交及明确冲突后重建的提交，共用同一批依赖版本与成本读取结果。
+ if(alignDraftCosts)await alignDraftCosts(document,result.costs,id=>resource('costs',id));
  return result;
 }
 
-export function createNasDraftController({client,storage,draftStorage=null,endpointId,shopId='intel',uuid=()=>crypto.randomUUID(),onStorageError=null}){
+export function createNasDraftController({client,storage,draftStorage=null,endpointId,shopId='intel',uuid=()=>crypto.randomUUID(),onStorageError=null,alignDraftCosts=null}){
  let owner=null,key=null,record=null,configurationId=null,remote=null,working=false;
  const read=()=>record?clone(record):null;
  let serialized=null;
@@ -249,11 +251,13 @@ export function createNasDraftController({client,storage,draftStorage=null,endpo
    if(!member.configuration_writes)throw new NasApiError('WRITES_DISABLED',405);
    if(action==='replace'&&same(record.base,record.document))throw new NasApiError('NO_CHANGES');
    const body={operation_id:uuid(),...(record.version?{expected_version:record.version}:{})};
-   if(['create','replace'].includes(action)){
+   const original=['create','replace'].includes(action)?ensureNasPartLineIds(clone(record.document),record.base):null;
+   async function prepareDocument(dependencies){
     // 只补新请求的正文。已经提交或待查回执的原请求保持原字节。
-    body.document=ensureNasPartLineIds(clone(record.document),record.base);
-    body.dependencies=await nasDependencies(client,body.document,record.dependencies);
+    body.document=clone(original);
+    body.dependencies=await nasDependencies(client,body.document,dependencies,new Map(),alignDraftCosts);
    }
+   if(original)await prepareDocument(record.dependencies);
    for(let refreshed=0;;refreshed++){
     await persist({...record,pending:{action,body:clone(body)}},true);
     try{
@@ -272,7 +276,7 @@ export function createNasDraftController({client,storage,draftStorage=null,endpo
       if(detail.version!==record.version)throw new NasApiError('VERSION_CONFLICT',409,{current_version:detail.version});
       freshBase=detail.dependencies;
      }else if(record.version!==null)throw error;
-     body.dependencies=await nasDependencies(client,body.document,freshBase);
+     await prepareDocument(freshBase);
      await persist({...record,dependencies:clone(body.dependencies)},true);
      body.operation_id=uuid();
     }

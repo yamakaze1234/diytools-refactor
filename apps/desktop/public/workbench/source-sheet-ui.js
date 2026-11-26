@@ -1,11 +1,13 @@
 /** 全屏输出源维护与通用弹窗分离。编辑草稿、子弹窗和批量回执都属于当前工作表会话。 */
 import {shopById} from './shops.js';
 import {isSpecialComponent} from './special-components.js';
+import {mountAddPart} from './source-sheet-add.js';
+import {mountDeletedSources} from './source-deleted-ui.js';
 import {splitErpName} from './erp-part-description.js';
 import {excludedComponent} from './component-policy.js';
-import {mountSharedAddons} from './shared-source-editor.js';
-import {sourceFields,sharedSourceLabels,sharedSourceKeys,withSourceFields} from './shared-source-fields.js';
 import {sourceAddonFields} from './addon-data.js';
+import {mountSharedAddons} from './shared-source-editor.js';
+import {sourceFields,sharedSourceLabels,sharedSourceKeys} from './shared-source-fields.js';
 import {destroyProductSearch} from './product-search.js';
 import {capacityFieldsHtml,readCapacityFields,updateCapacityHints} from './source-capacity-ui.js';
 import {hardwareFieldsHtml,readHardwareFields,updateHardwareHints} from './source-hardware-ui.js';
@@ -15,6 +17,7 @@ import {updateMaintenanceVisibility} from './source-maintenance-view.js';
 import {sourceExportRows,sourceExportWorkbook} from './source-export.js';
 import {mountAddonAudit} from './addon-audit.js';
 import {mountSourceSync} from './source-sync-ui.js';
+import {SourceChangeSession} from './source-sync-data.js';
 import {sameNasDocument as equal} from './nas-main-workspace.js';
 import {sourceSheetCategories,sourceSheetFilters,buildSourceSheet,sourceSheetView,sourceSheetMatches,
  sourceSheetNavCounts,sourceSheetTaxCompare,sheetTaxInput,editSourceSheetField,createSourceSheetDraft,sourceSheetChanges,sourceSheetEffective,
@@ -25,7 +28,6 @@ const scopeName=id=>id==='shared'?'三店共用':shopById(id).shortName;
 const money=cents=>cents==null?'—':'¥'+(cents/100).toFixed(2);
 const chunk=64;
 const action=(name,label,attributes='')=>`<button type="button" data-sheet-action="${name}" ${attributes}>${label}</button>`;
-const scopeButton=(scope,name=scopeName(scope))=>action('drawer-scope',esc(name),`data-scope="${esc(scope)}" role="tab"`);
 const controls=host=>host.querySelectorAll('.product-search');
 const releaseSearch=host=>controls(host).forEach(destroyProductSearch);
 const restoreHint=fields=>'先填写'+fields.map(field=>'共用'+(field==='tax'?'核算价':sharedSourceLabels[field])).join('、')+'，再恢复对应独享设置';
@@ -58,8 +60,12 @@ export function openSourceSheet(root,api){
  const pending=new Map(),created=new Map(),collapsed=new Set();
  let base=new Map(),views=new Map(),category='全部配件',filter='active',priceFilter='all',query='',mode='common';
  let display=[],cursor=0,groupAt='',marked='',busy=false,disposed=false,drawer=null,sideScopes=new Map(),editing=null;
- let comboTimer=0,comboSerial=0,comboItems=[],comboIndex=-1,comboActive=false,automatic=[];
+ let comboTimer=0,comboSerial=0,comboItems=[],comboIndex=-1,comboActive=false;
+ let deletedCount=0;
+ const automatic=api.automatic??new SourceChangeSession(shop);
  let sync=null;
+ const adoptOnly=!!api.adoptErp&&!api.sharedSources?.canCreate;
+ const canAddPart=api.canManage!==false&&(!api.nas||api.sharedSources?.canCreate||adoptOnly);
 
  root.innerHTML=`<header class="ss-header">
   ${action('back','← 返回配置','class="ss-back"')}<h1 id="source-sheet-title">输出源维护</h1>
@@ -67,7 +73,7 @@ export function openSourceSheet(root,api){
   <div class="ss-header-actions">
    <label class="ss-shop"><span>店铺</span><select id="source-sheet-shop" aria-label="切换店铺">${shopIds.map(id=>`<option value="${esc(id)}"${id===shop?' selected':''}>${esc(shopById(id).shortName)}</option>`).join('')}</select></label>
    ${action('export','导出表格')}${action('audit','检查加购差价')}
-   ${api.applySync?action('automatic','本次变动')+action('differences','待确认差异'):''}
+   ${api.applySync?action('automatic','本次变动 <span data-auto-badge class="badge badge-cat" hidden></span>')+action('differences','<span>待确认差异</span><span data-diff-badge class="badge badge-unk">0</span>'):''}
   </div>
  </header>
  <div class="ss-body">
@@ -76,7 +82,7 @@ export function openSourceSheet(root,api){
    <div class="ss-tools">
     <label class="ss-search"><span>筛选输出源</span><input id="source-sheet-filter" type="search" aria-label="筛选已有输出源" placeholder="ERP ID、名称、规格或升级项"></label>
     <div class="ss-combo"><label class="ss-search"><span>ERP 搜索</span><input id="source-sheet-erp" type="search" role="combobox" aria-label="ERP 搜索配件" aria-autocomplete="list" aria-controls="source-sheet-options" aria-expanded="false" autocomplete="off" placeholder="输入货号或配件名称"></label><div id="source-sheet-options" role="listbox" hidden></div></div>
-    ${action('special','＋ 特殊配件',api.canManage===false||api.sharedSources&&!api.sharedSources.canCreate?'disabled title="当前账号不能新增共用特殊配件"':'')}
+    ${action('add-part','＋ 添加配件',`class="wb-btn wb-btn-primary wb-cut primary" ${canAddPart?'':'disabled'}`)}
     <div class="ss-price-filter" role="group" aria-label="核算价对比"><span>核算价对比</span>
      ${priceOptions.map(([id,label])=>action('price-filter',`${label} (<small>0</small>)`,`data-price-filter="${id}"`)).join('')}</div>
     <div class="ss-segments" role="group" aria-label="表格视图">${action('common','共用精简','aria-pressed="true"')}${action('stores','三店并排','aria-pressed="false"')}</div>
@@ -85,6 +91,7 @@ export function openSourceSheet(root,api){
     <table><colgroup></colgroup><thead></thead><tbody></tbody></table>
     <div class="ss-more" data-sheet-more>${action('more','加载更多')}</div>
    </div>
+   <div class="ss-deleted" data-deleted-view hidden></div>
   </section>
  </div>
   <footer class="ss-footer"><span data-sheet-count></span><span data-sheet-message role="status" aria-live="polite"></span><strong data-sheet-pending></strong>${action('resume-drawer','回到未应用抽屉','hidden')}${action('discard','放弃更改')}${action('save','保存全部更改','class="primary"')}</footer>
@@ -97,14 +104,28 @@ export function openSourceSheet(root,api){
   const drawerStatus=drawerHost.querySelector('[data-sheet-drawer-message]');
   if(drawerStatus)drawerStatus.textContent=text;
  };
- const editable=item=>api.canManage!==false&&!item.base.deletedAt&&(created.has(item.id)||api.canEdit?.(item.base)!==false);
+ const editable=item=>api.canManage!==false&&item.base.deletedAt==null&&(created.has(item.id)||api.canEdit?.(item.base)!==false);
+ const deletedHost=$('[data-deleted-view]');
+ const deleted=mountDeletedSources(deletedHost,{
+  nas:api.nas,shop,
+  read:api.getDeletedSources??(()=>api.getAllRows().filter(row=>row.shopId===shop&&row.deletedAt!=null)),
+  canEdit:row=>api.canManage!==false&&row.editable!==false&&api.canEdit?.(row)!==false,
+  change:api.changeDeletedSources,
+  blocked:()=>{if(!hasPending())return false;message('请先保存或放弃待保存修改');return true;},
+  busy:value=>{busy=value;updateStatus();},
+  count:value=>{deletedCount=value;$('[data-filter=deleted] small').textContent=value;},
+  changed:()=>{readRows();refreshTable();},
+  notify:text=>{message(text);api.toast?.(text);},
+ });
  const rowSelector=id=>`[data-sheet-row="${CSS.escape(id)}"]`;
  const groups=new Map(sourceSheetCategories.map((name,index)=>[name,index]));
  const itemById=id=>created.get(id)??base.get(id);
  const project=(item,draft)=>sourceSheetView(item,draft,scope);
 
  function readRows(){
-  base=new Map(buildSourceSheet({rows:api.getAllRows(),entries:api.sharedSources?.entries?.()??[],costs:api.getCosts(),
+  const rows=api.getAllRows();
+  deletedCount=rows.filter(row=>row.deletedAt!=null&&(api.nas||row.shopId===shop)).length;
+  base=new Map(buildSourceSheet({rows,entries:api.sharedSources?.entries?.()??[],costs:api.getCosts(),
    configs:(api.getSheetConfigs??api.getConfigs)(),shop,shops:shopIds}).map(item=>[item.id,item]));
   views=new Map([...base,...created].map(([id,item])=>[id,project(item,pending.get(id))]));
  }
@@ -112,7 +133,7 @@ export function openSourceSheet(root,api){
  function dirtyDrawer(){return drawer&&[...drawer.panels.values()].some(panelDirty);}
  function hasPending(){return busy||pending.size>0||!!editing&&editing.field.value!==editing.value||!!dirtyDrawer();}
  function updateStatus(){
-  $('[data-sheet-count]').textContent=`共 ${views.size} 条 · 当前 ${display.length} 条`;
+  $('[data-sheet-count]').textContent=filter==='deleted'?'已删除输出源':`共 ${views.size} 条 · 当前 ${display.length} 条`;
   const draftIds=new Set(pending.keys());
   const drawerPending=dirtyDrawer();
   if(drawerPending)draftIds.add(drawer.id);
@@ -151,7 +172,7 @@ export function openSourceSheet(root,api){
    button.lastElementChild.textContent=counts.categories.get(key);
   }
   for(const button of $('[data-sheet-filters]').children){
-   const key=button.dataset.filter,count=counts.filters.get(key);
+   const key=button.dataset.filter,count=key==='deleted'?deletedCount:counts.filters.get(key);
    button.setAttribute('aria-pressed',String(key===filter));
    button.toggleAttribute('data-has-count',count>0);
    button.lastElementChild.textContent=count;
@@ -369,6 +390,10 @@ export function openSourceSheet(root,api){
  }
  function refreshTable(reset=false){
   nav();
+  const inDeleted=filter==='deleted';
+  $('.ss-tools').hidden=grid.hidden=inDeleted;deletedHost.hidden=!inDeleted;
+  if(inDeleted){display=[];cursor=0;deleted.show(category);updateStatus();return;}
+  deleted.hide();
   display=[...views.values()].filter(row=>sourceSheetMatches(row,{category,filter,priceFilter,query}))
    .sort((a,b)=>groups.get(a.category)-groups.get(b.category)||Number(!!b.draft?.created)-Number(!!a.draft?.created));
   const before=reset?0:cursor;
@@ -393,7 +418,7 @@ export function openSourceSheet(root,api){
  function locate(id,{focusName=false}={}){
   const row=views.get(id)??[...views.values()].find(item=>item.aliases.some(alias=>alias.sourceId===id)||item.base.goodsId===id);
   if(!row)return false;
-  category=row.category;priceFilter='all';filter=row.base.deletedAt?'deleted':'active';query='';$('#source-sheet-filter').value='';
+  category=row.category;priceFilter='all';filter=row.base.deletedAt!=null?'deleted':'active';query='';$('#source-sheet-filter').value='';
   collapsed.delete(row.category);marked=row.id;refreshTable(true);
   const index=display.findIndex(item=>item.id===row.id);
   while(cursor<=index&&cursor<display.length)appendRows();
@@ -498,24 +523,56 @@ export function openSourceSheet(root,api){
   busy=true;message('正在读取 ERP 参考核算价');updateStatus();
   try{
    const tax=await api.readTaxCurrent?.(candidate.goodsId);
-   if(api.adoptErp&&!api.sharedSources?.canCreate){
-    const id=await api.adoptErp(candidate,tax);
-    readRows();locate(id);message('已加入当前店铺输出源');
-   }else{
-    const {item,draft}=createSourceSheetDraft(candidate,{shop,shops:shopIds,managed:!!api.sharedSources,tax});
-    created.set(item.id,item);setDraft(item,draft);locate(item.id,{focusName:true});
-    message('已加入待保存草稿');
-   }
+   // ERP 搜索返回的 name 是原名，表单的 name 则可以是人工展示名。
+   const erpName=candidate.erpName||candidate.name;
+   const added=await addPart({...candidate,erpName,displayName:splitErpName(erpName).main},tax);
+   locate(added.id,{focusName:true});message(added.notice);
   }catch(error){message(error.message||String(error));}
   finally{busy=false;updateStatus();}
  }
- function newSpecial(){
-  if(busy||api.canManage===false)return;
-  if(api.sharedSources&&!api.sharedSources.canCreate){
-   message('当前账号可维护已有特殊配件。新增三店共用特殊配件需要三店维护权限。');return;
+ // 工具栏与弹窗共用建源逻辑。单店建源收到回执后读取版本，再暂存本店人工规格。
+ async function addPart(candidate,tax,special=false){
+  if(adoptOnly){
+   const sourceId=await api.adoptErp(candidate,tax);
+   try{await api.sharedSources?.refresh?.();}
+   catch(error){throw Error('已加入当前店铺，但目录版本读取失败。请重试以接续维护：'+error.message);}
+   readRows();
+   const item=[...base.values()].find(item=>item.aliases.some(alias=>alias.sourceId===sourceId));
+   if(!item)throw Error('已加入当前店铺，尚未读回新增记录。请重试以接续维护。');
+   const values=sourceFields(candidate),fields=detailKeys.filter(key=>values[key]!=null);
+   let draft=pending.get(item.id);
+   for(const key of fields)draft=editSourceSheetField(item,draft,shop,key,values[key]);
+   if(draft)setDraft(item,draft);
+   return {id:item.id,notice:draft?'已加入当前店铺，硬件资料已加入草稿，请点击「保存全部更改」':'已加入当前店铺输出源'};
   }
-  const {item,draft}=createSourceSheetDraft({}, {shop,shops:shopIds,managed:!!api.sharedSources,special:true});
-  created.set(item.id,item);setDraft(item,draft);locate(item.id,{focusName:true});
+  const {item,draft}=createSourceSheetDraft(candidate,{shop,shops:shopIds,managed:!!api.sharedSources,special,tax});
+  created.set(item.id,item);setDraft(item,draft);
+  return {id:item.id,notice:'已加入待保存草稿，请核对后点击右下角「保存全部更改」'};
+ }
+
+ function openAddPart(){
+  if(busy||!canAddPart)return;
+  const host=childDialog('添加配件'),dialog=host.closest('dialog'),shared=!!api.sharedSources?.canCreate;
+  const isCurrent=()=>!disposed&&dialog.open&&host.isConnected;
+  mountAddPart(host,{api,adoptOnly,shared,shops:(shared?shopIds:[shop]).map(scopeName),isCurrent,
+   findExisting:goodsId=>{
+    const rows=[...views.values()].filter(row=>row.base.goodsId===goodsId);
+    return rows.find(row=>row.base.deletedAt==null)??rows[0];
+   },
+   locate:id=>locate(id,{focusName:true}),
+   submit:async(candidate,tax,special,openAddons)=>{
+    if(busy)return;
+    busy=true;updateStatus();
+    let result;
+    try{result=await addPart(candidate,tax,special);}
+    finally{busy=false;updateStatus();}
+    if(isCurrent())api.closeDialog();
+    if(disposed)return;
+    locate(result.id,{focusName:true});
+    if(openAddons)showDrawer(itemById(result.id),'addons');
+    message(result.notice);
+   }
+  });
  }
 
  function clearDrawer(){
@@ -530,14 +587,14 @@ export function openSourceSheet(root,api){
   }
   updateStatus();
  }
- function drawerRestores(pane,item,id,restore,keys,onRestore){
+ function drawerRestores(pane,item,id,restore,keys,onRestore,currentOverrides=()=>storeFields(views.get(item.id),id)){
   const buttons=[...pane.querySelectorAll('[data-restore-fields]')],hint=pane.querySelector('[data-restore-hint]');
   const available=button=>{
-   const allowed=restorableFields(views.get(item.id),id);
+   const row=views.get(item.id),allowed=new Set(currentOverrides().filter(key=>sourceSheetCommonCanRestore(row,key)));
    return button.dataset.restoreFields.split(' ').filter(field=>allowed.has(field)&&!restore.has(field));
   };
   const refresh=()=>{
-   const row=views.get(item.id),overrides=storeFields(row,id).filter(field=>keys.includes(field));
+   const row=views.get(item.id),overrides=currentOverrides().filter(field=>keys.includes(field));
    const blocked=overrides.filter(field=>!sourceSheetCommonCanRestore(row,field));
    for(const button of buttons)button.disabled=!editable(item)||!available(button).length;
    if(hint)hint.textContent=[
@@ -553,82 +610,91 @@ export function openSourceSheet(root,api){
   };
   return refresh;
  }
- function makeAddonPanel(host,item,id){
-  const original=views.get(item.id).scopeRows.get(id);
-  const restore=new Set();
-  const pane=document.createElement('section');
+function makeAddonPanel(host,item,id){
+  const row=views.get(item.id),original=row.scopeRows.get(id),shared=row.common;
+  const special=isSpecialComponent(original),edited=editable(item),store=id!=='shared';
+  const restore=new Set(),pane=document.createElement('section');
   pane.className='ss-drawer-pane';
-  pane.innerHTML=`${id!=='shared'?`<div class="ss-drawer-name"><label class="field">${esc(scopeName(id))}展示名称<textarea data-sheet-drawer-name rows="2">${esc(original.name)}</textarea></label>
-   ${scope==='shared'?`<div class="ss-drawer-actions">${action('drawer-restore-name','恢复为共用名称','data-restore-fields="name"')}
-    ${action('drawer-promote-name','用本店名称统一三店')}</div>`:''}</div>
-   <div class="ss-drawer-tax"><span>${esc(scopeName(id))}核算价 <strong data-sheet-drawer-tax>${esc(taxLabel(original.tax))}</strong></span>
-   ${scope==='shared'&&!isSpecialComponent(original)?`<div class="ss-drawer-actions">${action('drawer-restore-tax','恢复共用核算价','data-restore-fields="tax"')}
-    ${action('drawer-promote-tax','用本店核算价统一三店')}</div>`:''}</div>
-   ${scope==='shared'?`<div class="ss-drawer-actions">${action('drawer-restore-store','恢复共用','data-restore-fields="name tax addon"')}<small class="ss-muted" data-restore-hint></small></div>
-    <small class="ss-muted" data-promote-hint></small>`:''}`:''}
+  pane.innerHTML=`${store?`<div class="ss-store-fields"><label>${esc(scopeName(id))}展示名称
+   <input class="wb-input" data-sheet-drawer-name value="${esc(original.name)}"></label>
+   <label>本店核算价<div class="ss-store-price"><strong data-sheet-drawer-tax></strong><span class="badge" data-price-state></span></div></label></div>`:''}
    <div data-sheet-addon-fields></div>`;
   host.append(pane);
+  // 每个范围保留独立的控件和预览；切换标签时继续编辑原先的输入。
+  const preview=document.createElement('div'),bar=document.createElement('div');
+  drawerHost.querySelector('[data-drawer-previews]').append(preview);
+  drawerHost.querySelector('[data-drawer-overrides]').append(bar);
+  bar.className='ss-store-override';
+  bar.innerHTML=`<span class="badge badge-sel">单店独享中</span><span data-override-label></span><div>
+   ${action('drawer-promote-store','用本店统一三店','class="wb-btn wb-btn-sm"')}
+   ${action('drawer-restore-store','恢复三店共用','class="wb-btn wb-btn-sm" data-restore-fields="name tax addon"')}</div>
+   <small data-restore-hint></small>`;
   const name=pane.querySelector('[data-sheet-drawer-name]'),fields=pane.querySelector('[data-sheet-addon-fields]');
-  const edited=editable(item)&&!isSpecialComponent(original);
   let editor;
-  function mountAddon(row){
-   releaseSearch(fields);
-   editor=edited?mountSharedAddons(fields,{row,getCosts:api.getCosts,getOriginal:()=>row,preserveSelection:true,
-    onChange:()=>{restore.delete('addon');refresh();updateStatus();}}):null;
-   if(!editor)fields.textContent=isSpecialComponent(original)?'特殊配件没有升级项':'当前账号只能查看此输出源';
+  function mountAddon(source){
+   releaseSearch(fields);preview.replaceChildren();
+   editor=edited&&!special?mountSharedAddons(fields,{row:source,getCosts:api.getCosts,getOriginal:()=>({...source,erp:row.erp==null?null:row.erp/100}),preserveSelection:true,previewHost:preview,
+    onChange:()=>{clearIntent('addon');refresh();updateStatus();}}):null;
+   if(!editor)fields.textContent=special?'特殊配件没有升级项':'当前账号只能查看此输出源';
   }
-  const tax=pane.querySelector('[data-sheet-drawer-tax]');
-  let restoredAddon;
-  const refreshRestore=drawerRestores(pane,item,id,restore,['name','tax','addon'],fields=>{
-   for(const field of fields)if(drawer.promotions.get(field)?.id===id)drawer.promotions.delete(field);
+  function clearIntent(field){
+   restore.delete(field);
+   if(drawer.promotions.get(field)?.id===id)drawer.promotions.delete(field);
+  }
+  const refreshRestore=drawerRestores(bar,item,id,restore,['name','tax','addon'],keys=>{
+   for(const key of keys)if(drawer.promotions.get(key)?.id===id)drawer.promotions.delete(key);
+   if(keys.includes('name'))name.value=shared.name;
+   if(keys.includes('addon'))mountAddon(shared);
    refresh();
-  });
+  },overriddenFields);
+  // 尚在抽屉中的新覆盖也可直接提升或恢复，无需先退出再打开。
+  function overriddenFields(){
+   const current=new Set(storeFields(row,id).filter(key=>['name','tax','addon'].includes(key)));
+   if(name&&name.value.trim()!==original.name)current.add('name');
+   if(store&&editor?.isDirty())current.add('addon');
+   return [...current];
+  }
+  const promote=bar.querySelector('[data-sheet-action=drawer-promote-store]');
+  function value(field,validate=false){
+   if(field==='name')return name.value.trim();
+   if(field==='tax')return original.tax;
+   return editor?.isDirty()?sourceFields(sourceAddonFields(editor.read(validate))).addon:sourceFields(original).addon;
+  }
+  const valid=(key,val)=>key==='name'?!!val:key==='tax'?Number.isFinite(val)&&val>=0:!!val;
   function refresh(){
+   const active=drawer.scope===id,overrides=overriddenFields(),eligible=overrides.filter(key=>!restore.has(key));
+   bar.hidden=!active||!store||scope!=='shared'||!overrides.length;preview.hidden=!active;
+   if(!active)return;
+   const tax=restore.has('tax')?shared.tax:original.tax;
+   drawerHost.querySelector('[data-original-tax]').textContent=money(tax==null?null:Math.round(tax*100));
+   if(!store)return;
+   pane.querySelector('[data-sheet-drawer-tax]').textContent=taxLabel(tax);
+   const badge=pane.querySelector('[data-price-state]'),exclusive=eligible.includes('tax');
+   badge.className='badge '+(exclusive?'badge-low':'badge-cat');badge.textContent=exclusive?'独享':'共用';
+   bar.querySelector('[data-override-label]').textContent=scopeName(id)+'已单独覆盖'+overrides.map(key=>'「'+sharedSourceLabels[key]+'」').join('');
    refreshRestore();
-   const row=views.get(item.id),overrides=storeFields(row,id);
-   if(restore.has('name')&&sourceSheetCommonCanRestore(row,'name'))name.value=row.common.name;
-   if(tax)tax.textContent=taxLabel(restore.has('tax')?row.common.tax:row.scopeRows.get(id).tax);
-   if(restore.has('addon')){
-    const commonAddon=sourceFields(row.common).addon;
-    if(!equal(restoredAddon,commonAddon)){restoredAddon=commonAddon;mountAddon(row.common);}
-   }else restoredAddon=undefined;
-   for(const field of ['name','tax']){
-    const promote=pane.querySelector('[data-sheet-action="drawer-promote-'+field+'"]');
-    if(!promote)continue;
-    const value=field==='name'?name.value.trim():row.scopeRows.get(id).tax;
-    promote.hidden=!overrides.includes(field);
-    promote.disabled=!editable(item)||restore.has(field)||(field==='name'?!value:!Number.isFinite(value)||value<0);
-    promote.setAttribute('aria-pressed',String(drawer.promotions.get(field)?.id===id));
-    promote.onclick=()=>{
-     drawer.promotions.set(field,{id,value});
-     refresh();updateStatus();
-    };
-   }
-   const hint=pane.querySelector('[data-promote-hint]');
-   if(hint)hint.textContent=[...drawer.promotions].filter(([,entry])=>entry.id===id)
-    .map(([field])=>sharedSourceLabels[field]+'将在应用草稿时统一到三店').join('。');
+   promote.disabled=!edited||!eligible.some(key=>key==='addon'||valid(key,value(key)));
+   const promoted=[...drawer.promotions].filter(([,entry])=>entry.id===id).map(([key])=>sharedSourceLabels[key]);
+   if(promoted.length)bar.querySelector('[data-restore-hint]').textContent=promoted.join('、')+'将在应用草稿时统一到三店';
   }
-  mountAddon(original);
-  if(name){
-   name.readOnly=!editable(item);
-   name.oninput=()=>{
-    restore.delete('name');
-    if(drawer.promotions.get('name')?.id===id)drawer.promotions.delete('name');
+  promote.onclick=()=>{
+   try{
+    const changes=overriddenFields().filter(key=>!restore.has(key)).map(key=>[key,value(key,true)]);
+    for(const [key,val] of changes)if(valid(key,val))drawer.promotions.set(key,{id,value:val});
     refresh();updateStatus();
-   };
-  }
+   }catch(error){message(error.message);}
+  };
+  mountAddon(original);
+  if(name){name.readOnly=!edited;name.oninput=()=>{clearIntent('name');refresh();updateStatus();};}
   const dirty=()=>restore.size>0||!!name&&name.value!==original.name||!!editor?.isDirty()||
    [...drawer.promotions.values()].some(entry=>entry.id===id);
-  return {pane,dirty,refresh,read(){
+  return {pane,preview,bar,dirty,refresh,read(){
    const values={};
    if(name&&!restore.has('name')&&name.value.trim()!==original.name){
     if(!name.value.trim())throw Error('请填写展示名称，或使用恢复共用');
     values.name=name.value.trim();
    }
-   if(editor?.isDirty()&&!restore.has('addon')){
-    const fields=sourceAddonFields(editor.read(true));
-    values.addon=sourceFields({...withSourceFields(original,{name:original.name,tax:original.tax,addon:{}}),...fields}).addon;
-   }
+   if(editor?.isDirty()&&!restore.has('addon'))values.addon=value('addon',true);
    return {id,values,restore:[...restore]};
   }};
  }
@@ -644,7 +710,7 @@ export function openSourceSheet(root,api){
    ${scope==='shared'&&id!=='shared'?`<div class="ss-drawer-actions" data-detail-restore hidden>
     ${action('drawer-restore-details','恢复本店基础信息为共用',`data-restore-fields="${detailKeys.join(' ')}"`)}
     <small class="ss-muted" data-restore-hint></small></div>`:''}
-   ${api.setDeleted&&!created.has(item.id)&&api.canManage!==false?action('archive',item.base.deletedAt?'恢复输出源':'停用输出源','class="ss-archive"'):''}`;
+   ${api.setDeleted&&!created.has(item.id)&&api.canManage!==false?action('archive',item.base.deletedAt!=null?'恢复输出源':'停用输出源','class="ss-archive"'):''}`;
   host.append(pane);
   updateMaintenanceVisibility(pane,row,api.getConfigs(),api.getCosts(),{isNew:created.has(item.id)});
   updateCapacityHints(pane,row.erpName||row.name);
@@ -694,17 +760,34 @@ export function openSourceSheet(root,api){
   if(!drawer){
    const label=(item.erpName||views.get(item.id).common.name||'特殊配件')+' · '+(item.base.goodsId||item.category);
    drawer={id:item.id,kind:panel,label,panels:new Map(),promotions:new Map()};
-   drawerHost.innerHTML=`<header><div><h2>${panel==='details'?'基础信息':'升级项与单店覆盖'}</h2><p>${esc(label)}</p></div>${action('close-drawer','×','aria-label="关闭编辑抽屉"')}</header>
-    <div class="ss-drawer-tabs" role="tablist" aria-label="维护范围">${drawerScopes.map(target=>scopeButton(target,
-     scopeName(target)+(views.get(item.id).differences.some(diff=>diff.scope===target)?' ●':''))).join('')}</div><div class="ss-drawer-content"></div>
-    <footer><span data-sheet-drawer-message role="status"></span>${action('discard-drawer','放弃抽屉修改')}${action('apply-drawer','应用到草稿','class="primary"')}</footer>`;
+const row=views.get(item.id),addons=panel==='addons';
+   drawerHost.dataset.kind=panel;
+   const tabs=`<div class="ss-drawer-tabs" role="tablist" aria-label="维护范围">${drawerScopes.map(target=>
+    action('drawer-scope',esc(scopeName(target))+(row.differences.some(diff=>diff.scope===target)?'<i class="dot-override" aria-label="有独享设置"></i>':''),
+     `class="scope-tab" data-scope="${esc(target)}" role="tab"`)).join('')}</div>`;
+   const close=action('close-drawer','✕','class="wb-btn wb-btn-sm" aria-label="关闭编辑抽屉"');
+   drawerHost.innerHTML=(addons?`<header class="ss-addon-header"><div class="ss-addon-identity"><div>
+    <div class="ss-addon-title"><h2>升级项与单店覆盖</h2><span class="badge badge-cat">${esc(row.category)}</span><small>#${esc(item.base.goodsId||'—')}</small></div>
+    <p>原配件：<strong>${esc(item.erpName||row.common.name)}</strong></p></div>
+    <div class="ss-original-cost"><div>ERP <b>${money(row.erp)}</b></div><div>核算 <b data-original-tax></b></div></div>${close}</div>
+    <div class="ss-scope-line">${tabs}${action('drawer-help','填写说明 ▾','class="wb-btn wb-btn-sm" aria-expanded="false"')}</div>
+    <div data-drawer-help hidden>每个方案独立核算差价：<strong>原配件成本 × 原替换数量 + 加购价 − 新配件成本 × 新配件数量</strong>。例如内存 1 根升 2 根，原替换数量填 1，新数量填 2。纯文字说明不参与差价核算。</div>
+    <div data-drawer-overrides></div></header><div data-drawer-previews></div>`:
+    `<header><div><h2>基础信息</h2><p>${esc(label)}</p></div>${close}</header>${tabs}`)+
+    `<div class="ss-drawer-content"></div><footer><span data-sheet-drawer-message role="status">${addons?'改动先应用到输出源草稿，最后点主表右下角统一保存':''}</span>
+    ${action('discard-drawer','放弃修改','class="wb-btn"')}${action('apply-drawer','应用到草稿','class="wb-btn wb-btn-primary wb-cut primary"')}</footer>`;
+   const help=drawerHost.querySelector('[data-sheet-action=drawer-help]');
+   if(help)help.onclick=()=>{
+    const tip=drawerHost.querySelector('[data-drawer-help]');tip.hidden=!tip.hidden;
+    help.setAttribute('aria-expanded',String(!tip.hidden));help.textContent='填写说明 '+(tip.hidden?'▾':'▴');
+   };
   }
   drawerHost.hidden=false;shade.hidden=false;drawer.scope=id;
   if(!drawer.panels.has(id)){
    const container=drawerHost.querySelector('.ss-drawer-content');
    drawer.panels.set(id,panel==='details'?makeDetailsPanel(container,item,id):makeAddonPanel(container,item,id));
   }
-  for(const [target,current] of drawer.panels)current.pane.hidden=target!==id;
+  for(const [target,current] of drawer.panels){current.pane.hidden=target!==id;if(target!==id&&current.bar){current.bar.hidden=true;current.preview.hidden=true;}}
   drawer.panels.get(id).refresh();
   drawerHost.querySelectorAll('[role="tab"]').forEach(button=>button.setAttribute('aria-selected',String(button.dataset.scope===id)));
   updateStatus();
@@ -735,7 +818,7 @@ export function openSourceSheet(root,api){
   if(hasPending()){message('请先保存或放弃待保存修改');return;}
   const item=itemById(drawer.id),row=item.aliases.find(alias=>alias.shopId===shop);
   if(!row||api.canEdit?.(row)===false){message('当前店没有可停用或恢复的输出源');return;}
-  const deleting=!row.deletedAt;
+  const deleting=row.deletedAt==null;
   if(!confirm(deleting?'停用这条本店输出源？已有配置会保留。':'恢复这条本店输出源？'))return;
   busy=true;updateStatus();
   try{await api.setDeleted(row.sourceId,deleting);clearDrawer();readRows();refreshTable();message(deleting?'已停用本店输出源':'已恢复本店输出源');}
@@ -753,7 +836,7 @@ export function openSourceSheet(root,api){
    const changes=[...pending].flatMap(([id,draft])=>sourceSheetChanges(itemById(id),draft));
    let confirmedSource;
    if(changes.length){
-    const result=await api.applyBatch(changes);automatic=result.autoChanges??[];
+    const result=await api.applyBatch(changes);automatic.record(result.autoChanges);
     if(marked)confirmedSource=result.sourceIds?.[itemById(marked)?.base.sourceId];
    }
    message(`已保存 ${pending.size} 条输出源修改`);pending.clear();created.clear();clearDrawer();readRows();
@@ -794,9 +877,12 @@ export function openSourceSheet(root,api){
  }
  function review(view){
   const host=childDialog(view==='automatic'?'本次变动':'待确认差异');
-  sync=mountSourceSync(host,{getRows:sheetRows,getConfigs:api.getConfigs,shopId:api.shopId,isEdited:hasPending,
-   flush:api.flush,saveSkuMode:api.saveSkuMode,apply:api.applySync,validateImage:api.validateImage,download:api.download,message,view,deferRefresh:true});
-  if(view==='automatic')sync.showAutomaticChanges(automatic);
+  let firstRead=true;
+  sync=mountSourceSync(host,{getRows:api.getReviewRows??sheetRows,getConfigs:api.getConfigs,shopId:api.shopId,isEdited:hasPending,
+   flush:async()=>{await api.flush();if(firstRead){await api.refreshAlerts?.();firstRead=false;}},
+   saveSkuMode:api.saveSkuMode,apply:api.applySync,validateImage:api.validateImage,download:api.download,
+   prepareExport:api.prepareExport,onChanged:api.refreshAlerts,message,view,deferRefresh:true});
+  if(view==='automatic')sync.showAutomaticChanges(automatic.records);
   else void sync.refresh();
  }
  function restoreAll(item,store){
@@ -814,7 +900,7 @@ export function openSourceSheet(root,api){
  }
  function dispose(){
   if(disposed)return;
-  disposed=true;closeCombo();controller.abort();observer.disconnect();sync?.dispose();clearDrawer();root.replaceChildren();
+  disposed=true;deleted.hide();closeCombo();controller.abort();observer.disconnect();sync?.dispose();clearDrawer();root.replaceChildren();
   workspace.classList.remove('source-sheet-active');root.hidden=true;
   if(globalThis.workbenchSourceEditor===editor)delete globalThis.workbenchSourceEditor;
   api.onClose?.();
@@ -881,7 +967,7 @@ export function openSourceSheet(root,api){
    case 'back':leave();break;
    case 'category':category=button.dataset.category;refreshTable(true);break;
    case 'price-filter':priceFilter=button.dataset.priceFilter;refreshTable(true);break;
-   case 'filter':filter=button.dataset.filter;refreshTable(true);break;
+   case 'filter':filter=button.dataset.filter;if(filter==='deleted')category='全部配件';refreshTable(true);break;
    case 'toggle-group':{const key=button.dataset.category;collapsed.has(key)?collapsed.delete(key):collapsed.add(key);refreshTable();break;}
    case 'common':case 'stores':mode=name;root.querySelectorAll('.ss-segments button').forEach(control=>control.setAttribute('aria-pressed',String(control===button)));refreshTable(true);break;
    case 'name-scope':{
@@ -916,7 +1002,7 @@ export function openSourceSheet(root,api){
    case 'apply-drawer':applyDrawer();break;
    case 'archive':void toggleArchive();break;
    case 'erp-pick':void selectErp(Number(button.dataset.index));break;
-   case 'special':newSpecial();break;
+   case 'add-part':openAddPart();break;
    case 'more':appendRows();break;
    case 'export':exportRows();break;
    case 'audit':audit();break;
@@ -927,6 +1013,20 @@ export function openSourceSheet(root,api){
   }
  },events);
  document.addEventListener('pointerdown',event=>{if(!event.target.closest('.ss-combo')&&!options.hidden)closeCombo();},events);
+ // 顶栏、左侧导航与浮层显示同一份本店计数。
+ function updateDiffBadge(){
+  const badge=$('[data-diff-badge]');if(!badge)return;
+  const data=document.body.dataset,count=data.sourceDiffShop===shop?Number(data.sourceDiffCount)||0:0;
+  badge.textContent=String(count);badge.className='badge '+(count?'badge-out':'badge-unk');
+  badge.parentElement.classList.toggle('has-source-diffs',count>0);
+ }
+ document.addEventListener('source-diff-change',updateDiffBadge,events);
+ updateDiffBadge();
+ const autoBadge=$('[data-auto-badge]');
+ if(autoBadge){
+  const updateCount=()=>{autoBadge.hidden=automatic.count===0;autoBadge.textContent=String(automatic.count);};
+  automatic.addEventListener('change',updateCount,events);updateCount();
+ }
  document.querySelector('#dialog')?.addEventListener('close',event=>{
   if(!event.target.open){sync?.dispose();sync=null;}
  },events);

@@ -20,9 +20,9 @@ function CommitInput({value,label,className='',fallback='',numeric=false,onCommi
  const advance=useRef(0);
  const displayed=numeric?(value==null?'':amount(Number(value))):text;
  const latestDisplay=useRef(displayed);latestDisplay.current=displayed;
- useLayoutEffect(()=>{if(node.current&&node.current!==document.activeElement)node.current.value=displayed;},[displayed]);
+ useLayoutEffect(()=>{if(node.current&&node.current!==node.current.ownerDocument.activeElement)node.current.value=displayed;},[displayed]);
  return <input ref={node} className={className} aria-label={label} placeholder={fallback} inputMode={numeric?'decimal':undefined} defaultValue={displayed}
-  onPointerDown={e=>{mouseSelect.current=e.currentTarget!==document.activeElement;}}
+  onPointerDown={e=>{mouseSelect.current=e.currentTarget!==e.currentTarget.ownerDocument.activeElement;}}
   onMouseUp={e=>{if(mouseSelect.current){e.preventDefault();e.currentTarget.select();mouseSelect.current=false;}}}
   onFocus={e=>{cancelled.current=false;before.current=text;e.currentTarget.value=text;e.currentTarget.select();}}
   onChange={e=>{const changed=normalize(e.currentTarget.value);onDraft?.(/^\d+(?:\.\d*)?$|^\.\d+$/.test(changed)&&Number.isFinite(Number(changed))?Number(changed):null);}}
@@ -100,10 +100,10 @@ const PartPicker=memo(function PartPicker({part,slot,c,model,initial,close}:{par
 /** 展示明细和加购自然换行，初次单击全选，再次单击可以移动光标。 */
 function EditableText({value,label,placeholder,onCommit}:{value:string;label:string;placeholder?:string;onCommit:(value:string)=>void}){
  const node=useRef<HTMLDivElement>(null),original=useRef(''),cancel=useRef(false),firstClick=useRef(false);
- const select=(element:HTMLElement)=>{const range=document.createRange();range.selectNodeContents(element);const selection=getSelection();selection?.removeAllRanges();selection?.addRange(range);};
- useLayoutEffect(()=>{if(node.current&&node.current!==document.activeElement)node.current.textContent=value;},[value]);
+ const select=(element:HTMLElement)=>{const doc=element.ownerDocument,range=doc.createRange();range.selectNodeContents(element);const selection=doc.defaultView?.getSelection();selection?.removeAllRanges();selection?.addRange(range);};
+ useLayoutEffect(()=>{if(node.current&&node.current!==node.current.ownerDocument.activeElement)node.current.textContent=value;},[value]);
  return <div ref={node} role="textbox" tabIndex={0} aria-label={label} data-placeholder={placeholder} className="ov-editable" contentEditable="plaintext-only"
-  onPointerDown={event=>{firstClick.current=event.currentTarget!==document.activeElement;}}
+  onPointerDown={event=>{firstClick.current=event.currentTarget!==event.currentTarget.ownerDocument.activeElement;}}
   onMouseUp={event=>{if(firstClick.current){event.preventDefault();select(event.currentTarget);firstClick.current=false;}}}
   onFocus={event=>{original.current=value;cancel.current=false;select(event.currentTarget);}}
   onKeyDown={event=>{if(!event.nativeEvent.isComposing&&['Enter','Escape'].includes(event.key)){event.preventDefault();cancel.current=event.key==='Escape';event.currentTarget.blur();}}}
@@ -208,10 +208,12 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
  const bounds=range&&{top:Math.min(range.anchor.row,range.end.row),bottom:Math.max(range.anchor.row,range.end.row),left:Math.min(range.anchor.col,range.end.col),right:Math.max(range.anchor.col,range.end.col)};
 
  // 复制框随来源选区保留；别处复制或 Escape 时清除，支持连续粘贴。
+ // 桌面程序里工作台在 iframe 中、React 宿主在外层窗口，事件只在表格所在的文档里冒泡，监听必须挂在 ownerDocument 上。
  useEffect(()=>{
+  const doc=table.current?.ownerDocument??document;
   const clear=(event:Event)=>{if(event.type==='keydown'&&(event as globalThis.KeyboardEvent).key!=='Escape')return;if(event.type!=='copy'||!table.current?.contains(event.target as Node)||!event.defaultPrevented)setCopied(null);};
-  document.addEventListener('copy',clear);document.addEventListener('keydown',clear);
-  return()=>{document.removeEventListener('copy',clear);document.removeEventListener('keydown',clear);};
+  doc.addEventListener('copy',clear);doc.addEventListener('keydown',clear);
+  return()=>{doc.removeEventListener('copy',clear);doc.removeEventListener('keydown',clear);};
  },[]);
  function focusCell(pos:Position){
   table.current?.querySelector<HTMLElement>('[data-ov-row="'+pos.row+'"][data-ov-cell="'+pos.col+'"]')?.focus({preventScroll:true});
@@ -352,7 +354,7 @@ const ConfigTable=memo(function ConfigTable({c,model,actual,addons,selections}:{
       if(!e.shiftKey){rowAnchor.current=row.slot;const saved=selections.get(c.id);if(saved)saved.anchor=row.slot;}
      }}>{row.slot}</button></th>
      {actual&&<td className="ov-actual" aria-label={label+' 实际配件'} {...gridProps(index,0)}>
-      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>{setPicker(null);requestAnimationFrame(()=>{const active=document.activeElement;if(!active||active===document.body)focusCell({row:index,col:0});});}}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}><ErpPartName info={model.describePart(part,row.part,row.slot)}/></span>}
+      {picker?.row===index?<PartPicker part={part} slot={row.slot} c={c} model={model} initial={picker.input} close={()=>{setPicker(null);requestAnimationFrame(()=>{const doc=table.current?.ownerDocument,active=doc?.activeElement;if(!active||active===doc?.body)focusCell({row:index,col:0});});}}/>:<span className={part?.name?'ov-actual-name':'ov-missing'}><ErpPartName info={model.describePart(part,row.part,row.slot)}/></span>}
      </td>}
      <td className="ov-display"><DisplayPart row={row} c={c} model={model} addons={addons}/></td>
     </tr>;

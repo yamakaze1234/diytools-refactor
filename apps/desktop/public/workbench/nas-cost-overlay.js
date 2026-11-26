@@ -1,17 +1,12 @@
 import {nasShopIds} from './nas-api-client.js';
+import {erpCategoryFields} from './erp-sync.js';
 import {shopById} from './shops.js';
+import {applyNasPartCost} from './nas-effective-cost.js';
 
-/** NAS 只在显示和计算时叠加英特尔观察值，保留实际 BOM、人工作价和历史快照。 */
-export function visibleNasCosts(config,byId){
- for(const part of [...config.parts,...config.actualParts]){
-  const row=byId.get(part.goodsId);
-  if(!row)continue;
-  if(row.nasErpOverride){
-   part.erp=row.erp;part.erpMissing=false;part.erpUnknown=row.erp===null;
-  }
-  if(row.nasTaxOverride&&!(part.taxOverride?.goodsId===part.goodsId&&Number.isFinite(part.taxOverride.value)))
-   part.tax=row.tax;
- }
+/** 将有效成本应用到传入的副本；提交配件时仅校准 ERP 字段。 */
+export function visibleNasCosts(config,byId,{erpOnly=false}={}){
+ for(const part of [...(config.parts||[]),...(config.actualParts||[])])
+  applyNasPartCost(part,byId.get(part.goodsId),erpOnly);
  return config;
 }
 /** ERP 快照只能应用当前店明确请求且存在的 ID；缺行保留原样，真实零与 null 分开。 */
@@ -28,11 +23,12 @@ export function planNasErpRows(rows,before,kind,at){
   const stock=v=>v===null||typeof v==='number'&&Number.isFinite(v);
   let fields;
   if(kind==='erp'){
+   const category=erpCategoryFields(row);
    if(!amount(row.erp)||!stock(row.stockAvailable)||!stock(row.stockIncomingAvailable??null)||typeof row.name!=='string'||typeof row.sku!=='string')
     throw Error('ERP 结果缺少完整成本或库存字段。');
    if(old.document.nasErpOverride&&row.erp===old.document.erp&&row.stockAvailable===old.document.stockAvailable&&(row.stockIncomingAvailable??null)===(old.document.stockIncomingAvailable??null)&&
-    row.name===old.document.name&&row.sku===old.document.sku)continue;
-   fields={erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku,stockUpdatedAt:at};
+    (row.erpCategory===undefined||old.document.erpCategory===row.erpCategory)&&row.name===old.document.name&&row.sku===old.document.sku)continue;
+   fields={...category,erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku,stockUpdatedAt:at};
   }else{
    if(!amount(row.tax))throw Error('成本表金额无效。');
    // 手动价只有逐项恢复后才重新进入成本表同步。
@@ -62,6 +58,7 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
   const amount=value=>value===null||Number.isFinite(value)&&value>=0;
   if(erp?(!amount(row.erp)||row.stockAvailable!==null&&!Number.isFinite(row.stockAvailable)||row.stockIncomingAvailable!=null&&!Number.isFinite(row.stockIncomingAvailable)||typeof row.name!=='string'||typeof row.sku!=='string'):
    !Number.isFinite(row.tax)||row.tax<0)throw Error('读取结果包含无效成本或库存。');
+  const category=erp?erpCategoryFields(row):{};
   const common=snapshot.common[id];
   const expected_versions={};
   const differences=[];
@@ -72,9 +69,11 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
    expected_versions[store]=before.version??null;
    const label=shopById(store).shortName;
    if(erp){
-    if(!before.erpOverride||before.erpMissing||before.stockMissing||Boolean(before.erpUnknown)!==(row.erp===null)||(before.erp??null)!==row.erp||
+    const categoryChanged=row.erpCategory!==undefined&&before.erpCategory!==row.erpCategory;
+    if(categoryChanged||!before.erpOverride||before.erpMissing||before.stockMissing||Boolean(before.erpUnknown)!==(row.erp===null)||(before.erp??null)!==row.erp||
      (before.stockAvailable??null)!==row.stockAvailable||(before.stockIncomingAvailable??null)!==(row.stockIncomingAvailable??null)||before.name!==row.name||before.sku!==row.sku)
-     differences.push({area:label,goodsId:id,name:row.name,before:before.stockAvailable??null,after:row.stockAvailable,
+     differences.push({area:label,goodsId:id,name:row.name,
+      ...(categoryChanged?{categoryBefore:before.erpCategory,categoryAfter:row.erpCategory}:{}),before:before.stockAvailable??null,after:row.stockAvailable,
       incomingBefore:before.stockIncomingAvailable??null,incomingAfter:row.stockIncomingAvailable??null,erpBefore:before.erp??null,erpAfter:row.erp});
    }else if(before.manual===true){
     protectedRows.push({goodsId:id,shop:label,before:before.tax??null,after:row.tax});
@@ -85,7 +84,7 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
   if(!differences.length)continue;
   changes.push({id,action:erp?'erp_sync':'tax_sync',expected_version:expected_versions[shop],expected_versions,
    ...(erp?{}:{expected_shared_version:common?.version??null}),
-   fields:erp?{erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku}:{tax:row.tax}});
+   fields:erp?{...category,erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku}:{tax:row.tax}});
   examples.push(...differences);
  }
  return {changes,examples,protectedRows,missing:goods.size-seen.size};

@@ -228,7 +228,10 @@ export function replacementDiff(plan){
   for(const slot of slots)for(const [label,beforeRows,afterRows] of [['展示配件',change.before.parts,change.after.parts],['实际配置',actualParts(change.before),actualParts(change.after)]]){
    const before=beforeRows.find(p=>p.slot===slot),after=afterRows.find(p=>p.slot===slot);
    if(JSON.stringify(before)===JSON.stringify(after))continue;
-   rows.push(`${label} · ${slot}：${before?.name||'空'} ×${before?.qty||0} → ${after?.name||'空'} ×${after?.qty||0}`);
+   // 展示别名与实际型号同时出现在预览中，便于应用前核对。
+   const name=(part,config)=>label==='展示配件'&&part?.displayName?
+    `${part.displayName}（实际：${actualParts(config).find(p=>p.slot===slot)?.name||'空'}）`:part?.name||'空';
+   rows.push(`${label} · ${slot}：${name(before,change.before)} ×${before?.qty||0} → ${name(after,change.after)} ×${after?.qty||0}`);
   }
   if(JSON.stringify(change.before.addons)!==JSON.stringify(change.after.addons))rows.push('关联加购：'+((change.before.addons||[]).map(a=>a.text).join('；')||'无')+' → '+((change.after.addons||[]).map(a=>a.text).join('；')||'无'));
   return `${change.product} / ${change.name}\n${rows.join('\n')}`;

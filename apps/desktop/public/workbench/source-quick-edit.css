@@ -1,0 +1,108 @@
+/* 只覆盖配置清单的快捷弹窗，保留全量输出源维护页自己的布局。 */
+@layer workbench-interaction {
+ #dialog.source-dialog.source-quick-dialog[open] {
+  width:min(850px,calc(100vw - 24px))!important;
+  height:auto!important; max-height:calc(100dvh - 36px)!important;
+  background:var(--wb-panel)!important; color:var(--wb-ink)!important;
+  border:1px solid var(--wb-line)!important; border-radius:2px!important;
+  font-variant-numeric:tabular-nums;
+ }
+ #dialog.source-dialog.source-quick-dialog > form {
+  padding:10px 16px!important; border-bottom:1px solid var(--wb-line)!important;
+ }
+ #dialog.source-quick-dialog .dialog-title h2 { font-size:16px!important; }
+ #dialog.source-quick-dialog #dialog-body .source-editor-root > .source-window-intro,
+ #dialog.source-quick-dialog #dialog-body .source-editor-root > #source-message:empty,
+ #dialog.source-quick-dialog .source-batch-bar .source-footer-status p { display:none!important; }
+ #dialog.source-quick-dialog #dialog-body #source-detail {
+  padding:12px 16px!important; scrollbar-gutter:stable;
+ }
+ #dialog.source-quick-dialog #source-detail .source-detail-form,
+ #dialog.source-quick-dialog #source-detail #source-quick-fields {
+  display:grid!important; grid-template-columns:minmax(0,1fr); gap:10px!important;
+ }
+ #dialog.source-quick-dialog #source-quick-fields .sq-identity {
+  background:var(--wb-control); border:1px solid var(--wb-line)!important;
+  border-left:3px solid var(--wb-focus)!important; border-radius:2px!important; padding:7px 10px!important;
+ }
+ #dialog.source-quick-dialog #source-quick-fields .sq-identity-line,
+ #dialog.source-quick-dialog #source-quick-fields #source-stock,
+ #dialog.source-quick-dialog #source-quick-fields .sq-context {
+  display:flex; align-items:center; gap:6px;
+ }
+ #dialog.source-quick-dialog .sq-identity-line > strong {
+  flex:1; min-width:0; font-size:13px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+ }
+ #dialog.source-quick-dialog .sq-id, #dialog.source-quick-dialog .sq-price { white-space:nowrap; font-size:12px; }
+ #dialog.source-quick-dialog .sq-id { color:var(--wb-muted); }
+ #dialog.source-quick-dialog #source-quick-fields #source-erp-price { font-size:13px!important; font-weight:700; }
+ #dialog.source-quick-dialog #source-quick-fields #source-erp-refresh {
+  height:24px!important; min-height:24px!important; padding:0 7px!important; font-size:11px!important;
+  background:var(--wb-panel)!important; border:1px solid var(--wb-line)!important; border-radius:2px!important;
+ }
+ #dialog.source-quick-dialog #source-quick-fields .sq-context {
+  flex-wrap:wrap; font-size:10px; color:var(--wb-muted); margin-top:3px;
+ }
+ #dialog.source-quick-dialog #source-quick-fields #source-erp-status { flex-basis:auto!important; }
+ #dialog.source-quick-dialog #source-quick-fields .sq-fields {
+  display:grid; grid-template-columns:minmax(0,1fr) 220px; align-items:start; gap:12px;
+ }
+ #dialog.source-quick-dialog .sq-fields > div { min-width:0; }
+ #dialog.source-quick-dialog #source-quick-fields .field {
+  display:grid!important; padding:0!important; gap:4px!important; color:var(--wb-muted); font-weight:600;
+ }
+ #dialog.source-quick-dialog .sq-fields .field > span:first-child {
+  display:flex; justify-content:space-between; align-items:center; gap:3px; min-height:20px;
+ }
+ #dialog.source-quick-dialog #source-quick-fields :is(#source-tax,#source-name) {
+  display:block!important; width:100%!important; max-width:none!important; box-sizing:border-box;
+  min-height:31px!important; height:31px!important; margin:0!important; padding:5px 9px!important;
+  font:400 12px/19px 'Segoe UI','Microsoft YaHei UI',sans-serif!important;
+  color:var(--wb-ink)!important; background:var(--wb-panel)!important;
+  border:1px solid var(--wb-line)!important; border-radius:2px!important;
+  font-variant-numeric:tabular-nums!important; resize:vertical!important;
+ }
+ #dialog.source-quick-dialog #source-quick-fields :is(#source-tax,#source-name):focus {
+  outline:none!important; border-color:var(--wb-focus)!important; box-shadow:inset 0 0 0 1px var(--wb-focus)!important;
+ }
+ #dialog.source-quick-dialog :is(.sq-badge,[data-quick-tax-delta]) {
+  display:inline-flex; align-items:center; padding:1px 6px!important; border-radius:2px!important;
+  font-size:11px; line-height:16px; font-weight:600; white-space:nowrap;
+  color:var(--wb-unk-ink); background:var(--wb-unk-bg); border:1px solid var(--wb-unk-line)!important;
+ }
+ #dialog.source-quick-dialog #source-quick-fields [data-tone="out"] { color:var(--wb-out-ink); background:var(--wb-out-bg); border-color:var(--wb-out-line)!important; }
+ #dialog.source-quick-dialog #source-quick-fields [data-tone="low"] { color:var(--wb-low-ink); background:var(--wb-low-bg); border-color:var(--wb-low-line)!important; }
+ #dialog.source-quick-dialog #source-quick-fields [data-tone="ok"] { color:var(--wb-ok-ink); background:var(--wb-ok-bg); border-color:var(--wb-ok-line)!important; }
+ #dialog.source-quick-dialog #source-quick-fields [data-tone="transit"] { color:var(--wb-transit-ink); background:var(--wb-transit-bg); border-color:var(--wb-transit-line)!important; }
+ #dialog.source-quick-dialog .sq-fields .source-shared-field-state { padding:3px 0 0!important; }
+ #dialog.source-quick-dialog #source-detail #source-maintenance-fields {
+  border:1px solid var(--wb-rule)!important; background:var(--wb-control); border-radius:2px;
+ }
+ #dialog.source-quick-dialog #source-detail #source-maintenance-fields summary {
+  padding:6px 9px!important; background:var(--wb-soft); color:var(--wb-ink); font-size:12px!important; font-weight:600;
+ }
+ #dialog.source-quick-dialog #source-maintenance-fields fieldset {
+  min-width:0; margin:0 0 6px; padding:6px 8px; border:1px solid var(--wb-rule); border-radius:2px;
+ }
+ #dialog.source-quick-dialog #source-maintenance-fields p { margin:3px 0; font-size:11px; }
+ #dialog.source-quick-dialog #source-detail .source-addon-editor {
+  padding:0!important; border:0!important; min-width:0;
+ }
+ #dialog.source-quick-dialog #source-detail .source-addon-editor > h4 { display:inline-block; margin:0 8px 5px 0!important; }
+ #dialog.source-quick-dialog #source-detail .source-addon-editor > .source-shared-field-state { display:inline-flex!important; }
+ #dialog.source-quick-dialog #dialog-body .source-batch-bar {
+  box-sizing:border-box; padding:9px 16px!important; background:var(--wb-panel)!important; border-top:1px solid var(--wb-line)!important;
+ }
+ #dialog.source-quick-dialog #source-save-all {
+  color:#161616!important; background:var(--wb-accent)!important; border:1px solid var(--wb-focus)!important;
+  border-radius:2px!important; font-weight:700!important;
+  clip-path:polygon(0 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%);
+ }
+ @media(max-width:640px) {
+  #dialog.source-quick-dialog #source-quick-fields .sq-identity-line { flex-wrap:wrap; }
+  #dialog.source-quick-dialog .sq-identity-line > strong { min-width:48%; }
+  #dialog.source-quick-dialog #source-quick-fields .sq-fields { gap:7px; grid-template-columns:minmax(0,1fr) minmax(115px,40%); }
+  #dialog.source-quick-dialog .sq-fields .field > span:first-child { font-size:10px; flex-wrap:wrap; align-content:start; height:36px; }
+ }
+}

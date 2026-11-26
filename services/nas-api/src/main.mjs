@@ -11,6 +11,7 @@ import {createImageHandler,createImageWriter,combineImageHandlers} from './image
 import {serve} from './http.mjs';
 import {scopedDatabase} from './shop-scope.mjs';
 import {createLanCaseGallery} from './lan-case-gallery.mjs';
+import {startRetention} from './retention.mjs';
 const pools=[];
 const servers=[];
 const listen=(server,port,host)=>new Promise((resolve,reject)=>{
@@ -92,7 +93,14 @@ try {
  if(config.tls)servers.push(serve(handlers,config.tls));
  await Promise.all(servers.map((server,i)=>listen(server,i===0?config.port:config.tls.port,i===0?config.host:config.tls.host)));
  console.log(config.tls?'NAS business API ready · LAN TLS enabled':'NAS business API ready');
- const stop=async()=>{await Promise.all(servers.map(server=>new Promise(resolve=>server.close(resolve))));await Promise.all(pools.map(pool=>pool.end()));process.exit(0);};
+ const stopRetention=live&&config.retention?startRetention(shopStores,config.retention):null;
+ let stopping=false;
+ const stop=async()=>{
+  if(stopping)return;
+  stopping=true;
+  await Promise.all([stopRetention?.(),...servers.map(server=>new Promise(resolve=>server.close(resolve)))]);
+  await Promise.all(pools.map(pool=>pool.end()));process.exit(0);
+ };
  process.on('SIGTERM',stop);process.on('SIGINT',stop);
 }catch {
  for(const server of servers)server.close();

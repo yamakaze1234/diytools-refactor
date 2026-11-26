@@ -5,7 +5,7 @@ const searchMounts=new WeakMap();
 export function destroyProductSearch(root){searchMounts.get(root)?.destroy();}
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 /** 绑定搜索框和候选列表；商品与成本由读取回调提供，选中结果交给 onChange。 */
-export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',selected='',label='选择商品',placeholder='输入商品名称或 ERP ID',inputId,inputElement,describe=r=>r.goodsId?'ERP ID '+r.goodsId:'',onChange=()=>{},showEmpty=false,emptySelection='尚未选择商品',deferred=false,stableRows=false,compact=false,inlineSelection=false,preserveSelection=false}){
+export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',selected='',label='选择商品',placeholder='输入商品名称或 ERP ID',inputId,inputElement,describe=r=>r.goodsId?'ERP ID '+r.goodsId:'',onChange=()=>{},showEmpty=false,emptySelection='尚未选择商品',deferred=false,stableRows=false,compact=false,inlineSelection=false,preserveSelection=false,renderCompactSelection}){
  destroyProductSearch(root);
  let value=String(selected||''),searching=compact?!selected:!inputElement,revision=0,timer,frame,pendingKey='',cachedRows,documents=new WeakMap();
  const initialText=inputElement?.value||'';
@@ -34,7 +34,7 @@ export function mountProductSearch(root,{getRows,getCosts,idKey='goodsId',select
   root.classList.toggle('product-search-selected',compact&&!!row&&!searching);
   // The editor hides this selection summary; do not format it on every keystroke.
   if(inputElement&&!value)picked.textContent=emptySelection;
-  else {picked.innerHTML=`<span>${value?row?`${compact?'':'已选：'}${esc(row.name)} · ${esc(describe(row))}`:`原关联 ${esc(value)}（未找到）`:esc(emptySelection)}</span>${row&&getCosts?componentStockHtml(row,costIndex()):''}${value?compact?'<button type="button" data-product-reselect>重选</button>':'<button type="button" data-product-clear>清除选择</button>':''}`;
+  else {picked.innerHTML=compact&&row&&renderCompactSelection?renderCompactSelection(row,getCosts()):`<span>${value?row?`${compact?'':'已选：'}${esc(row.name)} · ${esc(describe(row))}`:`原关联 ${esc(value)}（未找到）`:esc(emptySelection)}</span>${row&&getCosts?componentStockHtml(row,costIndex()):''}${value?compact?'<button type="button" data-product-reselect>重选</button>':'<button type="button" data-product-clear>清除选择</button>':''}`;
    picked.querySelector('[data-product-reselect]')?.addEventListener('click',()=>{searching=true;input.value='';paint();input.focus();});
    picked.querySelector('[data-product-clear]')?.addEventListener('click',()=>{value='';input.value='';paint();onChange(null);input.focus();});}
   if(inputElement&&!searching){results.innerHTML='';return;}

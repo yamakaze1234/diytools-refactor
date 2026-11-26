@@ -177,6 +177,14 @@ node --max-old-space-size=6144 tools/verify-import.mjs <私人SQL目录> <新的
 
 Windows 独立包使用 `tauri.nas-intel-production.conf.json` 和 `--features formal-nas-client` 构建。在专用便携目录设 `DIYTOOLS_NAS_MAIN=1`、`DIYTOOLS_NAS_API_URL` 和 `DIYTOOLS_NAS_DEPLOYMENT_ID`，随包提供正式专用的 `data/nas-ca.pem` 公钥；无正式配置不会退回初始化本机库。草稿和登录凭据按正式 URL 与部署代号隔离。导入后未切换正式服务时，不以本地候选测试作为正式上线证据。
 
+## 配置回收站与已删除输出源
+
+`sql/032-recycle-retention.sql` 为回收站接口和定时清理提供数据库函数，可重复安装。API 和桌面客户端不会自动安装迁移。迁移解除两张历史表对配置的外键依赖，保留历史行和原图；配置彻底删除后，仍可按原配置 ID 查审计和回执。已删除输出源仅在配置（含归档）与模板引用都为零时可清理。对应共享别名随之移除，最后一个别名移除时清理共用条目。
+
+可写的 live 服务默认在就绪 60 秒后巡检第一次，此后每小时逐店清理归档满 7 天的配置和停用满 30 天且无引用的本店输出源。只读服务不会启动巡检。`NAS_ENABLE_RETENTION=false` 关闭定时清理，`NAS_RETENTION_INITIAL_DELAY_MS` 和 `NAS_RETENTION_INTERVAL_MS` 分别调整启动延迟与周期间隔（毫秒）。迁移未安装时，依赖它的接口返回 `NAS_RETENTION_NOT_INSTALLED`。
+
+隔离验收使用 `node test/recycle-retention.integration.mjs <合成三店SQL目录>` 与 `npm test`。
+
 ## 三店共用核算价
 
 `sql/020-workbench-global-tax.sql` 是待管理员安装的事务候选，依赖已经安装的共用输出源和三店价格历史结构。客户端和 API 不自动执行 SQL。先安装 SQL、再切换 API；未安装时 `global_tax` 返回 `NAS_GLOBAL_TAX_NOT_INSTALLED`。安装脚本可重复运行，不重置已有价格与恢复基线。回退 API 后保留该结构和现有记录即可，旧入口仍按原单店权限工作。
@@ -190,6 +198,12 @@ Windows 独立包使用 `tauri.nas-intel-production.conf.json` 和 `--features f
 ### 三店成本表与 ERP 同步
 
 迁移 `027-quotation-identity-invalidation.sql`、`028-cross-shop-cost-sync.sql`、`029-manual-tax-protection.sql` 与 `030-incoming-stock.sql` 要在三店 NAS 库由管理员依次安装，随后部署支持相应接口的 API，再更新客户端。重复执行只更新函数及授权。旧库的配置换码仍沿用原报价保护，缺少三店同步函数时新 API 返回 `NAS_COST_SYNC_NOT_INSTALLED`。
+
+ERP 商品类别上线顺序：
+
+1. 管理员确认连接的数据库为 `diy_workbench`，并已按顺序安装至 030，再用 `psql -v ON_ERROR_STOP=1 -d diy_workbench -f services/nas-api/sql/031-erp-category.sql` 执行类别迁移。连接参数沿用正式库管理方式。迁移可重放，锚点不匹配会回滚。
+2. 在 DPanel 更新 `diy-workbench-api`，保留三店现有账号和配置。检查健康状态，并用运营身份回读三店成本快照。
+3. 发布与上述接口配套的桌面客户端和签名 ERP worker 组件。升级后在工作台预览并确认 ERP 同步，回读三店分类。旧 worker 省略类别时保留已有值。
 
 030 依赖已安装的 026 ERP 建源函数，扩展三店 ERP 成本同步快照、写入及 ERP 建源以支持待入可销。该迁移只更新函数，历史数据缺少该字段时显示未知。
 

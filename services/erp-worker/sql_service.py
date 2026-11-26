@@ -18,7 +18,7 @@ class SqlError(Exception):
 # 常量探针与目录文本走同一 varchar 驱动解码路径，避免误转正常的西文商品名。
 CATALOG_QUERY = (
     "SELECT TOP (100001) CONVERT(varchar(20), [goods_id]) AS [goods_id], "
-    "[商品编码], [商品名称], [单价成本], [总数量], [可销数], [待入], [最终可销], [待入可销], "
+    "[商品编码], [商品名称], [大分类], [单价成本], [总数量], [可销数], [待入], [最终可销], [待入可销], "
     "CONVERT(varchar(8), N'中文') AS [encoding_probe] FROM [库存].[库存查询]"
 )
 
@@ -130,6 +130,11 @@ def normalize(bundle):
         by_id[key] = {**ident, 'erp': cost_number(raw['单价成本']),
                       'stockAvailable': numeric(raw['最终可销']),
                       'stockIncomingAvailable': numeric(raw['待入可销'])}
+        # 区分旧目录缺列和 ERP 明确空值；沿用名称的编码探针，剔除控制字符后限制长度。
+        if '大分类' in raw:
+            value = raw['大分类']
+            text = '' if value is None else decoded(value)
+            by_id[key]['erpCategory'] = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', text).strip()[:100].rstrip() or None
     return list(by_id.values())
 
 

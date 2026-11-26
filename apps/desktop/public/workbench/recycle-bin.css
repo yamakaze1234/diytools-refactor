@@ -1,0 +1,41 @@
+/* 与定稿共用面板、提醒和倒计时色阶，嵌套确认框独立于底层工作表。 */
+.rb-config,.rb-confirm {
+ --rb-panel:#fff;--rb-control:#fafaf8;--rb-soft:#eeeee9;--rb-line:#d8d8d4;--rb-text:#1e1e1c;--rb-muted:#656561;
+ --rb-red-bg:#fdf0f0;--rb-red-line:#df8e92;--rb-red:#a92e32;--rb-warn-bg:#fff6e0;--rb-warn-line:#dfb357;--rb-warn:#8a5308;
+ color:var(--rb-text);background:var(--rb-panel);font:13px/1.45 "Segoe UI","Microsoft YaHei UI",sans-serif;
+}
+html:is(.dark,[data-workbench-theme=dark]) :is(.rb-config,.rb-confirm) {
+ --rb-panel:#242529;--rb-control:#2c2d32;--rb-soft:#2e3036;--rb-line:#44464c;--rb-text:#eceef1;--rb-muted:#a9afb8;
+ --rb-red-bg:#3b2023;--rb-red-line:#8c3d42;--rb-red:#ff9496;--rb-warn-bg:#372d18;--rb-warn-line:#8c6c24;--rb-warn:#f6cc63;
+}
+body #dialog:has(.rb-config){width:min(920px,calc(100vw - 32px))!important;height:auto!important;max-height:calc(100dvh - 32px)!important;padding:0!important;border-radius:3px}
+#dialog:has(.rb-config)>form{display:none}
+#dialog:has(.rb-config) #dialog-body{margin:0;padding:0;overflow:auto}
+.rb-config header,.rb-confirm header{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--rb-line)}
+.rb-config header h2,.rb-confirm h2{font-size:18px;margin:0;color:inherit}
+.rb-config [data-close]{margin-left:auto;width:30px}
+.rb-config main{padding:20px;display:grid;gap:14px}
+.rb-config .rb-rule,.rb-config .rb-warn{color:var(--rb-warn);background:var(--rb-warn-bg);border:1px solid var(--rb-warn-line)}
+.rb-rule{padding:10px 14px;border-radius:2px}
+.rb-tag{display:inline-block;font-size:11px;white-space:nowrap;padding:1px 6px;color:var(--rb-muted);background:var(--rb-soft);border:1px solid var(--rb-line);border-radius:2px}
+.rb-tools,.rb-row{display:flex;align-items:center;gap:6px}
+.rb-tools{flex-wrap:wrap}
+.rb-config :is(button,input[type=search]),.rb-confirm button,.rb-tools>label{height:30px;padding:0 10px;font:inherit;font-size:12px;border:1px solid var(--rb-line);border-radius:2px;background:var(--rb-control);color:var(--rb-text)}
+.rb-tools>label{display:inline-flex;align-items:center;gap:5px}
+.rb-config input[type=checkbox]{width:14px;height:14px;margin:0}
+.rb-tools input[type=search]{flex:1 1 180px;max-width:320px;background:var(--rb-panel)}
+.rb-tools small{margin-right:auto;color:var(--rb-muted)}
+.rb-config .rb-danger,.rb-confirm .rb-alert{color:var(--rb-red);background:var(--rb-red-bg);border-color:var(--rb-red-line)}
+.rb-list{max-height:min(420px,50dvh);overflow:auto;display:grid;gap:8px}
+.rb-row{padding:9px 12px;border:1px solid var(--rb-line);border-radius:2px}
+.rb-row label{display:flex;align-items:center;gap:10px;min-width:0;flex:1;overflow-wrap:anywhere}
+.rb-row small{display:block;margin-top:4px;color:var(--rb-muted);font-variant-numeric:tabular-nums}
+.rb-row button{flex:none}
+.rb-config footer,.rb-empty{font-size:12px;color:var(--rb-muted);margin:0;padding-top:8px;border-top:1px solid var(--rb-line)}
+.rb-config button:disabled{opacity:.42}
+body dialog.rb-confirm{padding:0;width:min(520px,calc(100vw - 32px));max-height:85dvh;border:1px solid var(--rb-line);border-radius:3px;color:var(--rb-text);background:var(--rb-panel)}
+.rb-confirm::backdrop{background:#10111477}
+.rb-confirm section{padding:0 18px}
+.rb-confirm ul{max-height:38dvh;overflow:auto;padding-left:24px;overflow-wrap:anywhere}
+.rb-confirm footer{padding:12px 18px;display:flex;gap:8px;justify-content:flex-end;border-top:1px solid var(--rb-line)}
+.rb-confirm button.rb-danger-solid{background:#b52b30;color:white;border-color:#8f1d22;font-weight:700}

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import vm from 'node:vm';
+import {exportSourceImages} from '../../public/workbench/source-sync-export.js';
 import {exportSingleImage} from '../../public/workbench/single-image-export.js';
 const app=await fs.readFile(new URL('../../public/workbench/app.js',import.meta.url),'utf8');
 const schedule=app.slice(app.indexOf('function scheduleImageSave(){'),app.indexOf('function openConflict('));
@@ -30,9 +31,13 @@ test('overflow export reports failure without downloading or saving a cached PNG
 });
 
 
-test('source update export flushes and submits a folder task without writing image cache',async()=>{
- const source=await fs.readFile(new URL('../../public/workbench/source-sync-ui.js',import.meta.url),'utf8');
- const code=source.slice(source.indexOf(' async function exportAll(){'),source.indexOf(' async function applySelected('));
- const calls=[],config={id:'one',name:'test'},changes=[{id:'one'}],context={exportBatch:{changes,shopId:'intel'},$:()=>({value:'changed'}),api:{flush:async()=>calls.push('flush'),getConfigs:()=>[config],saveImage:()=>{throw Error('No image cache copy');}},sourceExportEntries:(configs,chosen,shopId,scope)=>{assert.deepEqual(configs,[config]);assert.equal(chosen,changes);assert.equal(shopId,'intel');assert.equal(scope,'changed');return [{config,name:'test.png'}];},message(){},startImageExportTask:options=>{calls.push('task');assert.equal(options.entries[0].config,config);assert.match(options.name,/本店输出源更新图片/);return {done:Promise.resolve('saved')};}};
- vm.runInNewContext('var nasMain=false;\n'+code,context);assert.equal(await context.exportAll(),'saved');assert.deepEqual(calls,['flush','task']);
+test('输出源导图先读取当前店铺的渲染配置，只交付所选图型，不写配置与图片缓存',async()=>{
+ const calls=[],config={id:'one',shopId:'intel',name:'配置1',product:'测试链接',productId:'p'};
+ const api={prepareExport:async()=>{calls.push('读取');return [config];},renderImage:async row=>{
+  calls.push(row.layout);return {canvas:{width:1,height:1,toBlob:callback=>callback(new Blob(['png']))}};
+ },saveFolder:async files=>{calls.push(files.map(f=>f.name));return {ok:true,directory:'test'};}};
+ const result=await exportSourceImages(api,[config],'intel',{scope:'changed',layouts:['square'],skuMode:'padded'},()=>{});
+ assert.equal(result.phase,'completed');assert.equal(calls[0],'读取');assert.equal(calls[1],'square');
+ assert.equal(calls[2].length,2);assert.match(calls[2][0],/sku图/);assert.equal(calls[2][1],'导出清单.json');
+ assert.equal(config.layout,undefined);assert.equal(config.skuExportMode,undefined);
 });

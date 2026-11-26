@@ -1,42 +1,119 @@
 /** 输出源工作表只投影现有目录。保存时仍交给原目录接口校验权限、版本与回执。 */
+import {observedErpCategory,categoryFromName} from './component-category.js';
 import {slots,erpUnitCost} from './core.js';
 import {componentStock} from './inventory-check-data.js';
 import {excludedComponent} from './component-policy.js';
+import {erpCategoryFields} from './erp-sync.js';
 import {splitErpName} from './erp-part-description.js';
-import {isSpecialComponent,normalizeSpecialComponent} from './special-components.js';
+import {validateHardware} from './component-hardware.js';
+import {validateCapacities} from './component-capacity.js';
+import {isSpecialComponent,normalizeSpecialComponent,isSpecialPresetId} from './special-components.js';
 import {sourceFields,withSourceFields,sharedSourceKeys,sourceGoodsId} from './shared-source-fields.js';
 import {fieldState,sharedScopeRow} from './shared-source-editor.js';
 import {sameNasDocument as equal} from './nas-main-workspace.js';
 import {addonItems,choiceText,sourceAddonOptions} from './addon-data.js';
 
-export const sourceSheetCategories=['全部配件','CPU','主板','显卡','内存','硬盘','散热','风扇','机箱','电源','线材/扩展','其他配件','特殊配件'];
+export const sourceSheetCategories=['全部配件','CPU','主板','显卡','内存','硬盘','散热','风扇','机箱','电源','其他配件','特殊配件'];
 export const sourceSheetFilters=[['active','全部在用'],['different','三店有差异'],['addons','有升级项'],['unavailable','缺货 / 停产'],['missing-tax','待填核算价'],['tax-high','核算价高于ERP'],['tax-low','核算价低于ERP'],['pending','待保存修改'],['deleted','已删除']];
 const normalize=value=>String(value??'').normalize('NFKC').toLowerCase().trim();
-const categoryPatterns=[
- // 附件名称常带适配的硬件型号，先识别商品本身。
- ['线材/扩展',/线材|模组线|延长线|转接线|显卡支架|转接|扩展|集线器|数据线|连接线|hub\b|riser|cable/i],
- ['散热',/散热|水冷|风冷|冷排|cooler|heatsink/i],
- ['风扇',/风扇|fan\b/i],
- ['机箱',/机箱|chassis|\bcase\b/i],
- ['电源',/电源|power supply|\bpsu\b|\b\d{3,4}\s*w\b/i],
- ['CPU',/cpu|处理器|酷睿|锐龙|奔腾|赛扬|epyc|xeon|ryzen|ultra\s*[3579]|\b[ir][3579][\s-]*\d{4,5}/i],
- ['主板',/主板|motherboard|\b[abhxyz]\d{3}[mi]?\b/i],
- ['显卡',/显卡|独显|geforce|radeon|\b(?:rtx|gtx|rx|arc)\s*[-a-z]?\s*\d{3,4}/i],
- ['内存',/内存|ddr\s*[345]|dimm|memory/i],
- ['硬盘',/硬盘|固态|机械盘|存储|ssd|nvme|\bhdd\b|硬碟/i],
-];
-
-/** 优先使用已有分类，其次采用真实引用槽位，最后才识别商品名称。 */
-export function sourceSheetCategory(row,referenceSlots=[]){
+// 成本分类、来源历史分类和真实引用依次判定；缺少资料才读名称。
+export function sourceSheetCategory(row,referenceSlots=[],cost){
  if(isSpecialComponent(row))return '特殊配件';
- const match=text=>categoryPatterns.find(([,pattern])=>pattern.test(normalize(text)))?.[0];
- const exact=sourceSheetCategories.slice(1,-2).find(name=>normalize(name)===normalize(row.erpCategory));
- const name=match([row.erpName,row.name,row.originalName,row.erpModel].join(' '));
- const slot=referenceSlots.find(value=>slots.includes(value)&&!value.startsWith('配件'));
- return exact||match(row.erpCategory)||slot||name||'其他配件';
+ const explicit=observedErpCategory(cost?.erpCategory,row.erpCategory);
+ const slot=[...referenceSlots,row.slot].find(value=>slots.includes(value)&&!value.startsWith('配件'));
+ return explicit||slot||categoryFromName([row.erpName,row.name,row.originalName,row.erpModel].join(' '))||'其他配件';
 }
 
-const rowKey=row=>row.deletedAt?'deleted:'+row.sourceId:isSpecialComponent(row)?'special:'+row.sourceId:String(row.goodsId||row.sourceId);
+function collectSourceIds(value,ids,found){
+ if(!value||typeof value!=='object')return;
+ for(const [key,child] of Object.entries(value)){
+  if((key==='sourceId'||key==='source_id')&&ids.has(child))found.add(child);
+  else if(child&&typeof child==='object')collectSourceIds(child,ids,found);
+ }
+}
+
+/** 配置撤销/重做里旧的配件与加购也可能重新引入已彻底删除的货源。 */
+export function historyReferencesDeletedSource(entry,shop,ids){
+ const found=new Set();
+ for(const config of [...(entry.configs??[]),...(entry.baseline?.configs??[])]){
+  if((config.shopId||'intel')===shop)collectSourceIds(config,ids,found);
+  if(found.size)return true;
+ }
+ return false;
+}
+
+/** 本机整库按来源 ID 计数；同套配置的展示行、实际行及加购重复引用只记一次。 */
+export function localDeletedSources(state,shop){
+ const rows=(state.sourceCatalog??[]).filter(row=>(row.shopId||'intel')===shop&&row.deletedAt!=null);
+ const counts=new Map(rows.map(row=>[row.sourceId,{configurations:0,templates:0}]));
+ if(!counts.size)return [];
+ // 归档配置与软删除模板均保留快照，恢复后仍需要原输出源。
+ for(const config of state.configs??[]){
+  if((config.shopId||'intel')!==shop)continue;
+  const found=new Set();
+  for(const part of [...(config.parts??[]),...(config.actualParts??[])]){
+   if(counts.has(part.sourceId))found.add(part.sourceId);
+  }
+  collectSourceIds(config.addons,counts,found);
+  for(const id of found)counts.get(id).configurations++;
+ }
+ for(const template of state.templates??[]){
+  if((template.shopId||'intel')!==shop)continue;
+  const found=new Set();
+  collectSourceIds(template.configurations??template.configs??template.config,counts,found);
+  for(const id of found)counts.get(id).templates++;
+ }
+ return rows.map(row=>({...row,references:counts.get(row.sourceId)}));
+}
+
+/** 旧版 NAS 可能没有引用统计。只有两个计数都有效时才允许按零引用清理。 */
+export function deletedSourceUses(refs){
+ if(!refs||![refs.configurations,refs.templates].every(value=>Number.isSafeInteger(value)&&value>=0))return null;
+ return refs.configurations+refs.templates;
+}
+
+/** 写入前重读本店完整引用，批内任一项已恢复、重删或被引用则整批不变。 */
+export function changeLocalDeletedSources(state,shop,targets,action){
+ if(!['restore','purge'].includes(action))throw Error('无效的输出源操作');
+ const current=new Map(localDeletedSources(state,shop).map(row=>[row.sourceId,row]));
+ const ids=new Set();
+ for(const target of targets){
+  const row=current.get(target.sourceId);
+  if(!row||row.deletedAt!==target.deletedAt)throw Error('输出源状态已变化，请刷新后重新选择');
+  if(action==='purge'&&deletedSourceUses(row.references)>0)throw Error('输出源仍被 '+row.references.configurations+' 套配置、'+row.references.templates+' 个模板引用');
+  ids.add(row.sourceId);
+ }
+ if(action==='restore'){
+  for(const row of state.sourceCatalog)if((row.shopId||'intel')===shop&&ids.has(row.sourceId))delete row.deletedAt;
+ }else{
+  state.sourceCatalog=state.sourceCatalog.filter(row=>(row.shopId||'intel')!==shop||!ids.has(row.sourceId));
+  // 内置特殊配件是虚拟候选，记录被删除的预设才不会在下次投影时重新补入。
+  state.shopSettings??={};
+  const settings=state.shopSettings[shop]??={coupon:0};
+  const presets=[...ids].filter(id=>isSpecialPresetId(id,shop));
+  if(presets.length)settings.purgedSourcePresets=[...new Set([...(settings.purgedSourcePresets??[]),...presets])];
+  if(!state.sourceCatalog.length)settings.sourceCatalogEmptied=true;
+ }
+}
+
+/** 30 天按停用的准确时刻计算；仍受保护的到期项继续保留。 */
+export function deletedSourceTimestamp(deletedAt){
+ if(typeof deletedAt!=='string'||!/^\d{4}-\d\d-\d\d(?:[Tt ].+)?$/.test(deletedAt))return NaN;
+ const day=deletedAt.slice(0,10),calendar=new Date(day+'T00:00:00Z');
+ // Date.parse 会把 2 月 31 日顺延到 3 月；服务端拒绝的历史日期也要在界面标为待核对。
+ if(!Number.isFinite(calendar.valueOf())||calendar.toISOString().slice(0,10)!==day)return NaN;
+ return Date.parse(deletedAt);
+}
+export function deletedSourceTime(deletedAt,now=Date.now(),autoCleanup=false){
+ const timestamp=deletedSourceTimestamp(deletedAt);
+ if(!Number.isFinite(timestamp))return {days:null,text:'停用时间待核对'};
+ const days=Math.max(0,Math.ceil((timestamp+30*86400000-now)/86400000));
+ const text=days===0?(autoCleanup?'已满 30 天 · 等待自动清理':'已满 30 天'):'剩余 '+days+' 天'+
+  (days<=3?(autoCleanup?' · 即将自动清理':' · 即将到期'):'');
+ return {days,text};
+}
+
+const rowKey=row=>row.deletedAt!=null?'deleted:'+row.sourceId:isSpecialComponent(row)?'special:'+row.sourceId:String(row.goodsId||row.sourceId);
 const baseKey=row=>row.sharedSourceId||rowKey(row);
 // ERP 名称前缀与商品状态都能标明停售，即使可销库存仍有结余。
 function stopTags(row,tags=splitErpName(row?.erpName||row?.name).tags){
@@ -100,13 +177,16 @@ export function buildSourceSheet({rows=[],entries=[],costs=[],configs=[],shop='i
  const usable=rows.filter(row=>shops.includes(row.shopId)&&!excludedComponent(row)&&
   !stockIndex.get(row.goodsId)?.some(excludedComponent));
  const byAlias=new Map(),managedEntries=new Map();
+ // 共用目录也可能保留本店已停用别名；合成在用行时须排除这些已知别名。
+ const deletedAliases=new Set(rows.filter(row=>row.deletedAt!=null).map(row=>JSON.stringify([row.shopId,row.sourceId])));
  for(const entry of entries){
-  const stores=Object.fromEntries(Object.entries(entry.stores).filter(([id])=>shops.includes(id)));
+  const stores=Object.fromEntries(Object.entries(entry.stores).filter(([id])=>shops.includes(id)).map(([id,aliases])=>
+   [id,aliases.filter(alias=>!deletedAliases.has(JSON.stringify([id,alias.sourceId])))]));
   const scoped={...entry,stores};
   managedEntries.set(entry.id,scoped);
   for(const aliases of Object.values(stores))for(const alias of aliases)byAlias.set(alias.sourceId,entry.id);
  }
- const groups=Map.groupBy(usable,row=>row.deletedAt?rowKey(row):byAlias.get(row.sourceId)??baseKey(row));
+ const groups=Map.groupBy(usable,row=>row.deletedAt!=null?rowKey(row):byAlias.get(row.sourceId)??baseKey(row));
  for(const [id,entry] of managedEntries){
   if(groups.has(id)||!Object.values(entry.stores).some(aliases=>aliases.length)||stockIndex.get(id)?.some(excludedComponent))continue;
   const store=Object.keys(entry.stores).find(key=>entry.stores[key].length);
@@ -122,7 +202,7 @@ export function buildSourceSheet({rows=[],entries=[],costs=[],configs=[],shop='i
   const cost=stockIndex.get(base.goodsId)?.[0];
   const erpName=cost?.erpName||cost?.name||base.erpName||base.originalName||base.name;
   if(excludedComponent({erpName}))continue;
-  const actualEntry=base.deletedAt?null:managedEntries.get(id);
+  const actualEntry=base.deletedAt!=null?null:managedEntries.get(id);
   const entry=actualEntry??localEntry(id,base,aliases);
   const refs=new Set(),referenceSlots=new Set();
   for(const ref of [goodsRefs.get(base.goodsId),...aliases.map(row=>sourceRefs.get(row.sourceId))]){
@@ -131,7 +211,7 @@ export function buildSourceSheet({rows=[],entries=[],costs=[],configs=[],shop='i
   }
   const stock=componentStock(base.goodsId,stockIndex);
   const unit=erpUnitCost({...base,...cost});
-  const category=sourceSheetCategory({...base,erpCategory:cost?.erpCategory||base.erpCategory||base.slot,erpName},[...referenceSlots]);
+  const category=sourceSheetCategory({...base,erpName},[...referenceSlots],cost);
   result.push({id,base,aliases,entry,managed:!!actualEntry,scopes,shop,category,erpName,
    stock,unavailable:stock.status==='out'||stopTags({...cost,...base,erpStatus:base.erpStatus??cost?.erpStatus,
     discontinued:base.discontinued||cost?.discontinued,saleStopped:base.saleStopped||cost?.saleStopped}).length>0,
@@ -177,7 +257,7 @@ export function sourceSheetView(item,draft,displayScope=item.scopes[0]){
 const matchesCategory=(row,category)=>category==='全部配件'||row.category===category;
 const matchesQuery=(row,terms)=>terms.every(term=>row.search.includes(term));
 function matchesFilter(row,filter){
- if((filter==='deleted')!==Boolean(row.base.deletedAt))return false;
+ if((filter==='deleted')!==(row.base.deletedAt!=null))return false;
  if(filter==='different')return row.differences.length>0;
  if(filter==='addons')return [...row.addons.values()].some(items=>items.length);
  if(filter==='unavailable')return row.unavailable;
@@ -250,7 +330,7 @@ export function sheetTaxInput(value){
 
 /** 一次编辑只写这一个字段。恢复时移除覆盖，独立成本仍由旧事务保护。 */
 export function editSourceSheetField(item,draft,scope,field,value,{restore=false}={}){
- if(!item.scopes.includes(scope)||!sharedSourceKeys.includes(field)||item.base.deletedAt||
+ if(!item.scopes.includes(scope)||!sharedSourceKeys.includes(field)||item.base.deletedAt!=null||
     isSpecialComponent(item.base)&&field!=='name')return draft;
  if(restore&&(scope==='shared'||!canInherit(field,fieldState(item.entry,'shared',field,item.base.sourceId,draft?.edits))))return draft;
  const edits=structuredClone(draft?.edits??{});
@@ -268,7 +348,7 @@ export function editSourceSheetField(item,draft,scope,field,value,{restore=false
 
 /** 只统一用户选中的字段，保留各店的其他独享设置。 */
 export function promoteSourceSheetField(item,draft,field,value){
- if(!item.scopes.includes('shared')||!['name','tax'].includes(field)||!canInherit(field,{value,inherited:true}))return draft;
+ if(!item.scopes.includes('shared')||!['name','tax','addon'].includes(field)||!canInherit(field,{value,inherited:true}))return draft;
  let next=editSourceSheetField(item,draft,'shared',field,value);
  for(const scope of item.scopes)if(scope!=='shared'&&fieldState(item.entry,'shared',field,item.base.sourceId,next?.edits).overrideShops.includes(scope)){
   next=editSourceSheetField(item,next,scope,field,null,{restore:true});
@@ -279,14 +359,23 @@ export function promoteSourceSheetField(item,draft,field,value){
 /** ERP 观察留在草稿投影，实际创建按现有跨店接口提交人工字段和 ERP 原名。 */
 export function createSourceSheetDraft(candidate,{shop,shops=[shop],managed=false,tax=null,sourceId=crypto.randomUUID(),special=false}={}){
  const goodsId=String(candidate?.goodsId??'');
- const erpName=String(candidate?.erpName||candidate?.name||'').trim();
- if(!special&&(!sourceGoodsId(goodsId)||!erpName||excludedComponent({erpName})))throw Error('该 ERP 商品不可加入输出源');
- const row=normalizeSpecialComponent({sourceId,shopId:shop,goodsId,name:special?'':splitErpName(erpName).main||erpName,
-  specialComponent:special,erpName,erpCategory:candidate?.erpCategory,erpSpec:candidate?.erpSpec,erpModel:candidate?.erpModel,
+ // ERP 原名只取查询观察值。手工展示名不会作为 ERP 观察回传。
+ // 兼容旧 ERP 搜索结果：它用 name 存原名，并附带单价或库存观察。
+ const legacyErp=candidate?.erpName===undefined&&candidate?.displayName===undefined&&
+  (candidate?.erp!==undefined||candidate?.stockAvailable!==undefined);
+ const erpName=String(legacyErp?candidate.name:candidate?.erpName??'').trim();
+ const name=String(candidate?.displayName??(legacyErp?splitErpName(erpName).main:candidate?.name??splitErpName(erpName).main)).trim();
+ if(!special&&(!sourceGoodsId(goodsId)||!name||name.length>512||erpName.length>512||excludedComponent({name,erpName})))throw Error('该配件不可加入输出源，请核对货号及名称');
+ if(special&&(name.length>512||excludedComponent({name})))throw Error('请核对特殊配件的展示名称');
+ // 只有手工填写的规格进入草稿；简称和容量的自动推断留给配置展示层。
+ const row=normalizeSpecialComponent({sourceId,shopId:shop,goodsId,name,
+  ...(special?{}:{hardwareOverrides:validateHardware(candidate?.hardwareOverrides),capacityOverrides:validateCapacities(candidate?.capacityOverrides)}),
+  specialComponent:special,erpName,...erpCategoryFields(candidate??{}),erpSpec:candidate?.erpSpec,erpModel:candidate?.erpModel,
   erp:candidate?.erp??null,stockAvailable:candidate?.stockAvailable??null,stockIncomingAvailable:candidate?.stockIncomingAvailable??null,
   tax:Number.isFinite(tax)&&tax>=0?Math.round(tax*100)/100:null});
  const [item]=buildSourceSheet({rows:[row],costs:special?[]:[row],shop,shops});
  item.id=special?'special:'+sourceId:goodsId;
+ item.erpName=erpName;
  item.entry={...item.entry,id:item.id};
  item.managed=managed;
  return {item,draft:{created:true,edits:{}}};
@@ -320,7 +409,8 @@ export function sourceSheetChanges(item,draft){
    edits.shared={values:Object.fromEntries(fields.map(key=>[key,values[key]])),restore:[]};
   }
   return [{before:draft.created?null:item.base,row,managed:{id:item.id,version:item.entry.version??null,edits,
-   ...(draft.created&&row.erpName?{erpName:row.erpName}:{})}}];
+   ...(draft.created&&row.erpName?{erpName:row.erpName}:{}),
+   ...(draft.created&&!isSpecialComponent(row)&&row.erpCategory?.trim()?{erpCategory:row.erpCategory.trim()}:{})}}];
  }
  if(draft.created)return [{before:null,row:{...row,shopId:item.shop}}];
  return item.aliases.flatMap(before=>{

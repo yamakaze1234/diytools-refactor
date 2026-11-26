@@ -1,0 +1,191 @@
+/* 输出源相关入口共用设计稿色值，避免整个工作台跟随弹窗换色。 */
+:is(#dialog .ss-add-part, #dialog.source-quick-dialog, #source-sheet-page .ss-drawer, .addon-choices-editor, .ac-note, [data-addon-merged]) {
+  --wb-canvas: #f4f4f1;
+  --wb-panel: #ffffff;
+  --wb-control: #fafaf8;
+  --wb-soft: #eeeee9;
+  --wb-line: #d8d8d4;
+  --wb-rule: #e7e7e2;
+  --wb-ink: #1e1e1c;
+  --wb-muted: #656561;
+  --wb-accent: #fffa00;
+  --wb-focus: #877b00;
+  --wb-selected: #fff7cf;
+  --wb-selected-ink: #5d4b03;
+  --wb-out-bg: #fdf0f0;
+  --wb-out-line: #df8e92;
+  --wb-out-ink: #a92e32;
+  --wb-low-bg: #fff6e0;
+  --wb-low-line: #dfb357;
+  --wb-low-ink: #8a5308;
+  --wb-unk-bg: #f1f1ed;
+  --wb-unk-line: #c9c9c2;
+  --wb-unk-ink: #5f5f5a;
+  --wb-ok-bg: #eaf5ed;
+  --wb-ok-line: #84b894;
+  --wb-ok-ink: #1f633a;
+  --wb-transit-bg: #e8f3fa;
+  --wb-transit-line: #7eb2d6;
+  --wb-transit-ink: #16557d;
+  color: var(--wb-ink);
+  font-family: 'Segoe UI', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;
+  font-size: 13px;
+  line-height: 1.45;
+}
+html.dark :is(#dialog .ss-add-part, #dialog.source-quick-dialog, #source-sheet-page .ss-drawer, .addon-choices-editor, .ac-note, [data-addon-merged]) {
+  --wb-canvas: #1d1e21;
+  --wb-panel: #242529;
+  --wb-control: #2c2d32;
+  --wb-soft: #2e3036;
+  --wb-line: #44464c;
+  --wb-rule: #34363b;
+  --wb-ink: #eceef1;
+  --wb-muted: #a9afb8;
+  --wb-accent: #fffa00;
+  --wb-focus: #fffa00;
+  --wb-selected: #34311e;
+  --wb-selected-ink: #fffa00;
+  --wb-out-bg: #3b2023;
+  --wb-out-line: #8c3d42;
+  --wb-out-ink: #ff9496;
+  --wb-low-bg: #372d18;
+  --wb-low-line: #8c6c24;
+  --wb-low-ink: #f6cc63;
+  --wb-unk-bg: #2e3035;
+  --wb-unk-line: #565a63;
+  --wb-unk-ink: #b6bcc6;
+  --wb-ok-bg: #1e3528;
+  --wb-ok-line: #3d7554;
+  --wb-ok-ink: #9be0b2;
+  --wb-transit-bg: #1c2f3d;
+  --wb-transit-line: #3d6d8f;
+  --wb-transit-ink: #8fd0ff;
+}
+/* 覆盖工作台 Endfield 层的通用控件外观。作用域限定为这三个编辑入口。 */
+@layer workbench-interaction {
+:is(#dialog .ss-add-part, #dialog.source-quick-dialog, #source-sheet-page .ss-drawer, .addon-choices-editor, .ac-note, [data-addon-merged]) {
+& .wb-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  height: 30px !important; min-height: 30px !important;
+  padding: 0 10px !important;
+  border: 1px solid var(--wb-line) !important;
+  border-radius: 2px !important;
+  background: var(--wb-control) !important;
+  color: var(--wb-ink) !important;
+  font-size: 12px !important;
+  white-space: nowrap !important;
+  cursor: pointer !important;
+  transition: border-color .12s, background .12s !important;
+}
+& .wb-btn:hover:not(:disabled) { border-color: var(--wb-focus) !important; }
+& .wb-btn:disabled { opacity: .45 !important; cursor: default !important; }
+& .wb-btn-sm { height: 24px !important; min-height: 24px !important; padding: 0 7px !important; font-size: 11px !important; }
+& .wb-btn-primary {
+  background: var(--wb-accent) !important;
+  color: #161616 !important;
+  border-color: var(--wb-focus) !important;
+  font-weight: 700 !important;
+}
+& .wb-btn-primary:hover:not(:disabled) { filter: brightness(.97) !important; }
+& .wb-btn-active {
+  background: var(--wb-selected) !important;
+  color: var(--wb-selected-ink) !important;
+  border-color: var(--wb-focus) !important;
+  font-weight: 650 !important;
+}
+& .wb-btn-danger {
+  color: var(--wb-out-ink) !important;
+  border-color: var(--wb-out-line) !important;
+  background: var(--wb-out-bg) !important;
+}
+& .wb-btn-danger:hover:not(:disabled) { filter: brightness(.96) !important; }
+& .wb-cut {
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%) !important;
+}
+& .wb-input {
+  height: 31px !important; min-height: 31px !important;
+  padding: 0 9px !important;
+  border: 1px solid var(--wb-line) !important;
+  border-radius: 2px !important;
+  background: var(--wb-panel) !important;
+  color: var(--wb-ink) !important;
+  font-size: 12px !important;
+  outline: none !important;
+  width: 100% !important;
+}
+& .wb-input:focus { border-color: var(--wb-focus) !important; box-shadow: inset 0 0 0 1px var(--wb-focus) !important; }
+& .wb-textarea {
+  padding: 6px 9px !important;
+  border: 1px solid var(--wb-line) !important;
+  border-radius: 2px !important;
+  background: var(--wb-panel) !important;
+  color: var(--wb-ink) !important;
+  font-size: 12px !important;
+  outline: none !important;
+  width: 100% !important;
+  resize: vertical !important;
+}
+& .wb-textarea:focus { border-color: var(--wb-focus) !important; box-shadow: inset 0 0 0 1px var(--wb-focus) !important; }
+& .badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 1px 6px !important;
+  border-radius: 2px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border: 1px solid transparent !important;
+  white-space: nowrap !important;
+  font-variant-numeric: tabular-nums !important;
+}
+& .badge-out { background: var(--wb-out-bg) !important; border-color: var(--wb-out-line) !important; color: var(--wb-out-ink) !important; }
+& .badge-low { background: var(--wb-low-bg) !important; border-color: var(--wb-low-line) !important; color: var(--wb-low-ink) !important; }
+& .badge-unk { background: var(--wb-unk-bg) !important; border-color: var(--wb-unk-line) !important; color: var(--wb-unk-ink) !important; }
+& .badge-ok { background: var(--wb-ok-bg) !important; border-color: var(--wb-ok-line) !important; color: var(--wb-ok-ink) !important; }
+& .badge-transit { background: var(--wb-transit-bg) !important; border-color: var(--wb-transit-line) !important; color: var(--wb-transit-ink) !important; }
+& .badge-cat { background: var(--wb-soft) !important; border-color: var(--wb-line) !important; color: var(--wb-ink) !important; font-weight: 500 !important; }
+& .badge-sel { background: var(--wb-selected) !important; border-color: var(--wb-focus) !important; color: var(--wb-selected-ink) !important; }
+& .num { font-variant-numeric: tabular-nums !important; }
+& .chip-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 2px 8px !important;
+  border-radius: 2px !important;
+  font-size: 11px !important;
+  border: 1px solid var(--wb-line) !important;
+  background: var(--wb-panel) !important;
+  color: var(--wb-ink) !important;
+  cursor: pointer !important;
+}
+& .chip-btn:hover { border-color: var(--wb-focus) !important; background: var(--wb-selected) !important; color: var(--wb-selected-ink) !important; }
+& .scope-tab {
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 6px 12px !important;
+  border: 1px solid var(--wb-line) !important;
+  border-radius: 2px !important;
+  background: var(--wb-control) !important;
+  color: var(--wb-ink) !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+}
+& .scope-tab[aria-selected="true"] {
+  background: var(--wb-selected) !important;
+  border-color: var(--wb-focus) !important;
+  color: var(--wb-selected-ink) !important;
+  font-weight: 700 !important;
+  box-shadow: inset 0 -2px 0 var(--wb-focus) !important;
+}
+& .dot-override {
+  width: 6px !important; height: 6px !important; border-radius: 999px !important;
+  background: var(--wb-low-ink) !important;
+  display: inline-block !important;
+}
+}
+}

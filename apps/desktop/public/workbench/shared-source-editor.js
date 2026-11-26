@@ -1,7 +1,6 @@
 /** 共用来源表单复用原工作台编辑器，按范围保存改变的字段。 */
-import {mountAddonChoices} from './addon-choices-ui.js';
-import {initialChoices} from './shop-addon-ui.js';
-import {addonChoiceStatusHtml} from './addon-ui.js';
+import {mountAddonChoices,mountAddonNote} from './addon-choices-ui.js';
+import {initialChoices,legacyComboPreview} from './shop-addon-ui.js';
 import {choiceDescription,sourceAddon} from './addon-data.js';
 import {sameNasDocument as equal} from './nas-main-workspace.js';
 import {sourceFields,withSourceFields,sharedSourceLabels,sharedSourceKeys} from './shared-source-fields.js';
@@ -151,16 +150,15 @@ export function mountSharedScope(root,{row,entry,scope,scopes,edits,editable,onS
 }
 
 /** 保留旧加购组合的原始结构，只有实际修改商品卡片时生成新的选项。 */
-export function mountSharedAddons(root,{row,getCosts,getOriginal,onChange,preserveSelection=false}) {
+export function mountSharedAddons(root,{row,getCosts,getOriginal,onChange,preserveSelection=true,previewHost}) {
  const original = sourceFields(row).addon;
  const normalized = {...original,sourceId:row.sourceId};
- root.innerHTML = '<div data-shared-choices></div><label class="field">加购备注<textarea data-shared-addon-note rows="2"></textarea></label>';
- const note = root.querySelector('[data-shared-addon-note]');
- note.value=original.addonNote??'';
+ root.innerHTML = '<div data-shared-choices></div><div data-addon-note-host></div>';
+ const note=mountAddonNote(root.querySelector('[data-addon-note-host]'),'data-shared-addon-note',original.addonNote??'');
  let ready=false;
  const editor=mountAddonChoices(root.querySelector('[data-shared-choices]'),{
-  initial:initialChoices(normalized),sourceId:row.sourceId,getCosts,preserveSelection,
-  onChange:()=>{if(ready)onChange();}, renderCheck:choice=>addonChoiceStatusHtml(choice,getCosts(),[getOriginal()]),
+  initial:initialChoices(normalized),legacyPreview:legacyComboPreview(normalized),sourceId:row.sourceId,getCosts,preserveSelection,previewHost,getOriginals:()=>[getOriginal()],
+  onChange:()=>{if(ready)onChange();},
  });
  let baseline;
  try {baseline=editor.read(false);} catch {baseline=null;}

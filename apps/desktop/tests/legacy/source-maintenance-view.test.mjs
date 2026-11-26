@@ -7,6 +7,8 @@ test('优先使用 ERP 分类，配置引用补足未标明类型的商品',()=>
  assert.equal(maintenanceKind(row,configs),'case');
  assert.equal(maintenanceKind({...row,erpCategory:'主板'},configs),'board');
  assert.equal(maintenanceKind(row,[],[{goodsId:'10',erpCategory:'机箱'}]),'case');
+ for(const erpCategory of ['线材','其他','灯光灯效','散热风扇'])
+  assert.equal(maintenanceKind({...row,erpCategory:'主板',slot:'显卡'},configs,[{goodsId:'10',erpCategory}]),'other');
  assert.equal(maintenanceKind({...row,specialComponent:true},configs),'other');
 });
 test('名称补足六类资料，不把主板 DDR、机箱型号或散热配件识别为 CPU',()=>{

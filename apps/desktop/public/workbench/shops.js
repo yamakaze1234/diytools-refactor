@@ -4,7 +4,7 @@ import {normalizePosterView} from './poster-view.js';
 import {ensureActualParts} from './actual-parts.js';
 import {shopServiceColor,shopServiceTextColor} from './poster-theme.js';
 export {shopServiceColor,shopServiceTextColor} from './poster-theme.js';
-import {withSpecialPresets,normalizeSpecialComponent} from './special-components.js';
+import {withSpecialPresets,normalizeSpecialComponent,isSpecialPresetId} from './special-components.js';
 import {preferredSourceRows} from './source.js';
 import {restoreConfigOrder} from './config-order.js';
 import {selectableComponents} from './component-policy.js';
@@ -154,6 +154,12 @@ function normalizeShopSettings(value){
  const legacyCoupon=Number(value?.coupon);
  const result={};for(const shop of shops){const entry=value?.[shop.id];result[shop.id]={coupon:Number.isFinite(Number(entry?.coupon))&&Number(entry.coupon)>=0?Number(entry.coupon):shop.id===SHOP_IDS.intel&&Number.isFinite(legacyCoupon)&&legacyCoupon>=0?legacyCoupon:0};if(["light","dark"].includes(entry?.posterTheme))result[shop.id].posterTheme=entry.posterTheme;const view=normalizePosterView(entry?.posterView);if(view)result[shop.id].posterView=view;if(typeof entry?.serviceText==='string')result[shop.id].serviceText=entry.serviceText;for(const key of ['erpShopId','erpShopName'])if(typeof entry?.[key]==='string')result[shop.id][key]=entry[key];}
  for(const shop of shops){const entry=value?.[shop.id],rule=normalizePricingRule(entry?.pricingRule),alert=normalizeProfitAlerts(entry?.profitAlert);if(rule)result[shop.id].pricingRule=rule;if(alert)result[shop.id].profitAlert=alert;if(Array.isArray(entry?.addonPacks))result[shop.id].addonPacks=clone(entry.addonPacks);if(entry?.erpDefaultExtras!==undefined)result[shop.id].erpDefaultExtras=normalizeErpDefaultExtras(entry.erpDefaultExtras);}
+ // 离线彻底删除的预设与清空状态跨启动保留；只接受已知的本店预设标识。
+ for(const {id} of shops){
+  const settings=value?.[id];
+  if(Array.isArray(settings?.purgedSourcePresets))result[id].purgedSourcePresets=settings.purgedSourcePresets.filter(key=>isSpecialPresetId(key,id));
+  if(settings?.sourceCatalogEmptied===true)result[id].sourceCatalogEmptied=true;
+ }
  return result;
 }
 
@@ -179,7 +185,8 @@ function* workspaceStateWork(input,baseCatalog){
  const previousVersion=Number(state.dataVersion||1);state.dataVersion=3;state.shops=clone(shops);state.shopSettings=normalizeShopSettings(state.shopSettings);
  state.configs=restoreConfigOrder(state.configs||[]);for(const config of state.configs){const shopId=config.shopId||shopIdFromName(config.shop);applyShopIdentity(config,shopId);if(previousVersion<3&&[SHOP_IDS.gigabyte,SHOP_IDS.jonsbo].includes(shopId))applyShopIdentity(config,shopId,{resetAppearance:true});refreshPreviousDarkPalette(config);refreshJonsboPalette(config);refreshCardPalette(config);normalizePosterDesign(config);yield;}
  state.templates??=[];for(const template of state.templates){template.shopId??=template.configs?.[0]?.shopId||template.config?.shopId||SHOP_IDS.intel;yield;}
- state.sourceCatalog=normalizeSources(state.sourceCatalog?.length?state.sourceCatalog:baseCatalog).map(normalizeSpecialComponent);
+ const explicitlyEmpty=Object.values(state.shopSettings).some(settings=>settings.sourceCatalogEmptied);
+ state.sourceCatalog=normalizeSources(state.sourceCatalog?.length||explicitlyEmpty?state.sourceCatalog:baseCatalog).map(normalizeSpecialComponent);
  yield;
  for(const c of [...state.configs,...state.templates.flatMap(t=>t.configs||[t.config].filter(Boolean))]){c.parts=(c.parts||[]).map(normalizeSpecialComponent);c.actualParts=ensureActualParts(c).map(normalizeSpecialComponent);yield;}
  const erpNames=new Map((state.costSource||[]).map(r=>[r.goodsId,r.name]));for(const row of state.sourceCatalog)if(erpNames.has(row.goodsId))row.erpName=erpNames.get(row.goodsId);
@@ -194,4 +201,4 @@ export const normalizeWorkspaceStateAsync=(input,baseCatalog=[],options)=>finish
 /** 读取指定店铺的有效设置。 */
 export const settingsFor=(state,shopId)=>state.shopSettings?.[shopId]||{coupon:0};
 /** 按店铺作用域筛选输出源。 */
-export const sourcesFor=(state,shopId)=>preferredSourceRows(selectableComponents(withSpecialPresets(state.sourceCatalog.filter(row=>row.shopId===shopId),shopId),state.costSource||[]),state.costSource||[]);
+export const sourcesFor=(state,shopId)=>preferredSourceRows(selectableComponents(withSpecialPresets(state.sourceCatalog.filter(row=>row.shopId===shopId),shopId,state.shopSettings?.[shopId]?.purgedSourcePresets),state.costSource||[]),state.costSource||[]);

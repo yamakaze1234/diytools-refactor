@@ -34,24 +34,37 @@ export function alignDisplaySourceNames(configs,catalog,index=createSourceIndex(
   part.name=source.name;
  }
 }
-export function sourcePart(row){row=normalizeSpecialComponent(row);if(excludedComponent(row))throw Error('带 * 或 *! 标记的配件不可选用');if(row.deletedAt)throw Error('该输出源已删除，请先恢复');const {sourceId,goodsId,name,erp,tax}=row;return{sourceId,goodsId,name,erp,tax,hardwareOverrides:row.hardwareOverrides?clone(row.hardwareOverrides):undefined,hardwareFacts:row.hardwareFacts?clone(row.hardwareFacts):undefined,erpSpec:row.erpSpec,erpModel:row.erpModel,capacityOverrides:row.capacityOverrides?clone(row.capacityOverrides):undefined,taxOverride:null,upgrade:'',sourceFollow:{sourceId,name:{mode:'follow',value:name,sourceValue:name},upgrade:{mode:'follow',value:'',sourceValue:sourceUpgradeDescription(row)}},specialComponent:isSpecialComponent(row),stockAvailable:row.stockAvailable??null,stockIncomingAvailable:row.stockIncomingAvailable??null,stockUpdatedAt:row.stockUpdatedAt??null,stockSource:row.stockSource??null,erpUpdatedAt:row.erpUpdatedAt??null,erpMissing:row.erpMissing??false,erpUnknown:row.erpUnknown??(erp==null),erpName:row.erpName||row.originalName||name};}
+export function sourcePart(row){row=normalizeSpecialComponent(row);if(excludedComponent(row))throw Error('带 * 或 *! 标记的配件不可选用');if(row.deletedAt)throw Error('该输出源已删除，请先恢复');const {sourceId,goodsId,name,erp,tax}=row;return{sourceId,goodsId,name,erp,tax,hardwareOverrides:row.hardwareOverrides?clone(row.hardwareOverrides):undefined,hardwareFacts:row.hardwareFacts?clone(row.hardwareFacts):undefined,erpSpec:row.erpSpec,erpModel:row.erpModel,erpCategory:row.erpCategory,capacityOverrides:row.capacityOverrides?clone(row.capacityOverrides):undefined,taxOverride:null,upgrade:'',sourceFollow:{sourceId,name:{mode:'follow',value:name,sourceValue:name},upgrade:{mode:'follow',value:'',sourceValue:sourceUpgradeDescription(row)}},specialComponent:isSpecialComponent(row),stockAvailable:row.stockAvailable??null,stockIncomingAvailable:row.stockIncomingAvailable??null,stockUpdatedAt:row.stockUpdatedAt??null,stockSource:row.stockSource??null,erpUpdatedAt:row.erpUpdatedAt??null,erpMissing:row.erpMissing??false,erpUnknown:row.erpUnknown??(erp==null),erpName:row.erpName||row.originalName||name};}
 export function sourceUpgradeDescription(row,previous=[]){
  const text=selectedSourceAddons(row,previous).map(a=>a.text?.trim()).filter(Boolean).join('');
  // 明确清空或关闭展示也是有效设置，不能再取回旧 upgrade 文案。
  return text||(hasDescriptionSetting(row)?'':String(row.upgrade||'').trim());
 }
+/** 双侧换件和批量任务都按最终展示清单核对来源，保留仍被引用的加购和独立服务。 */
+export function syncReplacementAddons(config,previous,replacements){
+ const used=new Set(config.parts.map(part=>part.sourceId));
+ config.addons=config.addons.filter(addon=>{
+  if(replacements.has(addon.sourceId))return false;
+  if(!previous.has(addon.sourceId)||used.has(addon.sourceId))return true;
+  // 换到本地来源或特殊件时只撤掉孤立的跟随组，保留旧版人工选定的加购快照。
+  return !previous.get(addon.sourceId)&&addon.followPolicy!=='follow';
+ });
+ for(const row of replacements.values())config.addons.push(...sourceAddonsForSync(row,{follow:true,keepEmpty:true}));
+}
 /** 在指定配件位置应用新来源，并处理加购及升级描述关联。 */
-export function replaceSourcePart(config,index,row){
+export function replaceSourcePart(config,index,row,{syncAddons=true}={}){
  const previous=config.parts[index].sourceId;
  const description=sourceUpgradeDescription(row,row.sharedSourceId?[]:config.addons?.filter(a=>a.sourceId===row.sourceId)||[]);
  delete config.parts[index].displayName;
  Object.assign(config.parts[index],sourcePart(row),{upgrade:description});
  config.parts[index].sourceFollow.upgrade={mode:'follow',value:description,sourceValue:description};
  // NAS 共用来源的新选择同时建立真实加购组，避免新配置只有文案而销售读不到商品和金额。
- if(row.sharedSourceId&&Array.isArray(config.addons)){
-  config.addons=config.addons.filter(addon=>addon.sourceId!==row.sourceId&&!(previous&&addon.sourceId===previous&&!config.parts.some(part=>part.sourceId===previous)));
-  config.addons.push(...sourceAddonsForSync(row,{follow:true,keepEmpty:true}));
-  config.parts[index].sourceFollow.upgrade.structured=true;
+ if(Array.isArray(config.addons)){
+  if(syncAddons&&(row.sharedSourceId||previous&&previous!==row.sourceId)){
+   const previousSources=new Map(previous?[[previous,Boolean(row.sharedSourceId)]]:[]);
+   syncReplacementAddons(config,previousSources,new Map(row.sharedSourceId?[[row.sourceId,row]]:[]));
+  }
+  if(row.sharedSourceId)config.parts[index].sourceFollow.upgrade.structured=true;
  }
 }
 const hasDescriptionSetting=row=>row.addonChoices!==undefined||row.addonShowTogether!==undefined||(row.addonVariants||[]).some(v=>v.showTogether!==undefined);
@@ -105,4 +118,17 @@ export function setSourceDeleted(rows,id,deleted=true,at=new Date().toISOString(
 
 // 展示描述来自店铺输出源；ERP 名称只是搜索别名，成本字段不由展示名称决定。
 /** 结合成本资料返回适合供用户选择的来源行。 */
-export function preferredSourceRows(rows,costs=[]){const byId=new Map(costs.map(r=>[r.goodsId,r]));return rows.map(r=>{if(isSpecialComponent(r))return normalizeSpecialComponent(r);const cost=byId.get(r.goodsId);return {...r,name:String(r.name||'').trim()||r.originalName||cost?.name||'',...(cost?{erp:cost.erp??null,tax:cost.tax??r.tax,stockAvailable:cost.stockAvailable??null,stockIncomingAvailable:cost.stockIncomingAvailable??null,stockUpdatedAt:cost.stockUpdatedAt??null,stockSource:cost.stockSource??null,erpMissing:cost.erpMissing??false,erpUnknown:cost.erpUnknown??(cost.erp==null),erpName:cost.name||r.erpName||r.originalName||r.name}:{})};}).sort((a,b)=>Number(!!b.name&&!!(b.originalName||byId.get(b.goodsId)?.name)&&b.name!==(b.originalName||byId.get(b.goodsId)?.name))-Number(!!a.name&&!!(a.originalName||byId.get(a.goodsId)?.name)&&a.name!==(a.originalName||byId.get(a.goodsId)?.name)));}
+export function preferredSourceRows(rows,costs=[]){
+ const byId=new Map(costs.map(r=>[r.goodsId,r]));
+ return rows.map(r=>{
+  if(isSpecialComponent(r))return normalizeSpecialComponent(r);
+  const cost=byId.get(r.goodsId);
+  const name=String(r.name||'').trim()||r.originalName||cost?.name||'';
+  if(!cost)return {...r,name};
+  // 老快照省略字段时保留来源大类，明确的 null 原样传给换件候选。
+  return {...r,name,...(cost.erpCategory!==undefined?{erpCategory:cost.erpCategory}:{}),
+   erp:cost.erp??null,tax:cost.tax??r.tax,stockAvailable:cost.stockAvailable??null,
+   stockIncomingAvailable:cost.stockIncomingAvailable??null,stockUpdatedAt:cost.stockUpdatedAt??null,stockSource:cost.stockSource??null,
+   erpMissing:cost.erpMissing??false,erpUnknown:cost.erpUnknown??(cost.erp==null),erpName:cost.name||r.erpName||r.originalName||r.name};
+ }).sort((a,b)=>Number(!!b.name&&!!(b.originalName||byId.get(b.goodsId)?.name)&&b.name!==(b.originalName||byId.get(b.goodsId)?.name))-Number(!!a.name&&!!(a.originalName||byId.get(a.goodsId)?.name)&&a.name!==(a.originalName||byId.get(a.goodsId)?.name)));
+}

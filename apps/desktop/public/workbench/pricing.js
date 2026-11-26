@@ -79,7 +79,7 @@ export function pricingColumn(configs,settings){
  if(!configs.length)throw Error('请先勾选配置');
  return configs.map(c=>{const {listPrice}=pricing(c,settings);if(listPrice==null)throw Error(`${c.name||'配置'} 的到手价或优惠券无效`);return Math.round(listPrice).toString();}).join('\r\n');
 }
-export const deletedWithinRetention=(configs,at=Date.now())=>configs.filter(c=>c.deletedAt&&Date.parse(c.deletedAt)>at-3*86400000);
+export const deletedWithinRetention=(configs,at=Date.now())=>configs.filter(c=>c.deletedAt&&Date.parse(c.deletedAt)>at-7*86400000);
 
 export function productInstallment(configs=[]){
  const terms=new Set(configs.filter(c=>!c.deletedAt).map(readInstallment));

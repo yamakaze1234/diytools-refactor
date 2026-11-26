@@ -110,7 +110,7 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
    const store=shopStores?shopStores.get(shop):defaultStore;
    requireValue(store&&(!live||shopStores||shop==='intel'),'FORBIDDEN',403);
    authorize(await store.roles(member),shop,sales);
-   const catalogRoute=live&&!sales&&/^\/api\/v1\/operations\/catalog\/(sources|addons|gallery|templates|assets|receipts|shared-sources)(?:\/([^/]+)(?:\/(archive|restore|copy|apply))?)?$/.exec(url.pathname);
+   const catalogRoute=live&&!sales&&/^\/api\/v1\/operations\/catalog\/(sources|addons|gallery|templates|assets|receipts|shared-sources)(?:\/([^/]+)(?:\/(archive|restore|copy|apply|purge))?)?$/.exec(url.pathname);
    const isUpload=catalogRoute?.[1]==='assets'&&!catalogRoute[2]&&method==='POST';
    const activityPage=live&&!sales&&url.pathname==='/api/v1/operations/workspace/activity';
    const allowed=activityPage?['shop_id','page','page_size','from','to']:catalogRoute?['shop_id',...(isUpload?['operation_id']:[])]:live&&!sales?['shop_id','limit','offset','search','archived']:['shop_id','limit','offset','search'];
@@ -155,6 +155,7 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
    }
    if(catalogRoute){
     const kind=catalogRoute[1],id=catalogRoute[2]?identifier(catalogRoute[2]):null,extra=catalogRoute[3];
+    requireValue(extra!=='purge'||kind==='sources','METHOD_NOT_ALLOWED',405);
     if(kind==='receipts'){
      requireValue(method==='GET'&&id&&!extra&&operationId(id),'METHOD_NOT_ALLOWED',405);
      return send(200,{ok:true,data:await store.catalog.receipt(member,shop,id)});

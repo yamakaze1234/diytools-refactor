@@ -74,7 +74,7 @@ export function createNasOperationQueue({client,storage,key,shopId='intel',lock=
    !value.changes.every((row,i)=>{
     const expected=batch.body.changes[i];
     return (row.configuration_id??row.id)===expected.id&&typeof row.version==='string'&&/^[1-9]\d{0,18}$/.test(row.version)&&
-     (plan.kind!=='configurations'||row.archived===(expected.action==='archive'));
+     (plan.kind!=='configurations'||(expected.action==='purge'?row.purged===true:row.archived===(expected.action==='archive')&&!row.purged));
    }))throw new NasApiError('SAVE_STATUS_UNKNOWN');
   return value;
  };

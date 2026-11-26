@@ -6,6 +6,8 @@ import {createNasCatalogController} from './nas-catalog-controller.js';
 import {createNasOperationQueue,nasPlanStorage} from './nas-operation-plan.js';
 import {syncPosterAddonText} from './batch-content.js';
 import {isPosterExtraRow} from './config-extras.js';
+import {visibleNasCosts} from './nas-cost-overlay.js';
+import {isSpecialComponent} from './special-components.js';
 const dup=value=>structuredClone(value);
 const obj=x=>x!==null&&typeof x==='object'&&!Array.isArray(x);
 const own=(o,k)=>Object.hasOwn(o,k);
@@ -112,6 +114,26 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
  let member=null,endpoint=null,catalogScope=null,identity=null,lookup=null,index=null,meta=null,closed=false,begin=null,catalogController=null;
  let queue=null,shopId=null,availableShops=[],capability=null;
  let client=createClient({nativeRequest});
+ let costById=new Map();
+ // 保存只校准业务上已有修改的草稿正文。价格与依赖版本配对，旧回执重放不走此路径。
+ async function alignDraftCosts(document,versions,readCost){
+  const ids=new Set([...document.parts,...document.actualParts].filter(part=>part.goodsId&&!isSpecialComponent(part)).map(part=>part.goodsId));
+  const costs=new Map();
+  for(const id of ids){
+   if(!versions[id])continue;
+   const cached=costById.get(id);
+   if(cached&&meta?.costVersions?.[id]===versions[id])costs.set(id,cached);
+   else{
+    const resource=await readCost(id);
+    if(resource)costs.set(id,resource.document);
+   }
+  }
+  visibleNasCosts(document,costs,{erpOnly:true});
+ }
+ function adoptCatalog(catalog){
+  meta={...catalog,dataVersion:3};
+  costById=new Map(catalog.costSource.map(row=>[row.goodsId,row]));
+ }
  // 测试与旧宿主仍支持同步存储；IndexedDB 的元数据回执则必须按原顺序等待提交。
  const after=(result,fn)=>result?.then?result.then(fn):fn(result);
  function each(rows,apply){
@@ -119,7 +141,7 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
   for(const row of rows)task=after(task,()=>apply(row));
   return task;
  }
- const draftOptions={storage,draftStorage,onStorageError:onDraftStorageError};
+ const draftOptions={storage,draftStorage,onStorageError:onDraftStorageError,alignDraftCosts};
  const controllers=new Map(),openings=new Map(),editors=new Map();
  const validate=()=>{if(closed)throw new NasApiError('MEMBER_CHANGED',403);};
  const ready=()=>{validate();if(!member)throw new NasApiError('UNAUTHENTICATED',401);return member;};
@@ -203,14 +225,14 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
     head.summaries.every(c=>c?.shopId===shopId&&typeof c.id==='string'&&Array.isArray(c.parts))&&
     new Set(head.summaries.map(row=>row.id)).size===head.summaries.length&&catalog?.shopSettings?.[shopId]&&
     Array.isArray(catalog?.sourceCatalog)&&Array.isArray(catalog?.costSource));
-  index=head;meta={...catalog,dataVersion:3};return {...head,metadata:meta};
+  index=head;adoptCatalog(catalog);return {...head,metadata:meta};
  }
  // 依赖自动刷新后只重读目录；不重开详情、不覆盖其它配置的显示态和持久草稿。
  async function refreshDependencies(){
   ready();
   const catalog=await call(()=>client.workspaceCatalog());
   guard('INVALID_API_RESPONSE',catalog?.shopSettings?.[shopId]&&Array.isArray(catalog.sourceCatalog)&&Array.isArray(catalog.costSource));
-  meta={...catalog,dataVersion:3};return dup(meta);
+  adoptCatalog(catalog);return dup(meta);
  }
  async function request(path,options={}){
   if(path==='/api/workspace/index')return refresh();
@@ -341,7 +363,7 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
     if(action==='replace'&&(record.pending||!equal(record.base,record.document)))throw new NasApiError('UNSAVED_DRAFT',409,{configuration_id:id});
     if(row.expected_version!=null&&record.version!==row.expected_version)throw new NasApiError('VERSION_CONFLICT',409);
    }
-   if(action==='restore'||action==='archive'){
+   if(action==='restore'||action==='archive'||action==='purge'){
     resolved.push({id,action,expected_version:row.expected_version||record?.version});continue;
    }
    const document=action==='create'?dup(row.document):documentFor(row.document);
@@ -516,7 +538,9 @@ export const nasErrorText=(error,configs=[])=>{
  CATALOG_SHARED_READ_ONLY:'此资料为共享或其他店铺所有，当前账号只能查看。',
  SHARED_SOURCE_VALUE_REQUIRED:'该字段还没有三店共用值。请先维护共用值。',
  SHARED_SOURCE_EDITOR_REQUIRED:'请使用新版输出源维护窗口。',
- CATALOG_IN_USE:'资料仍被配置或模板引用，不能移入回收站。',
+ CATALOG_IN_USE:'资料仍被配置或模板引用，无法删除。',
+ NAS_RETENTION_NOT_INSTALLED:'NAS 尚未安装回收站清理迁移（032），请在安装后重试。',
+ INVALID_CATALOG_STATE:'输出源停用状态已变化，请刷新列表后重试。',
  CATALOG_PENDING_RESOLVED:'原提交已确认，请查看最新资料后再提交这次更改。',
  INVALID_IMAGE:'图片无法解码，或超过支持的尺寸。',
  IMAGE_UPLOAD_DISABLED:'当前 NAS 服务没有开放图片上传。',

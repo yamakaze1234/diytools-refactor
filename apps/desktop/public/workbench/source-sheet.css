@@ -1,3 +1,10 @@
+@import './source-sync-dialogs.css';
+@import './source-sheet-controls.css';
+@import './source-deleted.css';
+@import './source-sheet-add.css';
+@import './addon-choices.css';
+@import './source-quick-edit.css';
+
 /* 输出源版式沿用工作台全屏网格。色彩、冻结列和抽屉控制在本页面内。 */
 body:has(.source-sheet-active) { --desktop-toolbar-height:52px; }
 body.has-reui-rail:has(.source-sheet-active) { padding-left:57px; }
@@ -235,3 +242,32 @@ html.dark #source-sheet-page :is(.ss-override-card strong,.ss-override-tag) {
  .ss-search > span { display:none; }
 }
 @media (prefers-reduced-motion:reduce) { .ss-drawer { animation:none; } }
+
+/* 固定身份、范围与预览，只有中间的方案清单随滚轮移动。 */
+#source-sheet-page .ss-drawer[data-kind=addons] {
+ width:min(640px,92vw); grid-template-rows:auto auto minmax(0,1fr) auto;
+ color:var(--wb-ink);background:var(--wb-panel);font-variant-numeric:tabular-nums;
+}
+.ss-drawer[data-kind=addons] .ss-addon-header { display:grid; gap:10px; padding:12px 16px; justify-content:stretch; }
+.ss-addon-identity,.ss-addon-title,.ss-scope-line,.ss-store-override,.ss-store-override > div,.ss-store-price { display:flex;align-items:center;gap:8px; }
+.ss-addon-identity { align-items:flex-start; }
+.ss-addon-identity > div:first-child { min-width:0;flex:1; }
+.ss-addon-title h2 { font-size:15px;font-weight:700; }
+.ss-addon-title small,.ss-drawer[data-kind=addons] footer [role=status] { color:var(--wb-muted);font-size:11px; }
+.ss-addon-identity p { overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12px; }
+.ss-original-cost { border:1px solid var(--wb-rule);background:var(--wb-control);padding:4px 8px;border-radius:2px;text-align:right;font-size:11px;line-height:1.25; }
+.ss-original-cost > div:last-child b { color:var(--wb-low-ink); }
+.ss-scope-line { flex-wrap:wrap;justify-content:space-between; }
+.ss-scope-line .ss-drawer-tabs { padding:0;border:0;flex-wrap:wrap;gap:6px; }
+.ss-addon-header [data-drawer-help],.ss-store-override { padding:8px 10px;border:1px solid var(--wb-rule);border-radius:2px;background:var(--wb-control);font-size:11px;color:var(--wb-muted); }
+.ss-addon-header [data-drawer-overrides]:not(:has(.ss-store-override:not([hidden]))) { display:none; }
+.ss-store-override { flex-wrap:wrap;background:var(--wb-selected);border-color:var(--wb-focus);color:var(--wb-selected-ink);font-size:12px; }
+.ss-store-override > div { margin-left:auto;gap:6px; }
+.ss-store-override small:empty { display:none; }
+.ss-drawer[data-kind=addons] .ss-drawer-content { background:var(--wb-canvas);padding:16px; }
+.ss-drawer[data-kind=addons] .ss-drawer-pane { gap:12px; }
+.ss-store-fields { padding:12px;display:grid;grid-template-columns:minmax(0,1fr) 165px;gap:10px;background:var(--wb-panel);border:1px solid var(--wb-line);border-radius:2px; }
+.ss-store-fields label { display:grid;gap:4px;font-size:11px;font-weight:600;color:var(--wb-muted);min-width:0; }
+.ss-store-price { padding:0 10px;height:31px;justify-content:space-between;border:1px solid var(--wb-rule);border-radius:2px;background:var(--wb-control);color:var(--wb-ink);font-size:12px; }
+.ss-drawer[data-kind=addons] > footer { padding:10px 16px;gap:8px; }
+@media(max-width:600px){.ss-store-fields{grid-template-columns:minmax(0,1fr);} .ss-addon-title{gap:4px;flex-wrap:wrap;}}

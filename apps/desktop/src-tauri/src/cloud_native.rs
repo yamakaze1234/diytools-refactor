@@ -266,6 +266,8 @@ fn nas_route(base: &reqwest::Url, method: &str, route: &str) -> Option<(reqwest:
         ("GET", ["operations", "workspace", "receipts" | "quotations", _]) |
         ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "shared-sources"]) |
         ("GET", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "receipts" | "shared-sources", _]) |
+        // 彻底删除仅开放输出源专用接口，仍由服务端验证归档状态、引用及版本。
+        ("POST", ["operations", "catalog", "sources", _, "purge"]) |
         ("POST", ["operations", "catalog", "sources" | "gallery" | "templates" | "shared-sources"]) |
         ("POST", ["operations", "catalog", "sources" | "gallery" | "templates", _, "archive" | "restore" | "copy" | "apply"]) |
         ("PUT", ["operations", "catalog", "sources" | "addons" | "gallery" | "templates" | "shared-sources", _]) |
@@ -297,6 +299,8 @@ fn nas_native_routes_only_allow_configured_https_business_methods() {
     assert!(nas_route(&base, "PUT", "/api/v1/operations/configurations/%2e%2e/me").is_none());
     assert!(nas_route(&base, "POST", "https://outside.example/api/v1/operations/configurations").is_none());
     assert!(nas_route(&base, "GET", "/api/v1//outside.example").is_none());
+    assert!(nas_route(&base, "POST", "/api/v1/operations/catalog/sources/id/purge?shop_id=intel").is_some());
+    assert!(nas_route(&base, "POST", "/api/v1/operations/catalog/gallery/id/purge").is_none());
 }
 
 #[cfg(test)]

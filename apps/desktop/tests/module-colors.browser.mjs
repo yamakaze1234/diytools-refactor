@@ -74,6 +74,7 @@ try{
  assert.equal(await page.locator('[data-row-slot]').count(),36);
 
  await page.getByRole('checkbox',{name:'选择配置1',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="选择配置1"]').checked===true);
+ const stockOnly=process.env.COLOR_SCOPE==='inventory';
  const beforeThemeState=await page.evaluate(()=>window.memoryProbe.snapshot());
  const audits=[];const audit=async(name,root='body')=>{await topPage.mouse.move(0,0);await page.waitForTimeout(80);const result=await page.locator(root).evaluate(root=>{
  const rgb=s=>{const m=s.match(/[\d.]+/g);return m?m.slice(0,3).map(Number):[0,0,0]};const lum=c=>c.map(n=>n/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4).reduce((v,n,i)=>v+n*[.2126,.7152,.0722][i],0);
@@ -83,17 +84,26 @@ try{
  for(const theme of ['dark','light']){
  await setWorkbenchTheme(page,theme);
  assert.deepEqual(await page.evaluate(()=>window.memoryProbe.snapshot()),beforeThemeState);
+ // 库存工作区与回收站共用正式可见入口，可单独复查这两个受影响页面的主题对比度。
+ await clickWorkbenchControl(page,'#inventory-check-open');
+ await page.locator('#stock-scan:enabled').waitFor();
+ await audit(theme+'-inventory','#inventory-check-page');
+ await page.locator('#stock-expand-all').click();await audit(theme+'-inventory-expanded','#inventory-check-page');
+ await page.locator('#stock-back').click();
+ if(stockOnly){
+  await clickWorkbenchControl(page,'#link-recycle-shortcut');await page.locator('#dialog[open]').waitFor();
+  await audit(theme+'-recycle','#dialog');await closeWorkbenchDialog(page);continue;
+ }
  if(await page.locator('#template-section-toggle').getAttribute('aria-expanded')!=='true')await page.locator('#template-section-toggle').click();await audit(theme+'-template-sidebar','.template-library-section');if(theme==='dark')await page.locator('.template-library-section').screenshot({path:new URL('../../../../module-template-dark.png',import.meta.url).pathname.replace(/^\/(\w:)/,'$1')});await page.locator('#template-section-toggle').click();
  for(const tab of ['parts','display','actual','addons','perks','modules','costs']){await openWorkbenchEditor(page,tab);await audit(theme+'-'+tab,tab==='parts'?'#continuous-workbench':'#editor');}
- for(const [name,selector,ready] of [['inventory','#inventory-check-open','#stock-message'],['history','#logs-open','#activity-list .list-card'],['profit','#profit-check-open','.profit-scope'],['erp','#erp-sync','.cloud-shop-card'],['templates','[data-nav="templates"]','#dialog-body'],['source','[data-nav="source"]','#source-list'],['cost-source','[data-nav="cost-source"]','#dialog-body'],['gallery','#case-gallery-open','#dialog-body'],['global','#global-batch-open','#dialog-body'],['link-parts','#link-parts','#link-part-scope'],['upgrade','#link-upgrades','#upgrade-batch-query'],['display-name','#link-display-names','#upgrade-batch-query'],['appearance','#batch-style','#style-scope'],['ids','#ids','#ids-spu'],['sync','#workspace-sync','#dialog-body'],['prices','#price-changes-open','.price-track'],['overview','#overview','.overview-dialog'],['product','#new-product','#wps-import-mount'],['deleted','#deleted-configs','#dialog-body'],['shop','#shop-settings','#dialog-body'],['template-new','[data-template-area-action="new"]','#dialog-body']]){
- try{allowPriceFixtures=name==='prices';if(name==='template-new'&&!await page.locator('[data-template-area-action="new"]').count())await page.locator('#template-section-toggle').click();await clickWorkbenchControl(page,selector);await page.locator('#dialog[open]').waitFor({timeout:8000});await page.locator(ready).first().waitFor({timeout:8000});await audit(theme+'-'+name,'#dialog');
- if(name==='profit'){await page.locator('.profit-link>summary').first().click();await audit(theme+'-profit-expanded','#dialog');await page.locator('#profit-start').click();await page.locator('.profit-result').waitFor();await audit(theme+'-profit-results','#dialog');}
+ for(const [name,selector,ready] of [['history','#logs-open','#activity-list .list-card'],['erp','#erp-sync','.cloud-shop-card'],['templates','[data-nav="templates"]','#dialog-body'],['source','[data-nav="source"]','#source-list'],['cost-source','[data-nav="cost-source"]','#dialog-body'],['gallery','#case-gallery-open','#dialog-body'],['global','#global-batch-open','#dialog-body'],['link-parts','#link-parts','#link-part-scope'],['upgrade','#link-upgrades','#upgrade-batch-query'],['display-name','#link-display-names','#upgrade-batch-query'],['appearance','#batch-style','#style-scope'],['ids','#ids','#ids-spu'],['sync','#workspace-sync','#dialog-body'],['prices','#price-changes-open','.price-track'],['overview','#overview','.overview-dialog'],['product','#new-product','#wps-import-mount'],['deleted','#link-recycle-shortcut','#dialog-body'],['shop','#shop-settings','#dialog-body'],['template-new','[data-template-area-action="new"]','#dialog-body']]){
+ try{allowPriceFixtures=name==='prices';if(name==='template-new'&&!await page.locator('[data-template-area-action="new"]').count())await page.locator('#template-section-toggle').click();await clickWorkbenchControl(page,selector);
+ await page.locator('#dialog[open]').waitFor({timeout:8000});await page.locator(ready).first().waitFor({timeout:8000});await audit(theme+'-'+name,'#dialog');
  if(name==='product'){await page.locator('.wps-import>summary').click();await audit(theme+'-wps-import','#dialog');}
  if(name==='source'){await page.locator('#source-list .source-item').first().click();await audit(theme+'-source-detail','#dialog');}
- if(name==='inventory'){await page.locator('.stock-issue>summary').first().click();await audit(theme+'-inventory-expanded','#dialog');}
- if(['inventory','history'].includes(name)&&theme==='dark')await page.locator('#dialog').screenshot({path:new URL('../../../../module-'+name+'-dark.png',import.meta.url).pathname.replace(/^\/(\w:)/,'$1')});}catch(e){audits.push({name:theme+'-'+name,error:e.message.split('\n')[0],dialog:await page.locator('#dialog-title').textContent(),body:(await page.locator('#dialog-body').textContent()).slice(0,160)});}
+ if(name==='history'&&theme==='dark')await page.locator('#dialog').screenshot({path:new URL('../../../../module-'+name+'-dark.png',import.meta.url).pathname.replace(/^\/(\w:)/,'$1')});}catch(e){audits.push({name:theme+'-'+name,error:e.message.split('\n')[0],dialog:await page.locator('#dialog-title').textContent(),body:(await page.locator('#dialog-body').textContent()).slice(0,160)});}
  if(await page.locator('#dialog[open]').count())await closeWorkbenchDialog(page);
  }
  }
- await fs.writeFile(new URL('../../../../module-color-'+colorStage+'.json',import.meta.url),JSON.stringify({audits,errors},null,2));if(colorStage==='final'){assert.ok(audits.every(a=>!a.error&&!a.bright.length&&!a.low.length),JSON.stringify(audits.filter(a=>a.error||a.bright?.length||a.low?.length)));assert.deepEqual(errors,[]);}console.log(JSON.stringify(audits.map(a=>({name:a.name,bright:a.bright?.length,low:a.low?.length,error:a.error}))));
+ if(!stockOnly)await fs.writeFile(new URL('../../../../module-color-'+colorStage+'.json',import.meta.url),JSON.stringify({audits,errors},null,2));if(colorStage==='final'){assert.ok(audits.every(a=>!a.error&&!a.bright.length&&!a.low.length),JSON.stringify(audits.filter(a=>a.error||a.bright?.length||a.low?.length)));assert.deepEqual(errors,[]);}console.log(JSON.stringify(audits.map(a=>({name:a.name,bright:a.bright?.length,low:a.low?.length,error:a.error}))));
 }finally{await browser.close();host?.kill();}

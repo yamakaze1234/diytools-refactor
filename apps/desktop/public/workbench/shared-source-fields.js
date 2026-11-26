@@ -43,13 +43,15 @@ export function withSourceFields(row, fields) {
 }
 
 /** 只刷新已明确跟随来源的展示资料，配置写入仍使用工作台原有草稿投影。 */
-export function withCurrentSharedSource(config,byId) {
+export function withCurrentSharedSource(config,byId,{deferText=false}={}) {
  config.addons=effectiveNasAddons(config.addons,byId,config.parts).map(row=>row.addon);
  for (const part of [...config.parts,...config.actualParts]) {
   const source = byId.get(part.sourceId);
   if (!source?.sharedSourceId || source.deletedAt || source.goodsId!==part.goodsId) continue;
   copyCapacity(source,part);
   copyHardware(source,part);
+  // 决策模式展示配置保存的名称和说明，使待确认差异与导出图片一致。
+  if(deferText)continue;
   const follow = part.sourceFollow;
   if (follow?.sourceId!==source.sourceId) continue;
   if (follow.name?.mode==='follow' && follow.name.value===(part.displayName||part.name)) {

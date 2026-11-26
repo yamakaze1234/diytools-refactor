@@ -46,6 +46,13 @@ export function addonCheck(a,costs,originals=[]){
  const severity=needsAdjustment?'danger':tax.severity==='danger'?'warning':tax.severity;
  return {goodsId:a.goodsId||'',name:rows.map((r,i)=>(r?.name||items[i].goodsId)+' ×'+items[i].qty).join('；'),originalName:original?.name||'',fields,severity,needsAdjustment,reason:!items.length?'仅展示描述，未设置核算商品':rows.some(r=>!r)?'商品不存在或 ID 不唯一':sourceId&&!original?'待关联原配件或原配件不唯一':!validPrice?'待设置加购价':fields.some(f=>f.originalPriceCents===null)?'待补充原配件价格':fields.some(f=>f.costCents===null)?'待补充新配件成本':''};
 }
+/** 使用按分计算的数量总额，并向上取整到元，保本建议不会因小数舍入造成负差价。 */
+export function addonQuickPrices(field){
+ if(field?.originalPriceCents==null||field.costCents==null)return [];
+ const base=Math.max(0,Math.ceil((field.costCents-field.originalPriceCents)/100));
+ return [base,base+50,base+100,Math.max(99,Math.ceil((base+50)/100)*100-1)];
+}
+
 export function addonSummary(a){if(!a)return '无';if(a.choices!==undefined)return a.choices.map(c=>addonSummary(choiceAddon(c,a.sourceId))+(c.enabled?'':'（不展示）')).join('；');return [a.text,a.note,addonItems(a).length?addonItems(a).map(i=>'商品 ID '+i.goodsId+' ×'+i.qty).join('；'):'未关联商品',a.priceCents==null?'价格待设置':'加购价 ¥'+(a.priceCents/100).toFixed(2),'数量 '+(a.qty??1)].filter(Boolean).join(' · ');}
 export function sourceAddonOptions(row){const {variants=[],...base}=sourceAddon(row);if(base.choices!==undefined)return [{...base,text:choiceDescription(base.choices)}];return [base,...variants.map(v=>({...copy(v),sourceId:row.sourceId}))];}
 /** 根据来源选项和已有选择计算配置应保留的加购项。 */

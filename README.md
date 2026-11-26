@@ -2,7 +2,9 @@
 
 面向 DIY 整机业务的 Windows 工作台。配置、价格、成本和历史由 NAS 服务端集中保存；桌面端负责编辑、图片预览与导出，并保留本机草稿。
 
-**Windows x64 · 0.2.55 · 服务端数据库版本**
+**Windows x64 · 0.2.56 · 服务端数据库版本**
+
+在「价格与利润 → 检查商品库存」可按缺货、低库存和未知库存定位受影响的配置，批量换件后可导出配置图和 SKU 图。输出源加购更新支持立即同步或稍后补导。配置回收站保留 7 天，已删除输出源保留 30 天，仍有引用的来源继续保留。
 
 旧版本停止更新。后续功能与修复统一在服务端数据库版本提供；旧 `refactor-updates` 通道冻结，不会自动将旧本地数据迁到新版。
 
@@ -10,9 +12,9 @@
 
 | 下载入口 | 用途 |
 | --- | --- |
-| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.55/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.55.zip) | 首次使用，完整解压 |
-| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.55/DIY-0.2.55.zip) | 同一程序和使用包 |
-| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.55) | 更新内容与附件 |
+| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.56/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.56.zip) | 首次使用，完整解压 |
+| [备用下载 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.56/DIY-0.2.56.zip) | 同一程序和使用包 |
+| [本次更新说明](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.56) | 更新内容与附件 |
 
 1. 完整解压到独立可写目录，运行 `DIY配置工作台.exe`，无需 CMD。
 2. 首次连接所需的 NAS 服务地址与 CA 由管理员提供。账号由 NAS 认证，员工账号、密码和会话不随包分发。

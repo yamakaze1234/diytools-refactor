@@ -15,7 +15,8 @@ export function normalizeSpecialComponent(row){
 }
 // Defaults are virtual until edited, so an empty new workspace can still receive cloud data.
 /** 为店铺候选列表补入可选择的特殊配件。 */
-export function withSpecialPresets(rows,shopId){
- const ids=new Set(rows.map(r=>r.sourceId));
+export const isSpecialPresetId=(id,shop)=>specialComponentNames.some((_,index)=>id==='special:'+shop+':'+(index+1));
+export function withSpecialPresets(rows,shopId,purged=[]){
+ const ids=new Set([...rows.map(r=>r.sourceId),...purged]);
  return [...rows,...specialComponentNames.map((name,i)=>normalizeSpecialComponent({sourceId:`special:${shopId}:${i+1}`,shopId,specialComponent:true,goodsId:'',name,originalName:name,upgrade:'',addonText:'',addonNote:''})).filter(r=>!ids.has(r.sourceId))];
 }

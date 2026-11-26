@@ -72,6 +72,7 @@ try {
  await page.locator('[data-source-id="fixture-a"]').click();checks.push('legacy-addons-real-edit-guard-repeat-discard-no-write');
  // Keep exact nodes across a shared-dialog replacement, including legacy addon/capacity subforms.
  await page.locator('#source-name').fill('未保存中文名称');await page.locator('#source-tax').fill('123.45');
+ await page.locator('details.ac-note:has([data-common-note]) > summary').click();
  await page.locator('[data-common-note]').fill('未保存加购说明');
  const capacity=page.locator('[data-capacity="memoryGb"]');await capacity.fill('32');
  await page.evaluate(()=>{window.sourceProbe.retainedName=document.querySelector('#source-name');window.sourceProbe.replace();});

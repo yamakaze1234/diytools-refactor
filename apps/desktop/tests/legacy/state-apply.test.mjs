@@ -170,7 +170,13 @@ test('回执最终应用不修改共享不可变基线，未知嵌套数组改�
  const live=structuredClone(sent);live.configs[0].unknown={nested:[{id:'nested',value:3.125}]};
  const typeChanged=editor.mergeEditorState(sent,live,sent);assert.doesNotThrow(()=>editor.applySavedReceiptDraft(live,typeChanged.state,sent));assert.equal(live.configs[0].unknown.nested[0].value,3.125);
 });
-test('历史文案明确未自动清理，删除恢复3天规则仍在',()=>{
- assert.doesNotMatch(app,/所有本地历史备份.*到期自动清除/);assert.match(app,/历史版本（含命名版本）另行保留，当前不会自动清理/);
- assert.match(app,/配置已超过 3 天恢复期限/);
+test('本机回收站只允许在七天内恢复，其他历史不随配置清理',async()=>{
+ const {deletedWithinRetention}=await import('../../public/workbench/pricing.js');
+ const {retentionLabel}=await import('../../public/workbench/recycle-bin-ui.js');
+ const now=Date.now(),day=86400000;
+ const rows=[4,6,7,8].map(days=>({id:days,deletedAt:new Date(now-days*day).toISOString()}));
+ assert.deepEqual(deletedWithinRetention(rows,now).map(c=>c.id),[4,6]);
+ assert.deepEqual(retentionLabel(rows[1].deletedAt,7,now),{text:'剩余 24 小时 · 即将自动清理',urgent:true});
+ assert.equal(retentionLabel(rows[2].deletedAt,7,now).text,'已到清理期限');
+ assert.doesNotMatch(app,/所有本地历史备份.*到期自动清除/);
 });

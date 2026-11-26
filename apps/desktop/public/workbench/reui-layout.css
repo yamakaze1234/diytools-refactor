@@ -80,6 +80,25 @@ body.continuous-mode :is(#continuous-workbench,[data-pp-card]) { flex: 1; min-he
 .reui-rail a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; width: 52px; min-height: 58px; border-radius: 6px; color: #b6c2cf; font-size: 11px; text-decoration: none; cursor: pointer; }
 .reui-rail a:hover, .reui-rail a[aria-current] { background: #39424e; color: #fff; }
 .reui-rail svg { width: 19px; height: 19px; }
+/* 工作表与主导航共享同一条待确认摘要，角标不会撑开窄栏。 */
+.reui-rail .rail-nav-button { position: relative; }
+.rail-alert-pill { position:absolute; top:2px; right:2px; min-width:16px; height:15px; padding:0 3px; border-radius:999px; background:#e12d39; color:white; font:700 9px/15px 'Segoe UI',sans-serif; text-align:center; box-shadow:0 0 0 1.5px #161616; font-variant-numeric:tabular-nums; }
+.rail-nav-button[aria-expanded=true] .rail-alert-pill { box-shadow:0 0 0 1.5px #fffa00; }
+.rail-source-alert { display:flex; align-items:center; justify-content:space-between; gap:8px; font-weight:650; }
+.rail-source-alert small { display:block; font-size:10px; font-weight:400; color:var(--ef-muted,#656561); }
+.rail-source-alert [data-source-menu-badge],.ss-header [data-diff-badge] { font:600 11px/16px 'Segoe UI',sans-serif; border:1px solid #df8e92; border-radius:2px; padding:0 5px; background:#fdf0f0; color:#a92e32; }
+.ss-header [data-diff-badge].badge-unk { border-color:#c9c9c2; background:#f1f1ed; color:#5f5f5a; }
+.ss-header [data-sheet-action=differences] { display:inline-flex; align-items:center; gap:5px; }
+/* 全局主题在具名层内重置按钮，提醒态需与既有交互规则同层。 */
+@layer workbench-interaction {
+ /* 深色角标沿用差异窗口的中性灰与待确认红色，悬停按钮时保留角标前景。 */
+ html.dark .ss-header [data-diff-badge].badge-unk { border-color:#565a63!important; background:#2e3035!important; color:#b6bcc6!important; }
+ html.dark .rail-source-alert [data-source-menu-badge] { border-color:#8c3d42!important; background:#3b2023!important; color:#ff9496!important; }
+ #source-sheet-page .ss-header [data-sheet-action=differences].has-source-diffs { box-shadow:0 0 0 2px #fffa00,0 0 0 3px #161616 !important; clip-path:none !important; }
+ html[data-workbench-design] #rail-tool-panel>button:has(.rail-source-alert) { background:#fff7cf !important; color:#5d4b03 !important; }
+ html.dark[data-workbench-design] #rail-tool-panel>button:has(.rail-source-alert) { background:#34311e !important; color:#fffa00 !important; }
+}
+.ss-header [data-diff-badge].badge-out { color:var(--ss-low-ink); background:var(--ss-low-bg); border-color:var(--ss-low-border); }
 body .sidebar .shop { padding-bottom: 0; margin-bottom: 10px; }
 body .sidebar .shop-brand { display: none; }
 body .sidebar .shop > div { width: 100%; }
@@ -625,7 +644,6 @@ html.ui-font-system :is(#continuous-workbench,[data-pp-card]) :is(.ov-number,.ov
  #dialog.source-quick-dialog .source-save-actions { position:sticky!important; bottom:0!important; z-index:2!important; padding:14px 0 4px!important; background:var(--ef-panel)!important; }
  #dialog.source-quick-dialog #source-message { margin-top:10px!important; color:var(--ef-ink-2)!important; }
  #dialog.source-quick-dialog textarea#source-name { min-height:76px!important; resize:vertical!important; }
- #dialog.source-quick-dialog .addon-choice { padding:14px!important; margin-block:10px!important; border:1px solid var(--ef-rule)!important; }
  #dialog.source-quick-dialog .inline-grid { gap:12px!important; }
  :is(#continuous-workbench,[data-pp-card]) .ov-edit-source { border-color:var(--ov-line)!important; background:var(--ov-sheet)!important; color:var(--ov-ink)!important; }
  :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:focus-visible { outline:2px solid #b89b20!important; outline-offset:2px!important; }
@@ -771,34 +789,6 @@ html.ui-font-system :is(#continuous-workbench,[data-pp-card]) :is(.ov-number,.ov
  #dialog.source-dialog .source-audit-open .source-workspace{display:none!important;}
 
  /* 加购表单也用于配置编辑，选择器仅在 compact 模式收起已选商品的搜索框。 */
- .addon-choices-editor .addon-choice-intro{display:flex!important;align-items:center!important;justify-content:space-between!important;gap:12px!important;font-size:10.5px!important;color:var(--ef-ink-2)!important;margin:0 0 10px!important;}
- .addon-choices-editor .addon-choice-intro details{position:relative!important;}
- .addon-choices-editor .addon-choice-intro summary{padding:2px 6px!important;font-size:10.5px!important;cursor:pointer!important;}
- .addon-choices-editor .addon-choice-intro details p{position:absolute!important;right:0!important;top:24px!important;width:270px!important;z-index:8!important;border:1px solid var(--ef-trace)!important;padding:12px!important;margin:0!important;background:var(--ef-panel)!important;}
- .addon-choices-editor .addon-choice{padding:0!important;margin:10px 0!important;border:1px solid var(--ef-rule)!important;background:var(--ef-chip)!important;overflow:visible!important;}
- .addon-choices-editor .addon-choice-heading{display:flex!important;align-items:center!important;gap:12px!important;flex-wrap:wrap!important;padding:9px 12px!important;border-bottom:1px solid var(--ef-rule)!important;}
- .addon-choices-editor .addon-choice-heading strong{font-size:12px!important;}
- .addon-choices-editor .addon-choice-heading label{display:inline-flex!important;align-items:center!important;gap:5px!important;font-size:10.5px!important;margin:0!important;}
- .addon-choices-editor .addon-choice-heading button{margin-left:auto!important;min-height:23px!important;padding:2px 5px!important;font-size:10.5px!important;color:var(--ef-danger)!important;background:transparent!important;}
- .addon-choices-editor .addon-choice-body{display:grid!important;gap:12px!important;padding:13px!important;}
- .addon-choices-editor .addon-choice-body>.field{margin:0!important;}
- .addon-choices-editor .is-disabled .addon-choice-body{opacity:.65;}
- .addon-choices-editor [data-choice-pricing]{display:grid!important;grid-template-columns:1fr 1fr 1.1fr!important;gap:10px!important;margin:0!important;}
- .addon-choices-editor [data-choice-pricing][hidden],.addon-choices-editor [data-choice-product][hidden]{display:none!important;}
- .addon-choices-editor [data-choice-pricing] .field{font-size:10.5px!important;}
- .addon-choices-editor [data-choice-label-hint]{font-size:10px!important;color:var(--ef-ink-2)!important;}
- .addon-choices-editor [data-choice-add]{width:100%!important;min-height:34px!important;margin:2px 0 0!important;border:1px dashed var(--ef-rule)!important;font-size:11.5px!important;}
- .addon-choices-editor .product-search-selected>.field,.addon-choices-editor .product-search-selected>[data-product-count]{display:none!important;}
- .addon-choices-editor .product-picked{display:flex!important;align-items:center!important;gap:8px!important;flex-wrap:wrap!important;padding:9px 11px!important;background:var(--ef-panel)!important;border:1px solid var(--ef-rule)!important;font-size:11.5px!important;}
- .addon-choices-editor .product-picked>span{flex:1 1 70%!important;min-width:0!important;overflow-wrap:anywhere!important;}
- .addon-choices-editor .product-picked .component-stock{font-size:10px!important;}
- .addon-choices-editor .product-picked button{font-size:10.5px!important;padding:3px 8px!important;min-height:25px!important;margin-left:auto!important;}
- .addon-choices-editor .product-results:not(:empty){max-height:230px!important;overflow:auto!important;}
- .addon-choices-editor .product-search:not(.product-search-selected) .product-picked:has([data-product-reselect]){display:none!important;}
- .addon-choices-editor .product-picked:empty{display:none!important;}
- .addon-merged-preview{display:flex!important;align-items:flex-start!important;gap:12px!important;padding:11px 13px!important;border:1px solid var(--ef-rule)!important;border-left:3px solid var(--ef-trace)!important;background:var(--ef-paper)!important;margin-top:13px!important;}
- .addon-merged-preview>span{font-size:10.5px!important;color:var(--ef-ink-2)!important;white-space:nowrap!important;}
- .addon-merged-preview .addon-choice-preview{padding:0!important;margin:0!important;border:0!important;background:transparent!important;font-size:12px!important;line-height:1.7!important;overflow-wrap:anywhere!important;color:var(--ef-ink)!important;}
  .addon-difference{background:var(--ef-panel)!important;border:1px solid var(--ef-rule)!important;}
  .addon-difference-row{display:grid!important;grid-template-columns:34px minmax(0,1fr) auto!important;gap:8px!important;padding:8px 10px!important;align-items:center!important;font-size:10.5px!important;color:var(--ef-ink-2)!important;}
  .addon-difference-row+.addon-difference-row{border-top:1px solid var(--ef-rule)!important;}
@@ -855,11 +845,6 @@ html.ui-font-system :is(#continuous-workbench,[data-pp-card]) :is(.ov-number,.ov
  #dialog.source-dialog #source-pending{font-size:10px!important;}
  #dialog.source-dialog .source-batch-bar button{font-size:11px!important;padding:6px 9px!important;}
  #dialog.source-dialog .source-erp-reference{gap:8px!important;}
- .addon-choices-editor .addon-choice-heading{gap:9px!important;padding:8px 10px!important;}
- .addon-choices-editor .addon-choice-body{padding:11px!important;}
- .addon-choices-editor [data-choice-pricing]{grid-template-columns:1fr 1fr!important;}
- .addon-choices-editor [data-choice-pricing]>.field:last-child{grid-column:1/-1!important;}
- .addon-merged-preview{flex-direction:column!important;gap:4px!important;}
  #dialog.source-quick-dialog #source-quick-preview{flex-direction:column!important;gap:4px!important;margin:0 12px 10px!important;}
 }}
 

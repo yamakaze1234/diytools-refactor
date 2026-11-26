@@ -91,6 +91,15 @@ fn normalized_rows(rows: Value) -> Result<Value> {
         if let Some(incoming) = row.get("stockIncomingAvailable") {
             item["stockIncomingAvailable"] = incoming.clone();
         }
+        // 旧 worker 缺少类别时保留缺省状态，显式空值可清除旧类别。
+        if let Some(category) = row.get("erpCategory") {
+            if !category.is_null() && !category.as_str().is_some_and(|text|
+                text.chars().count() <= 100 && !text.chars().any(char::is_control))
+            {
+                return Err("数据库商品类别无效，已保留原数据".into());
+            }
+            item["erpCategory"] = category.clone();
+        }
         result.push(item);
     }
     Ok(Value::Array(result))
@@ -209,7 +218,9 @@ fn stock_plan(state: &Value, rows: &Value, at: &str) -> Result<Plan> {
         matched += 1;
         let incoming = row.get("stockIncomingAvailable");
         let incoming_changed = incoming.is_some_and(|v| !same_value(&record["stockIncomingAvailable"], v));
-        if incoming_changed || !same_optional(record.get("stockAvailable"), row.get("stockAvailable"))
+        let category = row.get("erpCategory");
+        let category_changed = category.is_some_and(|value| record["erpCategory"] != *value);
+        if category_changed || incoming_changed || !same_optional(record.get("stockAvailable"), row.get("stockAvailable"))
             || !same_optional(record.get("erp"), row.get("erp"))
         {
             let name = record["name"]
@@ -222,12 +233,17 @@ fn stock_plan(state: &Value, rows: &Value, at: &str) -> Result<Plan> {
                 change["incomingBefore"] = record["stockIncomingAvailable"].clone();
                 change["incomingAfter"] = row["stockIncomingAvailable"].clone();
             }
+            if category_changed {
+                change["categoryBefore"] = record["erpCategory"].clone();
+                change["categoryAfter"] = row["erpCategory"].clone();
+            }
             if let Some(id) = config_id {
                 change["configId"] = id.into();
             }
             changes.push(change);
         }
         if let Some(value) = incoming { record["stockIncomingAvailable"] = value.clone(); }
+        if let Some(value) = category { record["erpCategory"] = value.clone(); }
         record["stockAvailable"] = row["stockAvailable"].clone();
         record["stockUpdatedAt"] = at.into();
         record["stockSource"] = "company-sql".into();

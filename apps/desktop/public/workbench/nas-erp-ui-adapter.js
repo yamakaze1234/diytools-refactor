@@ -36,6 +36,8 @@ export function createNasErpUiAdapter({read,snapshot,readSyncSnapshot,shopId,con
   const table=plan.changes.map(row=>{
    const old=before.get(row.id).document;
    return kind==='erp'?{area:shopName,goodsId:row.id,name:row.fields.name||old.name,before:old.stockAvailable??null,
+    ...(row.fields.erpCategory!==undefined&&row.fields.erpCategory!==old.erpCategory?
+     {categoryBefore:old.erpCategory,categoryAfter:row.fields.erpCategory}:{}),
     after:row.fields.stockAvailable,incomingBefore:old.stockIncomingAvailable??null,incomingAfter:row.fields.stockIncomingAvailable??null,erpBefore:old.erp??null,erpAfter:row.fields.erp}:
     {goodsId:row.id,before:old.tax??null,after:row.fields.tax};
   });

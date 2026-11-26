@@ -1,4 +1,5 @@
 /** 共用来源沿用目录版本、操作编号和回执；真正的跨店写入由数据库事务完成。 */
+import {validErpCategory} from './cost-sync.mjs';
 import {Fault,requireValue} from './config.mjs';
 import {
  sharedSourceKeys, sharedSourceAddonKeys, sourceGoodsId, sharedSpecialKey,
@@ -20,18 +21,28 @@ export function validateErpAdoption(id,document){
  const row=document.erpAdoption;
  const name=text=>typeof text==='string'&&text===text.trim()&&text.length>0&&text.length<=512&&!excludedComponent({name:text});
  valid(sourceGoodsId(id)&&document.id===id&&Object.keys(document).every(k=>['id','name','erpAdoption'].includes(k))&&name(document.name),'document');
- valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','stockIncomingAvailable','sku','tableTax'].includes(k))&&name(row.name)&&
+ valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','stockIncomingAvailable','erpCategory','sku','tableTax'].includes(k))&&name(row.name)&&
   (row.erp===null||Number.isFinite(row.erp)&&row.erp>=0&&row.erp<=100000000)&&
   (!Object.hasOwn(row,'tableTax')||Number.isFinite(row.tableTax)&&row.tableTax>=0&&row.tableTax<=100000000)&&
   (row.stockAvailable===null||Number.isFinite(row.stockAvailable)&&Math.abs(row.stockAvailable)<=Number.MAX_SAFE_INTEGER)&&
   (!Object.hasOwn(row,'stockIncomingAvailable')||row.stockIncomingAvailable===null||Number.isFinite(row.stockIncomingAvailable)&&Math.abs(row.stockIncomingAvailable)<=Number.MAX_SAFE_INTEGER)&&
+  (!Object.hasOwn(row,'erpCategory')||validErpCategory(row.erpCategory))&&
   typeof row.sku==='string'&&row.sku.length<=512,'document.erpAdoption');
+}
+
+// 两条建源路径都在回执前回读分类，旧库忽略观察字段时由外层事务撤销本次创建。
+async function checkCreatedCategory(db,sourceId,category){
+ const {rows:[source]}=await db.query('SELECT attrs FROM intel_live.sources WHERE source_id=$1',[sourceId]);
+ if(source?.attrs?.erpCategory!==category)throw new Fault('NAS_COST_SYNC_NOT_INSTALLED',503);
 }
 
 export async function adoptErpSource(db,member,shop,id,document){
  try{
   const {rows:[row]}=await db.query('SELECT workbench_sources.adopt_erp($1,$2,$3,$4,$5,$6::jsonb) AS result',
    [shop,member.workspaceId,member.uid,id,document.name,JSON.stringify(document.erpAdoption)]);
+  if(!row.result.reused&&Object.hasOwn(document.erpAdoption,'erpCategory')){
+   await checkCreatedCategory(db,row.result.sourceId,document.erpAdoption.erpCategory);
+  }
   return row.result;
  }catch(error){
   if(error.code==='42883')throw new Fault('NAS_ERP_ADOPTION_NOT_INSTALLED',503);
@@ -69,9 +80,10 @@ function validateFields(fields, special, scope) {
 export function validateSharedSourceEdit(id,document,create) {
  const special=sharedSpecialKey(id);
  valid(sourceGoodsId(id) || special,'document.id');
- valid(document.id===id && Object.keys(document).every(key=>['id','edits','erpName','alias_edits','addon_sync'].includes(key)),'document');
+ valid(document.id===id && Object.keys(document).every(key=>['id','edits','erpName','erpCategory','alias_edits','addon_sync'].includes(key)),'document');
  valid(!Object.hasOwn(document,'erpName') || create && !special && typeof document.erpName==='string' &&
   document.erpName.length<=512 && !excludedComponent({erpName:document.erpName}),'document.erpName');
+ valid(!Object.hasOwn(document,'erpCategory')||create&&!special&&validErpCategory(document.erpCategory),'document.erpCategory');
  const {edits} = document;
  valid(plain(edits) && Object.keys(edits).length>0,'document.edits');
  for (const [scope,change] of Object.entries(edits)) {
@@ -119,10 +131,15 @@ export async function writeSharedSource(db,member,shop,id,expected,document) {
    const {rows:[installed]}=await db.query("SELECT to_regprocedure('workbench_sources.source_versions(text,text,text,text)') IS NOT NULL AS versions, to_regprocedure('workbench_sources.save_aliases(text,text,text,text,bigint,jsonb,jsonb)') IS NOT NULL AS aliases");
    if(!installed?.versions||aliasEdit&&!installed.aliases)throw new Fault('NAS_GLOBAL_UPGRADE_NOT_INSTALLED',503);
   }
+  // 三店建源保留原来的店铺草稿。分类是首次建源的 ERP 观察值，只能从专用字段传入。
+  const hasCategory=Object.hasOwn(document,'erpCategory');
+  const edits=hasCategory?{...document.edits,shared:{...document.edits.shared,
+   values:{...document.edits.shared.values,erpCategory:document.erpCategory}}}:document.edits;
   const {rows:[row]} = await db.query(aliasEdit?
    'SELECT workbench_sources.save_aliases($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) AS version':
    'SELECT workbench_sources.save($1,$2,$3,$4,$5,$6,$7) AS version',
-   [shop,member.workspaceId,member.uid,id,expected,JSON.stringify(document.edits),aliasEdit?JSON.stringify(document.alias_edits):document.erpName??null]);
+   [shop,member.workspaceId,member.uid,id,expected,JSON.stringify(edits),aliasEdit?JSON.stringify(document.alias_edits):document.erpName??null]);
+  if(hasCategory)await checkCreatedCategory(db,'shared-src:'+id,document.erpCategory);
   return row.version;
  } catch (err) {
   if (err.code==='42883'&&Object.hasOwn(document,'alias_edits')) throw new Fault('NAS_GLOBAL_UPGRADE_NOT_INSTALLED',503);

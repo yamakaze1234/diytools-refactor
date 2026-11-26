@@ -1,6 +1,8 @@
 /** 正式页面与 CSP 下的工作表操作。只连接隔离 PGlite，并用合成 ERP 商品。 */
+import {verifyAddonChoices} from './source-addon-redesign-check.mjs';
+import {verifyQuickSource} from './source-quick-edit-check.mjs';
 import assert from 'node:assert/strict';
-import {mkdtemp} from 'node:fs/promises';
+import {mkdtemp,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {chromium} from 'playwright';
@@ -12,8 +14,16 @@ const origin=process.env.REACT_TEST_URL||'http://127.0.0.1:5199';
 const root=await mkdtemp(join(tmpdir(),'diy-source-sheet-'));
 const api=await startSourceAcceptance({fixture:resolve(fixture),root,
  authenticate:async()=>({uid:fixtureActor,workspaceId:fixtureWorkspace})});
+// 用已安装 ERP 分类迁移的隔离库，验证两种权限的建源都能读回原始类别。
+for(const file of ['020-workbench-global-tax.sql','021-workbench-alias-addons.sql','027-quotation-identity-invalidation.sql',
+ '028-cross-shop-cost-sync.sql','029-manual-tax-protection.sql','030-incoming-stock.sql','031-erp-category.sql'])
+ await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+file,import.meta.url),'utf8'));
 // 三组隔离样例分别覆盖缺共用价、缺共用名称和只有基础信息独享。
 await api.db.exec(`
+ -- 八天前的来源仍有一条手工名称待确认，进店角标应与首次打开弹窗一致。
+ UPDATE intel_live.sources SET attrs=attrs||jsonb_build_object('updatedAt',now()-interval '8 days');
+ UPDATE intel_live.parts SET attrs=attrs||'{"displayName":"待确认的旧 CPU 名称"}'
+ WHERE configuration_id='fixture-overlap' AND part_kind='display' AND goodsid='100001';
  UPDATE workbench_sources.entries SET fields=(fields-'tax')||'{"hardwareOverrides.gpuName":"LongGPUModelName1234567890LongGPUModelName1234567890LongGPUModelName1234567890"}'::jsonb WHERE id='9900011';
  UPDATE workbench_sources.aliases SET fields=CASE shop_id
   WHEN 'intel' THEN '{"tax":1400}'::jsonb WHEN 'jonsbo' THEN '{"tax":1398}'::jsonb ELSE '{}'::jsonb END
@@ -33,9 +43,11 @@ for(const shop of ['intel','gigabyte','jonsbo'])await api.db.exec(
  `UPDATE ${shop}_live.costs SET attrs=attrs||'{"erpName":"停产 验收内存（长规格）","stockAvailable":0,"stockIncomingAvailable":8}' WHERE goodsid='9900013'`);
 const browser=await chromium.launch({channel:'msedge',headless:true});
 const errors=[],verified=[];
-const product={goodsId:'9900931',name:'缺货 WD 合成 NVMe SSD (2TB)',erp:458,stockAvailable:0,stockIncomingAvailable:4,sku:'SYNTHETIC-SSD'};
+const product={goodsId:'9900931',name:'缺货 WD 合成 NVMe SSD (2TB)',erp:458,stockAvailable:0,stockIncomingAvailable:4,sku:'SYNTHETIC-SSD',erpCategory:'固态硬盘'};
+const formPart={...product,goodsId:'9900934',name:'缺货 表单测试 SSD（1TB）'};
 const excluded={goodsId:'9900932',name:'排除商品 NVMe *!',erp:414,stockAvailable:9};
-const single={goodsId:'9900933',name:'仅本店合成 SSD',erp:153,stockAvailable:6};
+const cpuPart={goodsId:'9900937',name:'Intel 酷睿 i5-14600KF 散片（14核20线程）',erpCategory:'处理器',erp:1401.41,sku:'TEST-CPU',stockAvailable:42,stockIncomingAvailable:60};
+const single={goodsId:'9900933',name:'仅本店合成 SSD',erp:153,stockAvailable:6,erpCategory:'固态硬盘'};
 const headers={'x-workbench-deployment':fixtureDeployment,'content-type':'application/json'};
 async function settings(page,{singleShop=false}={}){
  page.on('pageerror',error=>{errors.push(error.message);console.error(error.stack);});
@@ -52,9 +64,11 @@ async function settings(page,{singleShop=false}={}){
    return {status:res.status,body:await res.text()};
   }
   if(command==='nas_erp_read'){
-   const rows=singleShop?[single]:[product,excluded];
+   const rows=singleShop?[single]:[product,excluded,cpuPart];
+   if(args.kind==='erp-status')return result({ok:true,saved:true});
+   if(args.kind==='erp')return result({ok:true,rows:[...rows,formPart].filter(row=>args.goodsIds.includes(row.goodsId))});
    if(args.kind==='erp-catalog')return result({ok:true,total:rows.length,complete:true,rows});
-   if(args.kind==='tax-current')return result({ok:true,rows:[{goods_id:product.goodsId,tax:488.13},{goods_id:single.goodsId,tax:183.24}]});
+   if(args.kind==='tax-current')return result({ok:true,rows:[{goods_id:product.goodsId,tax:488.13},{goods_id:single.goodsId,tax:183.24},{goods_id:formPart.goodsId,tax:289.5},{goods_id:cpuPart.goodsId,tax:1290}]});
    return result({ok:true,rows:[]});
   }
   return 1;
@@ -125,8 +139,17 @@ try{
  const page=await browser.newPage({viewport:{width:1540,height:940}});
  const frame=await settings(page);
  const sheet=await openSheet(frame),filter=sheet.getByRole('searchbox',{name:'筛选已有输出源'});
- assert.equal(await sheet.locator('table').getAttribute('data-view'),'common');
- assert.equal(await sheet.locator('thead th').count(),6);
+ const badge=sheet.locator('[data-diff-badge]');
+ await badge.filter({hasText:/^[1-9]\d*$/}).waitFor();
+ const beforeReview=await badge.innerText();
+ await button(sheet,'differences').click();
+ const review=frame.locator('#dialog');
+ await review.locator('[data-source-description-group]').first().waitFor();
+ assert.equal(await review.locator('[data-count=all]').innerText(),beforeReview,'八天前未处理的差异在进店时即计入提醒');
+ await review.locator('[data-close]').click();
+ // 已删除区拥有自己的表头，这里核对当前显示的维护表。
+ assert.equal(await sheet.locator('table:visible').getAttribute('data-view'),'common');
+ assert.equal(await sheet.locator('table:visible thead th').count(),6);
  assert.equal(await sheet.locator('[data-category]').count()>13,true);
  assert.equal(await frame.locator('.workspace > .sidebar').isVisible(),false);
  assert.equal(await frame.locator('.reui-rail').isVisible(),true);
@@ -149,8 +172,8 @@ try{
  assert.match(await target.locator('.ss-override-card[data-scope="jonsbo"]').innerText(),/¥1398/);
  await card(target,'intel').click();
  assert.equal(await pane.locator('[data-sheet-drawer-tax]').innerText(),'¥1400');
- assert.equal(await button(pane,'drawer-restore-tax').isDisabled(),true);
- await button(pane,'drawer-promote-tax').click();
+ assert.equal(await button(drawer,'drawer-restore-store').isDisabled(),true);
+ await button(drawer,'drawer-promote-store').click();
  await button(drawer,'apply-drawer').click();
  assert.equal(await target.getByRole('textbox',{name:'核算价'}).inputValue(),'1400');
  await target.getByText('三店一致',{exact:true}).waitFor();
@@ -246,10 +269,10 @@ try{
  await filter.fill('');
  const cpu=row(sheet,'100001'),cpuName=cpu.getByRole('textbox',{name:'三店共用展示名称'});
  await card(cpu,'intel').click();
- assert.equal(await button(pane,'drawer-restore-name').isDisabled(),true);
- assert.match(await pane.locator('[data-restore-hint]').innerText(),/先填写共用显示名称/);
+ assert.equal(await drawer.locator('.ss-store-override:visible [data-sheet-action=drawer-restore-store]').isDisabled(),true);
+ assert.match(await drawer.locator('.ss-store-override:visible [data-restore-hint]').innerText(),/先填写共用显示名称/);
  assert.equal(await pane.locator('[data-sheet-drawer-name]').inputValue(),'英特尔独享 CPU');
- await button(pane,'drawer-promote-name').click();
+ await drawer.locator('.ss-store-override:visible [data-sheet-action=drawer-promote-store]').click();
  await drawer.locator('[data-sheet-action="close-drawer"]').click();
  const resume=button(sheet,'resume-drawer');
  await resume.waitFor();
@@ -265,10 +288,10 @@ try{
  assert.equal(await otherBeforeReset.evaluate(element=>element.isConnected),true);
  await cpuName.fill('三店 CPU 共用名称');await cpuName.press('Enter');
  await card(cpu,'intel').click();
- assert.equal(await button(pane,'drawer-restore-name').isEnabled(),true);
- await button(pane,'drawer-restore-name').click();
+ assert.equal(await drawer.locator('.ss-store-override:visible [data-sheet-action=drawer-restore-store]').isEnabled(),true);
+ await drawer.locator('.ss-store-override:visible [data-sheet-action=drawer-restore-store]').click();
  assert.equal(await pane.locator('[data-sheet-drawer-name]').inputValue(),'三店 CPU 共用名称');
- assert.match(await pane.locator('[data-restore-hint]').innerText(),/待恢复共用/);
+ assert.match(await drawer.locator('.ss-store-override:visible [data-restore-hint]').innerText(),/待恢复共用/);
  await button(drawer,'apply-drawer').click();
  await cpu.getByText('三店一致',{exact:true}).waitFor();
  await button(cpu,'reset-row').click();
@@ -291,7 +314,19 @@ try{
  verified.push('只有基础信息独享时打开该店的基础信息，恢复并回读');
 
  // 新增草稿行还原时只移除自己和空分类标题。
- await button(sheet,'special').click();
+ assert.equal(await button(sheet,'special').count(),0);
+ await button(sheet,'add-part').click();
+ const specialForm=frame.locator('#dialog .ss-add-part');
+ await specialForm.locator('[data-mode=special]').click();
+ assert.equal(await specialForm.locator('#ss-part-id').isVisible(),false);
+ assert.equal(await specialForm.locator('#ss-part-tax').isVisible(),false);
+ assert.equal(await specialForm.locator('.ss-add-specs').isVisible(),false);
+ await specialForm.locator('#ss-part-name').fill('无货号测试配件');
+ await specialForm.locator('[data-mode=normal]').click();
+ assert.equal(await specialForm.locator('#ss-part-name').inputValue(),'');
+ await specialForm.locator('[data-mode=special]').click();
+ assert.equal(await specialForm.locator('#ss-part-name').inputValue(),'无货号测试配件');
+ await specialForm.locator('[data-add]').click();
  await sheet.locator('button[data-sheet-action="category"][data-category="全部配件"]').click();
  const newSpecial=sheet.locator('tr[data-sheet-row].is-marked.is-pending');
  const remaining=await target.elementHandle();
@@ -319,8 +354,8 @@ try{
  await frame.getByRole('button',{name:'返回输出源维护'}).click();
  assert.match(await sheet.locator('[data-sheet-pending]').innerText(),/1 条待保存/);
  await button(sheet,'differences').click();
- await frame.locator('#dialog [data-review-pane="pending"]').waitFor();
- await frame.locator('#dialog .dialog-title button').click();
+ await frame.locator('#dialog [data-diff-tab="all"]').waitFor();
+ await frame.locator('#dialog [data-close]').click();
  assert.equal(await title.inputValue(),'合成工作表共用显卡');
  verified.push('全屏、分类、行内编辑、未保存拦截、子弹窗保留草稿');
 
@@ -339,11 +374,12 @@ try{
  await choice.locator('[data-product-picked]').getByText(/100001/).waitFor();
  await choice.locator('[data-choice-price]').fill('88');
  await choice.locator('[data-choice-label]').fill('合成升级文案 VeryLongUpgradeModelNumber1234567890VeryLongUpgradeModelNumber1234567890');
+ await verifyAddonChoices({page,drawer,pane});
  await drawer.getByRole('tab',{name:/技嘉/}).click();
  assert.equal(await pane.locator('[data-sheet-drawer-name]').inputValue(),'技嘉合成独享展示');
  await button(drawer,'apply-drawer').click();await drawer.waitFor({state:'hidden'});
  await button(sheet,'stores').click();
- assert.equal(await sheet.locator('thead th').count(),6);
+ assert.equal(await sheet.locator('table:visible thead th').count(),6);
  assert.equal(await target.getByRole('textbox',{name:'技嘉展示名称'}).inputValue(),'技嘉合成独享展示');
  await button(sheet,'common').click();
  await button(sheet,'save').click();
@@ -388,6 +424,80 @@ try{
  verified.push('缺失共用价明确提示，有效恢复仅更新本行并在保存后生效');
  verified.push('抽屉各范围草稿、目标搜索、三店并排、实际共用保存');
 
+// 新增普通配件在草稿中即可查重；只有明确保存才出现在隔离库。
+ const form=frame.locator('#dialog .ss-add-part');
+ const begin=async goodsId=>{await button(sheet,'add-part').click();await form.locator('#ss-part-id').fill(goodsId);};
+ await begin('9900011');
+ await form.getByText('该货号已存在输出源').waitFor();
+ assert.equal(await form.locator('[data-add]').isDisabled(),true);
+ await form.locator('[data-locate]').click();
+ assert.equal(await target.evaluate(el=>el.classList.contains('is-marked')),true);
+ // 同货号重查保留人工名称与核算价；换了货号必须使用新商品的资料。
+ await begin(cpuPart.goodsId);
+ await form.locator('[data-lookup]').click();await form.getByText('已查到 ERP 商品。').waitFor();
+ await form.locator('#ss-part-name').fill('旧 CPU 专属名称');await form.locator('#ss-part-tax').fill('540');
+ await form.locator('[data-lookup]').click();await form.getByText('已查到 ERP 商品。').waitFor();
+ assert.equal(await form.locator('#ss-part-name').inputValue(),'旧 CPU 专属名称');
+ assert.equal(await form.locator('#ss-part-tax').inputValue(),'540');
+ await form.locator('#ss-part-id').fill(formPart.goodsId);
+ assert.equal(await form.locator('[data-add]').isDisabled(),true);
+ await form.locator('[data-lookup]').click();await form.getByText('固态硬盘 → 归类：硬盘').waitFor();
+ assert.equal(await form.locator('#ss-part-name').inputValue(),'表单测试 SSD');
+ await form.getByText('已查到 ERP 商品。').waitFor();
+ assert.equal(await form.locator('#ss-part-tax').inputValue(),'289.5');
+ assert.match(await form.locator('.ss-part-preview').innerText(),/现货 0\s*待入 4/);
+ await form.locator('#ss-part-name').fill('定制展示 SSD');
+ await form.locator('[data-lookup]').click();await form.getByText('已查到 ERP 商品。').waitFor();
+ assert.equal(await form.locator('#ss-part-name').inputValue(),'定制展示 SSD');
+ await form.locator('[data-add]').click();
+ await row(sheet,formPart.goodsId).getByText('新增 · 待保存').waitFor();
+ await begin(formPart.goodsId);
+ await form.getByText('该货号已存在输出源').waitFor();await form.locator('[data-locate]').click();
+ // 真实联想入口带回货号、SKU 与行情；检查两栏对齐及建源后转到正确配件的抽屉。
+ await begin('酷睿 i5');
+ assert.equal(await form.getByText('快捷示例：').count(),0,'正式建源入口只接受实际查询或手填');
+ await form.locator('#ss-add-results [role=option]').filter({hasText:cpuPart.goodsId}).click();
+ await form.getByText('已查到 ERP 商品。').waitFor();
+ assert.equal(await form.locator('#ss-part-id').inputValue(),cpuPart.goodsId);
+ await form.locator('#source-hardware-cpu').fill('14600KF 自定');
+ await form.locator('[data-open-addons]').check();
+ await page.setViewportSize({width:1360,height:900});
+ const [nameBox,taxBox]=await Promise.all(['#ss-part-name','#ss-part-tax'].map(sel=>form.locator(sel).boundingBox()));
+ assert.equal(nameBox.y,taxBox.y);assert.equal(nameBox.height,taxBox.height);
+ assert.ok(Math.abs(taxBox.width-220)<1);
+ assert.equal(await form.locator('button[data-mode=normal]').evaluate(b=>getComputedStyle(b).backgroundColor),'rgb(255, 250, 0)');
+ assert.ok(await form.evaluate(el=>Math.abs(el.closest('dialog').getBoundingClientRect().bottom-el.querySelector('footer').getBoundingClientRect().bottom)<3));
+ if(process.env.SOURCE_SHEET_REDESIGN_CAPTURE)await page.screenshot({path:join(process.env.SOURCE_SHEET_REDESIGN_CAPTURE,'add.png')});
+ await form.locator('[data-add]').click();
+ await sheet.locator('.ss-drawer').getByText('#'+cpuPart.goodsId,{exact:true}).waitFor();
+ await button(sheet.locator('.ss-drawer'),'discard-drawer').click();
+ const gpuId='9900938',memoryId='9900939';
+ for(const [goodsId,kind,display] of [[gpuId,'显卡','定制 RTX 5070 显卡'],[memoryId,'内存','定制 DDR5 内存']]){
+  await begin(goodsId);await form.locator('[data-category]').selectOption(kind);
+  await form.locator('#ss-part-name').fill(display);
+  if(kind==='显卡'){await form.locator('#source-hardware-gpu').fill('5070 OC');await form.locator('[data-capacity=vramGb]').fill('12');}
+  else await form.locator('[data-capacity=memoryGb]').fill('32');
+  await form.locator('#source-hardware-color').selectOption('白');
+  await form.locator('[data-add]').click();await row(sheet,goodsId).getByText('新增 · 待保存').waitFor();
+ }
+ const manualId='9900935';
+ await begin(manualId);
+ await form.locator('[data-lookup]').click();await form.getByText(/未查到 ERP 商品/).waitFor();
+ await form.locator('#ss-part-name').fill('手填风扇（白色）');await form.locator('#ss-part-tax').fill('-1');
+ assert.equal(await form.locator('[data-add]').isDisabled(),true);
+ await form.locator('#ss-part-tax').fill('18.15');await form.locator('[data-add]').click();
+ await row(sheet,manualId).getByText('新增 · 待保存').waitFor();
+ assert.equal((await api.db.query("SELECT count(*)::int n FROM workbench_sources.entries WHERE id=ANY($1)",[[manualId,formPart.goodsId]])).rows[0].n,0);
+ await button(sheet,'save').click();await sheet.locator('[data-sheet-message]').getByText(/已保存 5 条/).waitFor();
+ assert.equal((await readSource(cpuPart.goodsId)).common['hardwareOverrides.cpuName'],'14600KF 自定');
+ const savedGpu=(await readSource(gpuId)).common;
+ assert.equal(savedGpu['capacityOverrides.vramGb'],12);assert.equal(savedGpu['hardwareOverrides.gpuName'],'5070 OC');
+ assert.equal((await readSource(memoryId)).common['capacityOverrides.memoryGb'],32);
+ const savedSsd=(await readSource(formPart.goodsId)).common;
+ assert.equal(savedSsd.name,'定制展示 SSD');assert.equal(savedSsd.tax,289.5);
+ const manual=await readSource(manualId);assert.equal(manual.common.name,'手填风扇（白色）');assert.equal(manual.common.tax,18.15);
+ verified.push('普通配件表单查重定位、ERP 回填并保留人工名称、未命中手填和三店草稿保存');
+
  const erp=sheet.getByRole('combobox',{name:'ERP 搜索配件'});
  await erp.fill('9900011');await erp.press('Enter');
  assert.equal(await target.evaluate(el=>el.classList.contains('is-marked')),true);
@@ -406,6 +516,10 @@ try{
  const created=await readSource(product.goodsId);
  assert.deepEqual(Object.keys(created.stores).sort(),['gigabyte','intel','jonsbo']);
  assert.equal(created.common.tax,488.13);
+ for(const shop of ['intel','gigabyte','jonsbo']){
+  const source=await api.db.query(`SELECT attrs->>'erpCategory' AS category FROM ${shop}_live.sources WHERE goodsid=$1`,[product.goodsId]);
+  assert.equal(source.rows[0].category,product.erpCategory);
+ }
  await button(sheet,'details').first().click();
  await drawer.getByRole('heading',{name:'基础信息'}).waitFor();
  assert.equal(await drawer.evaluate(el=>el.scrollWidth<=el.clientWidth+2),true);
@@ -460,7 +574,8 @@ try{
  await frame.locator('#dialog.source-quick-dialog').waitFor();
  assert.equal(await frame.locator('#dialog-title').innerText(),'修改输出源');
  assert.equal(await sheet.isVisible(),false);
- verified.push('冲突保留草稿，配置总表入口保持快捷弹窗');
+ await verifyQuickSource({page,frame,readSource});
+ verified.push('冲突保留草稿，配置总表快捷修改、放弃与保存');
  await page.close();
 
  // 删除的只是合成库中另两店的测试授权。以 HTTP 与实际库回读核对单店建源。
@@ -471,15 +586,68 @@ try{
  const oneFrame=await settings(onePage,{singleShop:true}),oneSheet=await openSheet(oneFrame);
  assert.equal(await oneSheet.locator('#source-sheet-shop option').count(),1);
  await button(oneSheet,'stores').click();
- assert.equal(await oneSheet.locator('thead th').count(),4);
- const oneSearch=oneSheet.getByRole('combobox',{name:'ERP 搜索配件'});
- await oneSearch.fill(single.goodsId);
- await oneSheet.getByRole('option').filter({hasText:single.goodsId}).click();
+ assert.equal(await oneSheet.locator('table:visible thead th').count(),4);
+ await button(oneSheet,'add-part').click();
+ const oneForm=oneFrame.locator('#dialog .ss-add-part');
+ assert.equal(await oneForm.locator('[data-mode=special]').isDisabled(),true);
+ await oneForm.locator('#ss-part-id').fill('9900936');await oneForm.locator('#ss-part-name').fill('上一货号的名称');
+ await oneForm.locator('[data-lookup]').click();await oneForm.getByText(/单店建源需要有效候选/).waitFor();
+ assert.equal(await oneForm.locator('[data-add]').isDisabled(),true);
+ await oneForm.locator('#ss-part-id').fill(single.goodsId);await oneForm.locator('[data-lookup]').click();
+ await oneForm.getByText('已查到 ERP 商品。').waitFor();
+ assert.equal(await oneForm.locator('#ss-part-name').inputValue(),single.name);
+ await oneForm.locator('#ss-part-name').fill('仅此店展示');
+ const stockPreview=oneForm.locator('.ss-part-preview .ss-add-market');
+ assert.deepEqual(await stockPreview.locator('.badge').allTextContents(),['现货 6']);
+ assert.doesNotMatch(await stockPreview.innerText(),/待入 未知/);
+ await oneForm.locator('[data-capacity=storageGb]').fill('2048');
+ await oneForm.locator('[data-add]').click();
  await row(oneSheet,single.goodsId).waitFor();
- assert.equal(await button(oneSheet,'save').isDisabled(),true);
+ await button(oneSheet,'save').click();
+ await oneSheet.locator('[data-sheet-message]').getByText(/已保存 1 条/).waitFor();
+ assert.equal((await readSource(single.goodsId)).stores.intel[0].fields['capacityOverrides.storageGb'],2048);
  const counts=await api.db.query("SELECT (SELECT count(*)::int FROM intel_live.sources WHERE goodsid='9900933') AS intel,(SELECT count(*)::int FROM gigabyte_live.sources WHERE goodsid='9900933') AS gigabyte,(SELECT count(*)::int FROM jonsbo_live.sources WHERE goodsid='9900933') AS jonsbo");
  assert.deepEqual(counts.rows[0],{intel:1,gigabyte:0,jonsbo:0});
+ const adopted=await api.db.query("SELECT attrs->>'erpCategory' AS category FROM intel_live.sources WHERE goodsid=$1",[single.goodsId]);
+ assert.equal(adopted.rows[0].category,single.erpCategory);
+ const singleName=row(oneSheet,single.goodsId).locator('[data-sheet-field=name]').first();
+ assert.equal(await singleName.inputValue(),'仅此店展示');
+ const stored=await api.db.query("SELECT attrs->>'erpName' AS erp_name FROM intel_live.sources WHERE goodsid=$1",[single.goodsId]);
+ assert.equal(stored.rows[0].erp_name,single.name);
  verified.push('单店权限只展本店，adopt_erp 仅建到当前店');
+// 不挂 NAS 或 ERP，在同一个工作表入口验证只读、已删除和离线批量保存。
+ const local=await browser.newPage();
+ local.on('pageerror',error=>errors.push(error.message));
+ await local.route(origin+'/offline-sheet-fixture',route=>route.fulfill({contentType:'text/html',body:'<main class="workspace"><section id="source-sheet-page"></section></main><dialog id="dialog"></dialog>'}));
+ await local.goto(origin+'/offline-sheet-fixture');
+ await local.evaluate(async()=>{
+  const {openSourceSheet}=await import('/workbench/source-sheet-ui.js');
+  const {sourceBatch}=await import('/workbench/source-batch.js');
+  let state={sourceCatalog:[{sourceId:'archived',goodsId:'99901',shopId:'intel',name:'已停用测试配件',deletedAt:'2026-01-01'}],costSource:[],configs:[]};
+  const dialog=document.querySelector('#dialog');
+  window.openOfflineSheet=canManage=>openSourceSheet(document.querySelector('#source-sheet-page'),{
+   shopId:()=>'intel',shopIds:['intel'],canManage,getAllRows:()=>state.sourceCatalog,getConfigs:()=>[],getCosts:()=>state.costSource,
+   openDialog:(title,html)=>{dialog.innerHTML=html;dialog.showModal();},closeDialog:()=>dialog.close(),
+   applyBatch:async changes=>{const result=sourceBatch(state,changes);state=result.next;return result;},
+  });
+  window.openOfflineSheet(false);
+ });
+ assert.equal(await button(local,'add-part').isDisabled(),true);
+ await local.evaluate(()=>{window.openOfflineSheet(true);});
+ await button(local,'add-part').click();
+ const localForm=local.locator('.ss-add-part');
+ assert.equal(await localForm.locator('[data-lookup]').isVisible(),false);
+ await localForm.locator('#ss-part-id').fill('99901');
+ await localForm.getByText(/该货号在已删除列表中/).waitFor();
+ assert.equal(await localForm.locator('[data-locate]').isVisible(),false);
+ assert.equal(await localForm.locator('[data-add]').isDisabled(),true);
+ await localForm.locator('#ss-part-id').fill('99902');
+ await localForm.locator('#ss-part-name').fill('离线新增电源');
+ await localForm.locator('[data-add]').click();await button(local,'save').click();
+ await local.locator('[data-sheet-message]').getByText(/已保存 1 条/).waitFor();
+ assert.equal(await row(local,'99902').locator('[data-sheet-field=name]').first().inputValue(),'离线新增电源');
+ await local.close();verified.push('只读禁用、已删除提示、无 ERP 接口离线空核算价保存');
+
  assert.deepEqual(errors,[]);
  console.log(JSON.stringify({status:'passed',verified,root}));
 }finally{await browser.close();await api.close();}

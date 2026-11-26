@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {blankConfig,importTemplateConfigs,totals} from '../../public/workbench/core.js';
 import {pricing,DEFAULT_PRICING_RULE} from '../../public/workbench/pricing.js';
+import {priceInventoryBadge} from '../../public/workbench/price-profit-ui.js';
 import {parseIdPaste,planIdEdit,planPriceBatch,priceProfitRow,flagsFor,priceTail99} from '../../public/workbench/price-profit-model.js';
 import {priceReportSheets} from '../../public/workbench/price-changes-export.js';
 import {applyWorkspace,projectWorkspace} from '../../public/workbench/cloud-projection.js';
@@ -107,4 +108,13 @@ test('云协议维持整数分，往返保留未定价、显式零、链接规�
  const both=priceProfitRow(fixture(),{...shop,profitAlert:{...shop.profitAlert,erpProfit:{mode:'amount',loss:0,target:500}}});
  assert.deepEqual(flagsFor(both).hits.target,['erp','tax']);
  assert.deepEqual(recovered.shopSettings.intel.pricingRule,shopRule);
+});
+
+test('价格页角标按店铺和实际 BOM 去重，区分缺货、低库存与正常',()=>{
+ const c={id:'a',shopId:'intel',productId:'p',actualParts:[{name:'同款',goodsId:'1'},{name:'同款',goodsId:'1'},{name:'未知',goodsId:'3'}]};
+ const other={...c,id:'b',shopId:'jonsbo',actualParts:[{name:'其他店',goodsId:'2'}]};
+ const badge=value=>priceInventoryBadge([c,other],[{goodsId:'1',stockAvailable:value},{goodsId:'2',stockAvailable:0}],'intel',5);
+ assert.deepEqual(badge(0),{status:'out',text:'缺1 · 低0 · 未知1'});
+ assert.deepEqual(badge(5),{status:'low',text:'缺0 · 低1 · 未知1'});
+ assert.deepEqual(badge(6),{status:'unknown',text:'库存未知 1'});
 });

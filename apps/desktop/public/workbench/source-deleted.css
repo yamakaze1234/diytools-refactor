@@ -1,0 +1,32 @@
+/* 已删除视图沿用工作表主题色，底部保留公共状态区。 */
+.ss-deleted { display:flex; flex:1; flex-direction:column; gap:12px; min-width:0; min-height:0; }
+.ss-deleted-policy { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px 18px; padding:10px 14px; background:var(--ss-high-bg); color:var(--ss-high-ink); border:1px solid var(--ss-high-border); border-radius:3px; font-size:12px; }
+.ss-deleted-policy strong { white-space:nowrap; }
+.ss-deleted-tools,.ss-deleted-actions,.ss-deleted-segments,.ss-deleted-tools label { display:flex; align-items:center; gap:6px; }
+.ss-deleted-tools { flex-wrap:wrap; gap:7px; font-size:12px; }
+.ss-deleted-tools label,.ss-deleted-tools input[type=search] { padding:5px 8px; }
+.ss-deleted-tools label { border:1px solid var(--ss-line); background:var(--ss-panel); border-radius:3px; white-space:nowrap; }
+.ss-deleted-tools input[type=search] { flex:1 1 150px; max-width:260px; }
+.ss-deleted-segments { padding:2px; gap:0; background:var(--ss-group); border:1px solid var(--ss-line); border-radius:3px; }
+#source-sheet-page .ss-deleted-segments button { padding:4px 8px; background:transparent; border-color:transparent; color:var(--ss-muted); }
+#source-sheet-page .ss-deleted-segments button[aria-pressed=true] { background:var(--ss-accent); color:#161616; }
+.ss-deleted-actions { margin-left:auto; }
+#source-sheet-page .ss-deleted :is([data-bulk=purge],[data-bulk=clear],[data-one=purge]) { color:var(--ss-low-ink); border-color:var(--ss-low-border); background:var(--ss-low-bg); }
+.ss-deleted-table { flex:1; min-height:0; overflow:auto; background:var(--ss-panel); border:1px solid var(--ss-line); border-radius:3px; }
+.ss-deleted-table table { width:100%; border-collapse:separate; border-spacing:0; color:var(--ss-ink); text-align:left; font-size:12px; }
+.ss-deleted-table th,.ss-deleted-table td { text-align:left; padding:9px 10px; border:0; border-bottom:1px solid var(--ss-rule); vertical-align:top; }
+.ss-deleted-table th { position:sticky; top:0; z-index:1; color:var(--ss-muted); background:var(--ss-group); }
+.ss-deleted-table td { background:var(--ss-panel); }
+.ss-deleted-table tr.selected td { background:var(--ss-selected); }
+.ss-deleted-table td:nth-child(2) { width:42%; overflow-wrap:anywhere; }
+.ss-deleted-table td b { font-size:13px; }
+.ss-deleted-table td small { display:block; color:var(--ss-muted); margin:2px 0 4px; }
+.ss-deleted-table :is(th,td):first-child { width:28px; }
+.ss-deleted-table :is(th,td):last-child { text-align:right; white-space:nowrap; }
+.ss-deleted-table td:last-child button+button { margin-left:5px; }
+.ss-deleted-badge { display:inline-block; padding:1px 5px; margin:0 3px 2px 0; border:1px solid var(--ss-line); background:var(--ss-group); color:var(--ss-muted); border-radius:3px; font-size:11px; }
+.ss-deleted-badge.warn { background:var(--ss-high-bg); color:var(--ss-high-ink); border-color:var(--ss-high-border); }
+.ss-deleted-badge.urgent { background:var(--ss-low-bg); color:var(--ss-low-ink); border-color:var(--ss-low-border); }
+.ss-deleted-badge.ok { background:#eaf5ed; border-color:#8bb697; color:#28633c; }
+html.dark .ss-deleted-badge.ok { background:#1f3428; border-color:#476f51; color:#a1d9ad; }
+.ss-deleted-note { display:flex; justify-content:space-between; align-items:center; min-height:25px; font-size:12px; color:var(--ss-muted); }

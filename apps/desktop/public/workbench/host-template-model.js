@@ -1,3 +1,4 @@
+import {categoryFromErp} from './component-category.js';
 /** 主机模板在已有配置文档上编辑，保存和生成各自使用原工作台路径。 */
 import {blankConfig,clone} from './core.js';
 import {partCapacity,capacityText} from './component-capacity.js';
@@ -57,7 +58,7 @@ export function gpuSpec(part){
  return {model,maker,vram,fans,label:[maker+model,vram?vram+'G':'',fanLabel].filter(Boolean).join(' ')};
 }
 
-/** 候选按已用槽位、显式分类和 ERP 原名归类；目录中可识别的商品皆保留原货号。 */
+/** 候选按ERP 分类、已用槽位和 ERP 原名归类；目录中可识别的商品皆保留原货号。 */
 export function templateCatalog(catalog,configs=[]){
  const slots=new Map();
  for(const config of configs)for(const part of config.parts||[]){
@@ -65,7 +66,10 @@ export function templateCatalog(catalog,configs=[]){
   if(id&&!slots.has(id))slots.set(id,part.slot);
  }
  return catalog.filter(row=>!row.deletedAt&&!excludedComponent(row)).map(row=>{
-  const text=partText(row),category=row.slot||slots.get(row.sourceId)||slots.get(row.goodsId)||row.erpCategory||'';
+  const text=partText(row),explicit=categoryFromErp(row.erpCategory);
+  // 模板使用“配件”作为附件槽位；特殊占位继续沿用其配置位置。
+  const category=(!row.specialComponent&&explicit&&(explicit==='其他配件'?'配件':explicit))||
+   slots.get(row.sourceId)||slots.get(row.goodsId)||row.slot||'';
   const slot=templateSlots.includes(category)||['散热','机箱','风扇'].includes(category)||category.startsWith('配件')?category:
    gpuSpec(row)?'显卡':boardSocket(text)?'主板':/CPU|处理器|酷睿|锐龙|RYZEN|\b1[2-4]\d{3}(KF?|F)\b/i.test(text)?'CPU':
    /内存|DDR[45]|UDIMM|马甲|\bC\d{2}\b/i.test(text)?'内存':/固态|硬盘|\bSSD\b|\bNVME\b/i.test(text)?'硬盘':

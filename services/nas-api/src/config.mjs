@@ -30,6 +30,12 @@ export function settings(env=process.env){
  requireValue(!catalogWritable||writable,'INVALID_WRITE_ROLE');
  const workspaceWritable=env.NAS_ENABLE_WORKSPACE_WRITES==='true';
  requireValue(!workspaceWritable||catalogWritable,'INVALID_WRITE_ROLE');
+ // 只在已启用工作区写入的正式数据集启动清理；间隔以毫秒设置，防止 Node 计时器溢出。
+ const retentionEnabled=env.NAS_ENABLE_RETENTION??'true';
+ requireValue(['true','false'].includes(retentionEnabled),'INVALID_RETENTION_SETTINGS');
+ const initialDelayMs=Number(env.NAS_RETENTION_INITIAL_DELAY_MS??60000),intervalMs=Number(env.NAS_RETENTION_INTERVAL_MS??3600000);
+ requireValue(Number.isInteger(initialDelayMs)&&initialDelayMs>=0&&initialDelayMs<=2147483647&&Number.isInteger(intervalMs)&&intervalMs>=1&&intervalMs<=2147483647,'INVALID_RETENTION_SETTINGS');
+ const retention=workspaceWritable&&dataset==='intel_live'&&retentionEnabled==='true'?{initialDelayMs,intervalMs,workspaceId:env.WORKSPACE_ID}:null;
  const tlsPaths=[env.NAS_TLS_CERT_FILE,env.NAS_TLS_KEY_FILE,env.NAS_TLS_LAN_CIDR,env.NAS_TLS_PORT];
  let tls=null;
  if([...tlsPaths,env.NAS_TLS_LISTEN_HOST].some(Boolean)){
@@ -77,6 +83,6 @@ export function settings(env=process.env){
  requireValue(!sharedSources||production&&additionalShops.length===2&&workspaceWritable,'SHARED_SOURCES_REQUIRE_THREE_STORE_WRITES');
  requireValue(authMode==='cloud'||production&&writable&&tls&&additionalShops.length===2,'LOCAL_AUTH_REQUIRES_THREE_STORE_TLS');
  return {authMode,authOrigin:auth?.origin??null,workspace:env.WORKSPACE_ID,sessionCacheMs:30000,port,dataset,writable,clientOrigins,profile,deploymentId,batch,additionalShops,lanCaseGallery,sharedGallery,sharedSources,
-  imagesRoot:env.NAS_IMAGE_ROOT||null,imagesWriteRoot:catalogWritable?env.NAS_IMAGE_WRITE_ROOT||null:null,catalogWritable,workspaceWritable,
+  imagesRoot:env.NAS_IMAGE_ROOT||null,imagesWriteRoot:catalogWritable?env.NAS_IMAGE_WRITE_ROOT||null:null,catalogWritable,workspaceWritable,retention,
   host:env.LISTEN_HOST||'0.0.0.0',tls,pg};
 }

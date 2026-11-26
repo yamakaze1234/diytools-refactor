@@ -9,7 +9,7 @@ import {snap99} from './batch-profit-price.js';
 import {mountTaxOverrideTools,deltaLabel} from './tax-override-ui.js';
 import {taxDelta} from './tax-override-model.js';
 import {actualParts} from './actual-parts.js';
-import {configurationStock} from './inventory-check-data.js';
+import {configurationStock,checkInventory,inventoryCounts,savedInventoryThreshold} from './inventory-check-data.js';
 import {isSpecialComponent} from './special-components.js';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -54,6 +54,16 @@ export function pricingRuleFields(prefix,rule=DEFAULT_PRICING_RULE){
 }
 export function readPricingRuleFields(prefix,root=document){
  return validatePricingRule(Object.fromEntries(Object.keys(ruleFields).map(key=>[key,root.querySelector('#'+prefix+'-'+key).value])));
+}
+
+// 与库存页共用去重口径，未知库存也须提示，避免将未同步的货号显示为正常。
+export function priceInventoryBadge(configs,costs,shopId,threshold=savedInventoryThreshold()){
+ if(!shopId)return {status:'',text:'请选择店铺'};
+ const scoped=configs.filter(c=>(c.shopId||'intel')===shopId);
+ if(scoped.some(c=>!Array.isArray(c.parts)&&!Array.isArray(c.actualParts)))return {status:'',text:'库存载入中'};
+ const {out,low,unknown}=inventoryCounts(checkInventory(scoped,costs,shopId,threshold).issues);
+ if(out||low)return {status:out?'out':'low',text:`缺${out} · 低${low}`+(unknown?` · 未知${unknown}`:'')};
+ return unknown?{status:'unknown',text:`库存未知 ${unknown}`}:{status:'ok',text:'正常'};
 }
 
 /** 表格的编辑计划先全部验证，再交给工作台保存和历史管理。 */
@@ -104,7 +114,7 @@ export function mountPriceProfit(root,api){
  <header class="pp-header">
   <div><h1 id="price-profit-title">价格与利润</h1><p>与配置总表共用成本、利润与配置编辑。展开即可换件、改数量和展示明细。</p></div>
   <div class="pp-actions"><button id="pp-undo" disabled>撤销</button><button id="pp-redo" disabled>重做</button>
-   <button id="pp-batch">批量按利润定价</button><button id="pp-erp-match">ERP 勾选匹配 (0)</button><button id="pp-export-price-template">导出全店价格模板</button><button id="pp-save">保存到本机</button><span id="pp-save-count" role="status" hidden></span>
+   <button id="pp-batch">批量按利润定价</button><button id="pp-erp-match">ERP 勾选匹配 (0)</button><button id="pp-stock-check"><span>检查商品库存</span><span id="pp-stock-badge"></span></button><button id="pp-export-price-template">导出全店价格模板</button><button id="pp-save">保存到本机</button><span id="pp-save-count" role="status" hidden></span>
    <details class="pp-menu"><summary>更多</summary><div><button id="pp-back">返回配置</button><button id="pp-shop-settings">店铺设置</button><button id="pp-new-link">新建链接</button><button id="pp-status-filter" aria-label="筛选状态">全部状态 ▾</button></div></details>
   </div>
  </header>
@@ -298,6 +308,12 @@ export function mountPriceProfit(root,api){
    rowCache=new Map(inShop.map(row=>[row.config.id,row]));
    const links=new Map(Array.from(groups).filter(([,list])=>shop==='all'||list[0].shopId===shop).map(([key,list])=>[key,list[0]]));
    if(!links.has(product))product='';
+   // 角标按当前店铺的配件货号去重。单链接入口继承筛选，也允许切回全店。
+   const stockShop=shop==='all'?links.get(product)?.shopId:shop;
+   const badge=$('#pp-stock-badge');
+   $('#pp-stock-check').disabled=!stockShop;
+   const stock=priceInventoryBadge(inShop.map(r=>r.config),api.costs?.()??[],stockShop);
+   badge.dataset.status=stock.status;badge.textContent=stock.text;
    if(!patch){
     const shops=api.shops.map(s=>[s.id,s.name]);
     $('#pp-shop').innerHTML=options(api.nas?shops:[['all','全部店铺'],...shops],shop);
@@ -708,6 +724,14 @@ export function mountPriceProfit(root,api){
  $('#pp-shop-settings').onclick=()=>api.editShop(shop);
  $('#pp-alert').onclick=()=>openAlert();
  $('#pp-new-link').onclick=()=>api.newLink(shop==='all'?api.activeShop():shop);
+ $('#pp-stock-check').onclick=async()=>{
+  try{
+   await flush();
+   const config=product?api.links().find(c=>linkKey(c)===product):null;
+   const selected=config?{id:config.productId||'legacy:'+String(config.spu||config.product||config.id),name:config.product,spu:config.spu}:null;
+   await api.openStockCheck(selected,config?.shopId||shop);
+  }catch(error){announce(api.errorText?.(error)||error.message);}
+ };
  $('#pp-batch').onclick=()=>api.batchProfit?.(drawnIds.filter(id=>chosen.has(id)),product,shop);
  $('#pp-erp-match').onclick=()=>api.openErpMatching?.();
  exportButton.onclick=()=>openPriceTemplateExport().catch(error=>announce(api.errorText?.(error)||error.message));
@@ -1012,9 +1036,9 @@ export function mountPriceProfit(root,api){
    finally{button.disabled=false;}
   };
  }
- function show(){
+ function show({resume=false}={}){
   // 大店保留完整筛选范围，首次只在当前链接下创建配置行。
-  if(!visible()){
+  if(!visible()&&!resume){
    shop=api.activeShop();product='';sort=null;grouped=true;activeLink='';chosen.clear();clearRange();collapsed.clear();expanded.clear();
    $('#pp-grouped').setAttribute('aria-pressed','true');$('#pp-flat').setAttribute('aria-pressed','false');
    const config=api.currentConfig?.();

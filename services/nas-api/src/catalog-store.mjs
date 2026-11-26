@@ -2,6 +2,7 @@
 import {createHash} from 'node:crypto';
 import {Fault,requireValue} from './config.mjs';
 import {shopLock} from './shop-scope.mjs';
+import {retentionQuery} from './retention.mjs';
 import {foreignGalleryPrefix,lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
 import {adoptErpSource,listSharedSources,validateErpAdoption,validateSharedSourceEdit,writeSharedSource,sharedSourceVersions} from './shared-sources.mjs';
 import {sourceGoodsId} from '../../../apps/desktop/public/workbench/shared-source-fields.js';
@@ -43,7 +44,7 @@ function mayWrite(row,grants,group,shop){
  return row.owner_shop===shop&&!row.shared ||
   shop==='intel'&&(row.owner_shop===shop||row.owner_shop==='shared')&&grants.has(group);
 }
-const archives=document=>!!document?.deletedAt;
+const archives=document=>document?.deletedAt!=null;
 const operationalAttrs=['id','sourceId','name','goodsId','owner_shop','ownerShop','shared','version','resource_version'];
 function validateSource(doc,id,shop){
  validation(doc.sourceId===id&&doc.shopId===shop,'document.sourceId/shopId');
@@ -108,6 +109,18 @@ export class CatalogStore {
    const output=rows.map(({source_shop,sha256,extension,...row})=>({...row,
     editable:(!source_shop||source_shop===this.shopId)&&this.writable&&(kind!=='addons'||!archives(row.document))&&mayWrite(row,grants,descriptor(kind).kind,this.shopId),
     document:kind==='addons'?{sourceId:row.id,shopId:row.document.shopId,...subset(row.document,[...sharedAddonFields,'deletedAt'])}:row.document}));
+   if(kind==='sources'){
+    const deleted=output.filter(row=>archives(row.document));
+    if(deleted.length){
+     // 与彻底删除使用同一引用定义，一次核对本页已删除来源；缺少计数时禁止把未知当成零。
+     const {rows:counts}=await retentionQuery(db,'SELECT * FROM intel_live.deleted_source_references($1,$2::text[])',[this.shopId,deleted.map(row=>row.id)]);
+     const refs=new Map(counts.map(({source_id,configurations,templates})=>[source_id,{configurations,templates}]));
+     for(const row of deleted){
+      requireValue(refs.has(row.id),'CATALOG_REFERENCES_UNAVAILABLE',503);
+      row.references=refs.get(row.id);
+     }
+    }
+   }
    if(!id)return output;
    if(!output.length)throw new Fault('NOT_FOUND',404);
    if(kind==='gallery')output[0].references=await this.references(db,kind,output[0]);
@@ -172,6 +185,7 @@ export class CatalogStore {
    validation(typeof body.target_id!=='string'||!body.target_id.startsWith(foreignGalleryPrefix),'target_id');
   }
   const sharedEdit=kind==='shared-sources';
+  requireValue(action!=='purge'||kind==='sources','METHOD_NOT_ALLOWED',405);
   if(sharedEdit)requireValue(this.sharedSources&&(action==='create'||action==='replace'),'METHOD_NOT_ALLOWED',405);
   const op=body.operation_id.toLowerCase();
   const writeImage=image&&kind==='assets'&&action==='upload';
@@ -228,7 +242,7 @@ export class CatalogStore {
     requireValue(asset?.sha256===image.digest&&asset.extension===image.extension&&asset.byte_count===String(image.bytes.length),'IMAGE_CONFLICT',409);
     document={url:id,sha256:image.digest,mime:image.mime,width:image.width,height:image.height};
    }else{
-    requireValue(descriptor(kind)&&['create','replace','archive','restore','copy','apply'].includes(action),'INVALID_REQUEST');
+    requireValue(descriptor(kind)&&['create','replace','archive','restore','copy','apply','purge'].includes(action),'INVALID_REQUEST');
     requireValue(kind!=='addons'||action==='replace','METHOD_NOT_ALLOWED',405);
     const info=descriptor(kind);
     const lock=[id,...(copy?[body.target_id]:[])].sort();
@@ -248,9 +262,12 @@ export class CatalogStore {
      requireValue(copy||mayWrite(existing,await this.grants(db,member),info.kind,shop),'CATALOG_SHARED_READ_ONLY',403);
      if(existing.version!==body.expected_version)throw new Fault('VERSION_CONFLICT',409,{current_version:existing.version});
      const deleted=archives(existing.document);
-     requireValue(deleted===(action==='restore'),'INVALID_CONFIGURATION_STATE',409);
+     requireValue(deleted===(action==='restore'||action==='purge'),action==='purge'?'INVALID_CATALOG_STATE':'INVALID_CONFIGURATION_STATE',409);
      previous=copy?null:existing.version;
-     if(apply){
+     if(action==='purge'){
+      const {rows:[purge]}=await retentionQuery(db,'SELECT intel_live.purge_deleted_source($1,$2,$3) AS result',[shop,id,existing.version]);
+      version=purge.result.version;
+     }else if(apply){
       requireValue(this.applyTemplate,'METHOD_NOT_ALLOWED',405);
       document=await this.applyTemplate(db,existing.document,body);
       version=existing.version;
@@ -275,7 +292,7 @@ export class CatalogStore {
       }else delete document.deletedAt;
      }
     }
-    if(!apply){
+    if(!apply&&action!=='purge'){
      if(info.kind==='sources')validateSource(document,resultId,copy||create?shop:(existing?.document.shopId||shop));
      if(kind==='gallery')validateGallery(document,resultId);
      if(kind==='templates')validateTemplate(document,resultId,shop);
@@ -283,7 +300,7 @@ export class CatalogStore {
      version=await this.write(db,kind,resultId,document,!(create||copy));
     }
    }
-   const result={kind,resource_id:resultId,operation_id:op,shop_id:shop,version,archived:action==='archive',document};
+   const result={kind,resource_id:resultId,operation_id:op,shop_id:shop,version,archived:action==='archive',document,...(action==='purge'?{purged:true}:{})};
    await db.query('INSERT INTO intel_live.catalog_receipts(workspace_id,actor_uid,operation_id,shop_id,kind,resource_id,request_sha256,result) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
     [...actor,shop,kind,resultId,hash,JSON.stringify(result)]);
    await db.query('INSERT INTO intel_live.catalog_audit(workspace_id,actor_uid,operation_id,action,previous_version,next_version,request_id) VALUES($1,$2,$3,$4,$5,$6,$7)',

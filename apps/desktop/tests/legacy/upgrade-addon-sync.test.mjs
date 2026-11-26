@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {upgradeAddonDefinition,applyStructuredUpgrade,structuredUpgradeSourceDocument} from '../../public/workbench/upgrade-addon-sync.js';
-import {effectiveNasAddons,addonCheck,detachAddonFollow,addonBatchPlan,addonKey} from '../../public/workbench/addon-data.js';
+import {effectiveNasAddons,addonCheck,addonQuickPrices,detachAddonFollow,addonBatchPlan,addonKey} from '../../public/workbench/addon-data.js';
 import {withCurrentSharedSource} from '../../public/workbench/shared-source-fields.js';
 import {replaceSourcePart} from '../../public/workbench/source.js';
 const row={sourceId:'s',sharedSourceId:'1',goodsId:'1',name:'原内存',addonText:'【+199元升级内存】',addonGoodsId:'2',addonQty:2,addonOriginalQty:1,addonPriceCents:19900};
@@ -78,4 +78,13 @@ test('批量表单不改内容时保留整组跟随，实际改文案后才变�
  assert.equal(addonBatchPlan([c],addonKey(variant),{...variant,note:''},{costs}).changes.length,0);
  const plan=addonBatchPlan([c],addonKey(variant),{...variant,text:'本链接手工方案',note:''},{costs});
  assert.equal(plan.changes.length,1);assert.ok(plan.changes[0].after.addons.filter(a=>a.sourceId==='s').every(a=>a.followPolicy==='snapshot'&&!a.followAll));
+});
+
+// ERP 数量总成本已有小数时向上到整元；缺价与真实零价应得到不同结果。
+test('快捷定价按数量总成本保本，支持零价、尾数 99 及未知成本',()=>{
+ assert.deepEqual(addonQuickPrices({originalPriceCents:30000,costCents:45028}),[151,201,251,299]);
+ assert.deepEqual(addonQuickPrices({originalPriceCents:30000,costCents:15}),[0,50,100,99]);
+ assert.deepEqual(addonQuickPrices({originalPriceCents:0,costCents:0}),[0,50,100,99]);
+ assert.deepEqual(addonQuickPrices({originalPriceCents:null,costCents:500}),[]);
+ assert.deepEqual(addonQuickPrices({originalPriceCents:0,costCents:null}),[]);
 });

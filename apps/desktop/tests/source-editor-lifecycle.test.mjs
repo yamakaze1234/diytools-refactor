@@ -1,3 +1,4 @@
+import {mountSourceSync} from '../public/workbench/source-sync-ui.js';
 import {sourceComparisonHtml} from '../public/workbench/source-sync-data.js';
 import {selectedSourceAddons} from '../public/workbench/addon-data.js';
 import {slots} from '../public/workbench/core.js';
@@ -21,7 +22,7 @@ class Element {
  showModal(){this.open=true;}
  get isConnected(){return this.tag==='document'||!!this.parentNode?.isConnected;}
  append(...nodes){for(const node of nodes){if(node.parentNode)node.parentNode.childNodes=node.parentNode.childNodes.filter(n=>n!==node);node.parentNode=this;this.childNodes.push(node);}}
- set innerHTML(html){for(const child of this.childNodes)child.parentNode=null;this.childNodes=[];const stack=[this];for(const match of html.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)){const text=match[0];if(text.startsWith('</')){if(stack.length>1)stack.pop();continue;}if(!text.startsWith('<')){const node=stack.at(-1);if(node.tag==='textarea')node.value+=text;continue;}const tag=text.match(/^<(\w+)/)[1];const attributes={};for(const m of text.slice(tag.length+1,-1).matchAll(/([\w-]+)(?:="([^"]*)")?/g))attributes[m[1]]=m[2]??'';const node=new Element(tag,attributes);stack.at(-1).append(node);if(!['input','br','hr','img'].includes(tag))stack.push(node);}}
+ set innerHTML(html){for(const child of this.childNodes)child.parentNode=null;this.childNodes=[];const stack=[this];for(const match of html.matchAll(/<\/?[a-z][^>]*>|[^<]+/gi)){const text=match[0];if(text.startsWith('</')){if(stack.length>1)stack.pop();continue;}if(!text.startsWith('<')){const node=stack.at(-1);if(node.tag==='textarea')node.value+=text;continue;}const tag=text.match(/^<(\w+)/)[1];const attributes={};for(const m of text.slice(tag.length+1,-1).matchAll(/([\w-]+)(?:="([^"]*)")?/g))attributes[m[1]]=(m[2]??'').replaceAll('&quot;', '"').replaceAll('&amp;', '&');const node=new Element(tag,attributes);stack.at(-1).append(node);if(!['input','br','hr','img'].includes(tag))stack.push(node);}}
  matches(selector){if(selector.includes(' ')){const parts=selector.split(/\s+/);return this.matches(parts.pop())&&!!this.parentNode?.closest(parts.join(' '));}if(selector.endsWith(':checked'))return this.checked&&this.matches(selector.slice(0,-8));if(selector.startsWith('#'))return this.attributes.id===selector.slice(1);if(selector.startsWith('.'))return (this.className||this.attributes.class||'').split(/\s+/).includes(selector.slice(1));const attr=selector.match(/^(\w*)\[([^=\]]+)(?:="?([^"\]]*)"?)?\]$/);if(attr)return(!attr[1]||this.tag===attr[1])&&attr[2] in this.attributes&&(attr[3]===undefined||this.attributes[attr[2]]===attr[3]);return this.tag===selector;}
  closest(selector){return this.matches(selector)?this:this.parentNode?.closest(selector)||null;}
  setAttribute(name,value){this.attributes[name]=value;}
@@ -40,9 +41,7 @@ function harness({apply,realSync=false}={}){
  const api={shopId:()=> 'intel',getRows:()=>rows,getAllRows:()=>rows,getCosts:()=>[],getConfigs:()=>[],openDialog:(_title,html)=>{body.innerHTML=html;dialog.open=true;},async applyBatch(entries){writes.push(structuredClone(entries));await apply?.(entries,api);for(const entry of entries)Object.assign(rows.find(r=>r.sourceId===entry.row.sourceId),entry.row);return{count:entries.length,configIds:[]};}};
  const context=vm.createContext({selectedSourceAddons,hardwareFieldsHtml,readHardwareFields,updateHardwareHints,updateMaintenanceVisibility,sourceComparisonHtml,slots,capacityFieldsHtml,readCapacityFields,updateCapacityHints,document,window:{},AbortController,structuredClone,clone:value=>structuredClone(value),requestAnimationFrame:fn=>fn(),setTimeout:fn=>fn(),confirm:()=>true,configCostLinksHtml:()=>'',componentStockHtml:()=>'',mountSourceSync:()=>({invalidate(){},async refresh(){},dispose(){},isBusy:()=>false,showAutomaticChanges(){}}),isSpecialComponent:r=>!!r.specialComponent,normalizeSpecialComponent:r=>r,erpUnitCost:()=>({cents:0}),sourceAddon:r=>({text:r.addonText||'',note:r.addonNote||''}),sourceAddonFields:a=>({addonText:a.text,addonNote:a.note}),excludedComponent:()=>false,shops:[{id:'intel'}]});
  if(realSync){
-  context.queueMicrotask=()=>{};context.sourceFollowPlan=()=>({changes:[]});api.flush=async()=>{};
-  const syncSource=readFileSync(new URL('../public/workbench/source-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export function mountSourceSync','function mountSourceSync');
-  context.mountSourceSync=vm.runInContext('(function(){'+syncSource+';return mountSourceSync;})()',context);
+  context.mountSourceSync=mountSourceSync;api.flush=async()=>{};
  }
  vm.runInContext(source,context);context.openSourceEditor(api);
  return{document,dialog,body,api,rows,writes,context,editor:context.window.workbenchSourceEditor};
@@ -115,12 +114,10 @@ test('旧的关闭事件到达时保留已重开的输出源表单',()=>{
 
 test('source sync releases its retained controls and does not block cancelling a replacement conflict dialog',async()=>{
  const document=new Element('document'),dialog=new Element('dialog'),body=new Element(),root=new Element();document.append(dialog);dialog.append(body);body.append(root);
- const before={id:'c',productId:'link'},detail={key:'c:name',field:'name',before:'旧名',after:'新名'};
+ const before={id:'c',shopId:'intel',product:'链接',productId:'link',parts:[{sourceId:'source',goodsId:'123',slot:'内存',name:'旧名'}]};
+ const rows=[{sourceId:'source',goodsId:'123',shopId:'intel',name:'新名'}];
  let rejectApply;const applied=new Promise((_resolve,reject)=>{rejectApply=reject;});
- const context=vm.createContext({hardwareFieldsHtml,readHardwareFields,updateHardwareHints,updateMaintenanceVisibility,sourceComparisonHtml,slots,capacityFieldsHtml,readCapacityFields,updateCapacityHints,structuredClone,queueMicrotask(){},sourceFollowPlan:(_configs,_rows,_fields,_shop,options)=>({changes:options&&!options.keys.length?[]:[{id:'c',before,product:'链接',name:'配置',details:[detail]}],sources:[],fields:['name'],shopId:'intel'})});
- const syncSource=readFileSync(new URL('../public/workbench/source-sync-ui.js',import.meta.url),'utf8').replace(/^import .*;\r?\n/gm,'').replace('export function mountSourceSync','function mountSourceSync');
- vm.runInContext(syncSource,context);
- const panel=context.mountSourceSync(root,{message(){},isEdited:()=>false,flush:async()=>{},getRows:()=>[],getConfigs:()=>[before],shopId:()=> 'intel',apply:()=>applied});
+ const panel=mountSourceSync(root,{message(){},isEdited:()=>false,flush:async()=>{},getRows:()=>rows,getConfigs:()=>[before],shopId:()=> 'intel',apply:()=>applied,deferRefresh:true});
  await panel.refresh();const event={stopPropagation(){}};
  const choice=root.querySelector('[data-source-select]');choice.checked=true;choice.onchange(event);
  const refresh=root.querySelector('#source-check');assert.equal(refresh.disabled,false);

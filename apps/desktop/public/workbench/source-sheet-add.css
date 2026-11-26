@@ -1,0 +1,81 @@
+/* 添加配件仅使用弹窗内的独立滚动区，标题和操作栏固定可见。 */
+#dialog:has(.ss-add-part){width:min(680px,calc(100vw - 24px))!important;max-width:none!important;height:fit-content!important;align-self:center!important;max-height:calc(100dvh - 24px)!important;padding:0!important;border:1px solid var(--wb-line,#c6c5bd)!important;border-radius:2px!important;overflow:hidden!important}
+#dialog:has(.ss-add-part)>form{display:none!important}
+#dialog:has(.ss-add-part) #dialog-body{padding:0!important;scrollbar-gutter:auto!important;overflow:hidden!important;max-height:none!important}
+#dialog-body .ss-add-part{display:flex;flex-direction:column;max-height:calc(100dvh - 28px);background:var(--wb-panel);color:var(--wb-ink);font-size:12px;line-height:1.4}
+.ss-add-part [hidden]{display:none!important}
+.ss-add-part :is(header,footer,section,details){margin:0;min-width:0}
+.ss-add-part :is(.ss-add-head,.ss-add-modes,.ss-part-actions,.ss-add-scope,.ss-id-line,.ss-part-feedback,.ss-add-label,.ss-add-card-head){display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ss-add-part :is(.ss-add-head,.ss-add-modes,.ss-part-actions){padding:12px 16px;flex:none}
+.ss-add-part .ss-add-head{border-bottom:1px solid var(--wb-line);background:var(--wb-panel)}
+.ss-add-head>div,.ss-add-scope>div,.ss-part-actions>div{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ss-add-part .ss-add-head strong{font-size:16px}
+.ss-add-part small{color:var(--wb-muted);font-size:11px;line-height:1.45}
+.ss-add-part .ss-add-modes{padding-block:10px;background:var(--wb-control);border-bottom:1px solid var(--wb-rule);flex-wrap:wrap}
+.ss-add-modes>[role=group]{display:inline-flex;padding:2px;border:1px solid var(--wb-line);background:var(--wb-soft);border-radius:2px}
+.ss-add-body{padding:16px;display:flex;flex-direction:column;gap:16px;max-height:520px;overflow:auto;min-height:0}
+.ss-add-body>*{flex:none}
+.ss-add-part label,.ss-add-part input,.ss-add-part select{margin:0}
+.ss-add-part :is(input,select){min-width:0}
+.ss-add-part .wb-input{display:block;box-sizing:border-box}
+.ss-add-part .ss-add-title{display:block;font-size:12px;font-weight:700;margin-bottom:8px}
+.ss-add-part em{color:var(--wb-out-ink);font-style:normal}
+.ss-id-line>button{align-self:stretch}
+.ss-add-query{position:relative;min-width:0;flex:1}
+#ss-add-results{position:absolute;z-index:3;inset:auto 0;max-height:200px;overflow:auto;background:var(--wb-panel);border:1px solid var(--wb-line);box-shadow:0 3px 8px #0002}
+#dialog .ss-add-part #ss-add-results button{display:block;text-align:left;width:100%;height:auto!important;padding:6px 10px!important;background:var(--wb-panel)!important;border:0!important;border-bottom:1px solid var(--wb-rule)!important;border-radius:0!important}
+#dialog .ss-add-part #ss-add-results button:is(:hover,[aria-selected=true]){background:var(--wb-soft)!important}
+#ss-add-results strong,#ss-add-results small{display:block}
+.ss-add-part .ss-part-feedback{margin-top:8px;padding:8px 12px;border:1px solid var(--wb-low-line);background:var(--wb-low-bg);color:var(--wb-low-ink)}
+.ss-part-preview{margin-top:10px;padding:12px;background:var(--wb-control);border:1px solid var(--wb-line);border-left:3px solid var(--wb-ok-ink);border-radius:2px}
+.ss-add-part .ss-add-card-head{justify-content:flex-start;gap:6px}
+.ss-add-card-head>strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ss-add-card-head>small{margin-left:auto;white-space:nowrap}
+.ss-add-market{margin-top:8px;padding-top:6px;border-top:1px dashed var(--wb-rule);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.ss-add-market small,.ss-add-spec-grid small{display:block;margin-bottom:2px}
+.ss-add-market b{font-size:14px}
+.ss-add-pricing{display:grid;grid-template-columns:minmax(0,1fr) 220px;align-items:end;gap:12px}
+.ss-add-part[data-part-mode=special] .ss-add-pricing{grid-template-columns:1fr}
+.ss-add-part .ss-add-label{height:20px;margin-bottom:4px;color:var(--wb-muted);font-size:11px;font-weight:600;gap:4px;white-space:nowrap}
+.ss-add-category,.ss-add-spec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:12px}
+.ss-add-category{margin-top:8px;align-items:end}
+.ss-add-category label,.ss-add-spec-grid label{display:block;color:var(--wb-muted);font-size:11px;font-weight:600}
+.ss-add-spec-grid .wb-input,.ss-add-category .wb-input{margin-top:4px}
+#dialog-body .ss-add-specs{padding:0;border:1px solid var(--wb-rule);background:var(--wb-control);border-radius:2px;overflow:hidden}
+#dialog #dialog-body .ss-add-specs>summary{display:flex;align-items:center;gap:8px;padding:8px 12px!important;min-height:0!important;border:0!important;border-radius:0!important;color:var(--wb-ink)!important;background:var(--wb-soft)!important;cursor:pointer}
+.ss-add-specs>summary::-webkit-details-marker{display:none}
+.ss-add-specs summary>small{margin-left:auto;white-space:nowrap}
+.ss-add-specs summary>small::after{content:"展开 ▾"}
+.ss-add-specs[open] summary>small::after{content:"收起 ▴"}
+.ss-add-spec-grid{padding:12px}
+.ss-add-spec-grid small{margin-top:4px;font-size:10px;font-weight:400}
+.ss-add-example{padding:8px 10px;background:var(--wb-panel);border:1px dashed var(--wb-line)}
+.ss-add-example :is(strong,small){display:block}
+.ss-spec-pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;align-items:end}
+.ss-spec-pair [data-auto-cap]{display:none}
+.ss-add-cases{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.ss-add-scope{padding:9px 12px;background:var(--wb-control);border:1px solid var(--wb-rule);border-radius:2px;flex-wrap:wrap}
+.ss-add-part input[type=checkbox]{appearance:auto!important;width:13px!important;min-width:0!important;height:13px!important;min-height:0!important;padding:0!important;vertical-align:middle}
+.ss-add-part .ss-part-actions{background:var(--wb-control);border-top:1px solid var(--wb-line)}
+.ss-part-actions>small{min-width:0}
+@media(max-width:620px){
+ .ss-add-pricing,.ss-add-spec-grid,.ss-add-category{grid-template-columns:1fr}
+ .ss-add-market{grid-template-columns:repeat(auto-fit,minmax(110px,1fr))}
+ .ss-add-head>div{gap:4px}
+ .ss-add-scope>div{flex-wrap:wrap}
+}
+
+.ss-add-erp-heading{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.ss-add-erp-heading{justify-content:space-between;margin-bottom:8px}
+.ss-add-part .ss-add-erp-heading .ss-add-title{margin:0}
+
+@layer workbench-interaction {
+/* 旧弹窗全局规则为按钮添加了最小高度、切角和摘要箭头，局部覆盖以保持原稿尺寸。 */
+#dialog #dialog-body .ss-add-part button:not(.wb-cut){clip-path:none!important}
+#dialog #dialog-body .ss-add-part button[data-mode][aria-pressed=true]{background:#fffa00!important;color:#161616!important;font-weight:700}
+#dialog #dialog-body .ss-add-part .ss-add-specs>summary::after{display:none!important}
+#dialog #dialog-body .ss-add-part .ss-add-specs>summary{background:var(--wb-soft)!important}
+
+#dialog #dialog-body .ss-add-part [data-reset-name]{font-size:11px!important;text-decoration:underline;min-height:0!important;background:transparent!important;color:var(--wb-muted)!important;border:0!important;padding:0!important}
+#dialog #dialog-body .ss-add-part button[data-mode]{background:transparent!important;color:var(--wb-muted)!important;font-size:12px!important;font-weight:400;min-height:0!important;padding:4px 12px!important;border:0!important;border-radius:1px!important}
+}

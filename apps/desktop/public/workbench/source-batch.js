@@ -20,7 +20,7 @@ const equal=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 
 // 先完整构建批次；过期预览或无效记录使整批失败，不留下部分编辑。
 /** 以同一时间点应用来源变更并汇总关联影响，供批量保存使用。 */
-export function sourceBatch(state,changes,at=new Date().toISOString()){
+export function sourceBatch(state,changes,at=new Date().toISOString(),{deferUpgrade=false}={}){
  let skipped=0;const expanded=[];
  for(const change of changes){
   expanded.push(change);
@@ -88,7 +88,8 @@ export function sourceBatch(state,changes,at=new Date().toISOString()){
  const configIds=taxes.size?applyManualCosts(next,[...taxes].map(([goodsId,tax])=>({goodsId,tax})),at):[];
  const capacityIds=new Set(),sourceMap=new Map(next.sourceCatalog.map(r=>[JSON.stringify([r.shopId||'intel',r.sourceId]),r]));
  for(const c of next.configs){if(c.deletedAt)continue;for(const p of [...(c.parts||[]),...(c.actualParts||[])]){const row=sourceMap.get(JSON.stringify([c.shopId||'intel',p.sourceId]));if(row&&row.goodsId===p.goodsId&&JSON.stringify([row.capacityOverrides,row.hardwareOverrides,row.hardwareFacts,row.erpSpec,row.erpModel])!==JSON.stringify([p.capacityOverrides,p.hardwareOverrides,p.hardwareFacts,p.erpSpec,p.erpModel])){copyCapacity(row,p);copyHardware(row,p);capacityIds.add(c.id);}}}
- const followed=followSourceChanges(next.configs,state.sourceCatalog,next.sourceCatalog,{captureChanges:true});
+ // 在改动前的来源上识别旧配置是否跟随；决策窗确认之前保留加购展示文本。
+ const followed=followSourceChanges(next.configs,state.sourceCatalog,next.sourceCatalog,{captureChanges:true,deferUpgrade});
  for(const c of next.configs){const before=JSON.stringify(c.addons);attachAddonHardware(c,next.sourceCatalog);if(before!==JSON.stringify(c.addons))capacityIds.add(c.id);}
  return {next,configIds:[...new Set([...configIds,...erpIds,...capacityIds,...followed.configIds])],autoUpdatedFields:followed.count,autoChanges:followed.autoChanges,count:changes.length,skipped};
 }

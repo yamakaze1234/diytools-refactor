@@ -8,11 +8,12 @@ import {lockGalleryAsset,sharedGalleryRows} from './shared-gallery.mjs';
 import {runNasProfit} from './profit-store.mjs';
 import {priceHistoryAction,priceHistorySnapshot,priceHistoryCurrent} from './price-history.mjs';
 import {validateGlobalTax,applyGlobalTax} from './global-tax.mjs';
-import {applyCostSync,costSyncSnapshot,crossShopCostAction,validateCostSync} from './cost-sync.mjs';
+import {applyCostSync,costSyncSnapshot,crossShopCostAction,validateCostSync,validErpCategory} from './cost-sync.mjs';
 import {addonItems,choiceAddon,effectiveNasAddons} from '../../../apps/desktop/public/workbench/addon-data.js';
 import {DEFAULT_PRICING_RULE,normalizePricingRule,normalizeProfitAlert,normalizeProfitAlerts} from '../../../apps/desktop/public/workbench/pricing.js';
 import {applyNameFormatPlan,nameFormatPlan} from '../../../apps/desktop/public/workbench/name-format-batch.js';
 import {renumberProduct} from './config-renumber.mjs';
+import {retentionQuery} from './retention.mjs';
 import {validAddonPack} from '../../../apps/desktop/public/workbench/link-addon-packs.js';
 import {normalizeErpDefaultExtras} from '../../../apps/desktop/public/workbench/erp-default-extras.js';
 
@@ -94,8 +95,8 @@ function validateDocument(document,{id,shop}){
  for(const key of ['priceBasis','final_price_cents','published','archived_at','deletedAt','quotation','shop_id','configuration_id'])
   failure(!own(document,key),'document.'+key);
 }
-function validateChange(shop,id,action,body){
-  failure(plain(body)&&identity(id)&&['create','replace','design','archive','restore'].includes(action),'configuration_id/action');
+function validateChange(shop,id,action,body,allowPurge=false){
+  failure(plain(body)&&identity(id)&&(['create','replace','design','archive','restore'].includes(action)||allowPurge&&action==='purge'),'configuration_id/action');
   const keys=[...(action==='create'?[]:['expected_version']),...(action==='create'||action==='replace'?['document','dependencies']:action==='design'?['design']:[])];
   failure(Object.keys(body).every(k=>keys.includes(k)),'request');
   if(action!=='create')failure(version(body.expected_version),'expected_version');
@@ -259,15 +260,29 @@ export class LiveStore extends Store{
    // 同一店的配置和目录写入共用一个短事务门，各店锁号独立。
    if(write==='shared'){
     for(const scope of Object.values(liveScopes))await connection.query('SELECT pg_advisory_xact_lock(814518,$1::integer)',[scope.writeLock]);
-   }else if(write&&this.workspaceWritable)await connection.query('SELECT pg_advisory_xact_lock(814518,$1::integer)',[liveScopes[this.shopId].writeLock]);
+   }else if(write===true&&this.workspaceWritable)await connection.query('SELECT pg_advisory_xact_lock(814518,$1::integer)',[liveScopes[this.shopId].writeLock]);
    const result=await use(connection);
    await connection.query('COMMIT');return result;
-  }catch(error){try{await connection.query('ROLLBACK');}catch{}throw error;}
+  }catch(error){
+   try{await connection.query('ROLLBACK');}catch{}
+   // 新写入的模板或加购若引用了刚被清理的来源，事务已回滚，可明确提示重新选件。
+   if(error.code==='P0001'&&error.message==='INVALID_DEPENDENCY')throw new Fault('INVALID_DEPENDENCY',400,{field:'sourceId'});
+   throw error;
+  }
   finally{connection.release();}
  }
+ async purgeExpiredRetention(workspaceId){
+  requireValue(this.workspaceWritable,'WRITES_DISABLED',405);
+  // SQL 尝试取得本店巡检锁，绕过已锁的待清理行；这里不额外取得阻塞式写锁。
+  return this.tx('retention',async db=>{
+   await db.query("SELECT set_config('intel_live.catalog_workspace',$1,true)",[workspaceId]);
+   return (await retentionQuery(db,'SELECT intel_live.purge_expired_retention($1,7,30) AS stats',[this.shopId])).rows[0].stats;
+  });
+ }
  async configurations(shop,{id=null,sales=false,limit=50,offset=0,search='',archived=false,db=this.pool}={}){
+  const order=archived?'c.archived_at,c.configuration_id':'c.workspace_order,c.configuration_id';
   const {rows}=await db.query('SELECT '+summarySelect(this.workspaceWritable)+' '+summaryJoins(this.workspaceWritable)+
-   " WHERE c.shop_id=$1 AND ($2::text IS NULL OR c.configuration_id=$2) AND (c.archived_at IS NOT NULL)=$3 AND (NOT $4::boolean OR p.published) AND ($5='' OR strpos(lower(c.name),lower($5))>0 OR strpos(c.spu,$5)>0 OR strpos(c.sku,$5)>0) ORDER BY c.workspace_order,c.configuration_id LIMIT $6 OFFSET $7",[shop,id,archived,sales,search,limit,offset]);
+   " WHERE c.shop_id=$1 AND ($2::text IS NULL OR c.configuration_id=$2) AND (c.archived_at IS NOT NULL)=$3 AND (NOT $4::boolean OR p.published) AND ($5='' OR strpos(lower(c.name),lower($5))>0 OR strpos(c.spu,$5)>0 OR strpos(c.sku,$5)>0) ORDER BY "+order+" LIMIT $6 OFFSET $7",[shop,id,archived,sales,search,limit,offset]);
   return rows.map(row=>summary(row,sales));
  }
  async detail(shop,id,sales,{archived=false}={}){
@@ -378,7 +393,7 @@ export class LiveStore extends Store{
    }else{
     if(!old)throw new Fault('NOT_FOUND',404);
     if(old.version!==body.expected_version)throw new Fault('VERSION_CONFLICT',409,{current_version:old.version});
-    if(!!old.archived_at!==(action==='restore'))throw new Fault('INVALID_CONFIGURATION_STATE',409);
+    if(!!old.archived_at!==(action==='restore'||action==='purge'))throw new Fault('INVALID_CONFIGURATION_STATE',409);
    }
    let next;
    if(action==='create'||action==='replace'){
@@ -415,6 +430,10 @@ export class LiveStore extends Store{
      'UPDATE intel_live.configurations SET product_id=$3,name=$4,sku=$5,spu=$6,workspace_order=$7,workbench_price_cents=$8,fields=$9,design=$10,version=version+1 WHERE configuration_id=$1 AND shop_id=$2 RETURNING version::text';
     next=(await db.query(query,columns)).rows[0].version;
     await setParts(db,id,document);
+   }else if(action==='purge'){
+    // 终态版本只进入回执与审计，任何后续请求都不能据此改写已删除行。
+    const {rows:[purge]}=await retentionQuery(db,'SELECT intel_live.purge_archived_configuration($1,$2,$3) AS result',[shop,id,old.version]);
+    next=purge.result.version;
    }else if(action==='design'){
     await validateAssets(db,shop,body.design,this.sharedGallery);
     next=(await db.query('UPDATE intel_live.configurations SET design=$3,version=version+1 WHERE configuration_id=$1 AND shop_id=$2 RETURNING version::text',[id,shop,JSON.stringify(body.design)])).rows[0].version;
@@ -422,7 +441,7 @@ export class LiveStore extends Store{
     next=(await db.query('UPDATE intel_live.configurations SET archived_at=CASE WHEN $3::boolean THEN now() ELSE NULL END,version=version+1 WHERE configuration_id=$1 AND shop_id=$2 RETURNING version::text',[id,shop,action==='archive'])).rows[0].version;
     if(action==='archive')await db.query('SELECT intel_live.withdraw_publication($1)',[id]);
    }
-   const result={configuration_id:id,shop_id:shop,operation_id:op,version:next,archived:action==='archive'};
+   const result={configuration_id:id,shop_id:shop,operation_id:op,version:next,archived:action==='archive',...(action==='purge'?{purged:true}:{})};
    return {result,previousVersion:old?.version||null};
  }
  async save(member,shop,id,action,body,requestId){
@@ -502,7 +521,7 @@ export class LiveStore extends Store{
   const items=body.changes.map(item=>{
    failure(plain(item),'change');
    const {id,action,...doc}=item;
-   validateChange(shop,id,action,doc);
+   validateChange(shop,id,action,doc,true);
    if(action==='create')failure(doc.document.skuId===''||group?.configuration_ids?.length>0&&doc.document.productId===group.product_id&&
     /^\d{1,24}$/.test(doc.document.skuId)&&/^\d{1,24}$/.test(doc.document.spu),'document.skuId');
    return {id,action,doc};
@@ -686,10 +705,11 @@ export class LiveStore extends Store{
     const f=row.fields;
     failure(/^\d{1,20}$/.test(row.id)&&plain(f)&&safeValue(f)&&Object.keys(f).length&&['erp_snapshot','tax_edit','tax_file','tax_resume'].includes(row.action),'changes.costs');
     const erp=row.action==='erp_snapshot';
-    failure(Object.keys(f).every(k=>(erp?['erp','stockAvailable','stockIncomingAvailable','name','sku','stockUpdatedAt']:['tax','taxUpdatedAt']).includes(k))&&
+    failure(Object.keys(f).every(k=>(erp?['erp','stockAvailable','stockIncomingAvailable','erpCategory','name','sku','stockUpdatedAt']:['tax','taxUpdatedAt']).includes(k))&&
      (erp?own(f,'erp')&&own(f,'stockAvailable'):own(f,'tax')),'changes.cost_fields');
     for(const k of ['erp','tax'])if(own(f,k))failure(f[k]===null||(typeof f[k]==='number'&&Number.isFinite(f[k])&&f[k]>=0&&f[k]<=Number.MAX_SAFE_INTEGER/100),'changes.'+k);
     if(row.action==='tax_resume')failure(f.tax!==null,'changes.tax');
+    if(own(f,'erpCategory'))failure(validErpCategory(f.erpCategory),'changes.erpCategory');
     // 两种可销都可能为负，null 表示未取得该观察值。
     for(const key of ['stockAvailable','stockIncomingAvailable'])if(own(f,key))
      failure(f[key]===null||Number.isFinite(f[key])&&Math.abs(f[key])<=Number.MAX_SAFE_INTEGER,'changes.'+key);

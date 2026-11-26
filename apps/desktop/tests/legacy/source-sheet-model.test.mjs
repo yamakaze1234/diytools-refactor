@@ -22,14 +22,25 @@ test('全部分类按 ERP 分类、引用槽位与名称推断，普通未知配
   [{name:'Intel i5-14600KF'},'CPU'],[{name:'B760M 主板'},'主板'],[{name:'RTX 5070'},'显卡'],
   [{erpCategory:'存储',name:'DDR 5'},'硬盘'],[{name:'DDR5'},'内存'],[{name:'一体式水冷'},'散热'],
   [{name:'ARGB 风扇'},'风扇'],[{name:'乔思伯机箱'},'机箱'],[{name:'850W'},'电源'],
-  [{name:'转接线'},'线材/扩展'],[{name:'标签卡'},'其他配件'],[{name:'没有独显',specialComponent:true},'特殊配件'],
+  [{name:'转接线'},'其他配件'],[{name:'标签卡'},'其他配件'],[{name:'没有独显',specialComponent:true},'特殊配件'],
  ];
- assert.equal(sourceSheetCategories.length,cases.length+1);
+ assert.ok(!sourceSheetCategories.includes('线材/扩展'));
  for(const [row,expected] of cases)assert.equal(sourceSheetCategory(row),expected);
  assert.equal(sourceSheetCategory({name:'RTX 5070'},['配件1','主板']),'主板');
  for(const name of ['定制包网模组线(CPU+主板+显卡)','显卡延长线','CPU 转接线','显卡支架'])
-  assert.equal(sourceSheetCategory({name}),'线材/扩展');
+  assert.equal(sourceSheetCategory({name}),'其他配件');
  assert.equal(sourceSheetCategory({name:'CPU 风冷散热器'}),'散热');
+ for(const [name,category] of [['D4 16G3600','内存'],['D5 16G6000','内存'],['积木反叶','风扇'],
+  ['机箱副屏','其他配件'],['显卡供电线','其他配件'],['流光发光层','其他配件'],['内存定制马甲','其他配件']])
+  assert.equal(sourceSheetCategory({name}),category,name);
+ const mapping={'处理器':'CPU','主板':'主板','显卡':'显卡','内存':'内存','固态硬盘':'硬盘','散热器':'散热',
+  '散热风扇':'风扇','机箱':'机箱','电源':'电源','其他':'其他配件','灯光灯效':'其他配件','线材':'其他配件'};
+ for(const [erpCategory,expected] of Object.entries(mapping)){
+  const item=buildSourceSheet({rows:[{...rows[0],slot:'显卡',erpCategory:'电源'}],
+   costs:[{...costs[0],erpCategory}],configs:[{id:'c',parts:[{goodsId:'501',slot:'机箱'}]}]})[0];
+  assert.equal(item.category,expected,erpCategory);
+ }
+ assert.equal(sourceSheetCategory({slot:'主板',name:'显卡'},['风扇']),'风扇');
 });
 
 test('共用投影保留历史值，结合规格、跨店名称和升级目标筛选',()=>{
@@ -153,7 +164,7 @@ test('快捷筛选分别统计当前分类和关键词，草稿投影改变差�
 });
 
 test('ERP 新增在草稿中使用清洗名称、参考价和观察值，跨店创建保持原请求契约',()=>{
- const item={goodsId:'503',name:'缺货 合成 NVMe SSD（2TB）',stockAvailable:0,stockIncomingAvailable:8,erp:23};
+ const item={goodsId:'503',name:'缺货 合成 NVMe SSD（2TB）',stockAvailable:0,stockIncomingAvailable:8,erp:23,erpCategory:'固态硬盘'};
  const {item:created,draft}=createSourceSheetDraft(item,{shop:'intel',shops,managed:true,tax:90.099999,sourceId:'draft'});
  assert.equal(created.base.name,'合成 NVMe SSD');
  assert.equal(created.base.tax,90.1);
@@ -165,6 +176,7 @@ test('ERP 新增在草稿中使用清洗名称、参考价和观察值，跨店�
  assert.equal(change.managed.version,null);
  assert.deepEqual(change.managed.edits.shared.values,{name:'合成 NVMe SSD',tax:90.1});
  assert.equal(change.managed.erpName,item.name);
+ assert.equal(change.managed.erpCategory,'固态硬盘');
  assert.throws(()=>createSourceSheetDraft({...item,name:'排除品 ＊！'},{shop:'intel'}),/不可加入/);
 });
 
@@ -180,4 +192,43 @@ test('本机与单店只修改已经授权的来源，未改别名、停用状�
  const archived=buildSourceSheet({rows:[{...rows[0],deletedAt:'2026-01-01'}],shops:['intel']})[0];
  assert.equal(sourceSheetMatches(sourceSheetView(archived),{filter:'deleted'}),true);
  assert.equal(sourceSheetMatches(sourceSheetView(archived)),false);
+});
+
+test('手填配件保留展示名称，只向共用目录提交实际存在的 ERP 元数据',()=>{
+ const opts={shop:'intel',shops,managed:true,tax:0};
+ for(const props of [{name:' 手填机箱（白） '},{erpName:'',displayName:' 手填机箱（白） ',erpCategory:' '}]){
+  const {item,draft}=createSourceSheetDraft({goodsId:'12345678901234567890',...props},opts);
+  const [change]=sourceSheetChanges(item,draft);
+  assert.equal(item.base.name,'手填机箱（白）');assert.equal(item.base.erpName,'');
+  assert.equal(change.managed.edits.shared.values.tax,0);
+  assert.ok(!Object.hasOwn(change.managed,'erpName'));assert.ok(!Object.hasOwn(change.managed,'erpCategory'));
+ }
+ const candidate={goodsId:'523',erpName:'ERP 型号（规格）',displayName:' 手工名称 ',erpCategory:'主板'};
+ const {item,draft}=createSourceSheetDraft(candidate,{shop:'intel'});
+ const [offline]=sourceSheetChanges(item,draft);
+ assert.equal(offline.row.name,'手工名称');assert.equal(offline.row.erpName,candidate.erpName);assert.equal(offline.row.tax,null);
+ for(const invalid of [{displayName:' '},{displayName:'机箱 *'},{erpName:'＊禁用商品'},{goodsId:'012'},{goodsId:'123456789012345678901'}]){
+  assert.throws(()=>createSourceSheetDraft({...candidate,...invalid},opts),/不可加入/);
+ }
+});
+
+test('建源将人工简称、容量、颜色写入共用及离线草稿，特殊配件只保存名称',()=>{
+ const opts={shop:'intel',shops:['intel','gigabyte','jonsbo'],managed:true};
+ for(const [erpCategory,hardwareOverrides,capacityOverrides] of [
+  ['处理器',{cpuName:'14600KF'},undefined],['显卡',{gpuName:'RTX 5070',color:'白'},{vramGb:12}],
+  ['内存',{color:'黑'},{memoryGb:32}],['机箱',{caseBoards:['ATX','ITX']},undefined],
+ ]){
+  const raw={goodsId:'523',displayName:'自选型号',erpCategory,hardwareOverrides,capacityOverrides};
+  for(const managed of [true,false]){
+   const {item,draft}=createSourceSheetDraft(raw,{...opts,managed});
+   const [change]=sourceSheetChanges(item,draft);
+   for(const [group,overrides] of Object.entries({hardwareOverrides,capacityOverrides})){
+    assert.deepEqual(change.row[group],overrides);
+    if(managed)for(const [key,value] of Object.entries(overrides??{}))assert.deepEqual(change.managed.edits.shared.values[group+'.'+key],value);
+   }
+  }
+ }
+ const {item,draft}=createSourceSheetDraft({displayName:'无独显',hardwareOverrides:{color:'白'}},{...opts,special:true});
+ const [special]=sourceSheetChanges(item,draft);
+ assert.deepEqual(special.managed.edits.shared.values,{name:'无独显'});assert.equal(special.row.tax,0);
 });

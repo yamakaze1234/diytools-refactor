@@ -88,6 +88,30 @@ fn incoming_only_change_is_reported_and_preserves_cost_and_stock() {
     assert_eq!(plan.next["configs"][0]["actualParts"][0]["stockIncomingAvailable"], -4);
 }
 
+// 仅类别变化也能预览和落盘；旧 worker 缺列不能清空观察值。
+#[test]
+fn category_changes_survive_legacy_reads_and_can_be_cleared() {
+    let old = normalized_rows(rows()).unwrap();
+    let before = stock_plan(&initial(), &old, "t1").unwrap().next;
+    let mut observations = rows();
+    observations[0]["erpCategory"] = json!("合成类别");
+    let updated = stock_plan(&before, &normalized_rows(observations.clone()).unwrap(), "t2").unwrap();
+    assert_eq!(updated.changes.len(), 4);
+    assert!(updated.changes.iter().all(|r| r["categoryAfter"] == "合成类别" && r["erpBefore"] == r["erpAfter"]));
+    let retained = stock_plan(&updated.next, &old, "t3").unwrap();
+    assert!(retained.changes.is_empty());
+    assert_eq!(retained.next["sourceCatalog"][0]["erpCategory"], "合成类别");
+    assert_eq!(retained.next["costSource"][0]["erpCategory"], "合成类别");
+    observations[0]["erpCategory"] = Value::Null;
+    let cleared = stock_plan(&retained.next, &normalized_rows(observations.clone()).unwrap(), "t4").unwrap();
+    assert_eq!(cleared.changes.len(), 4);
+    assert_eq!(cleared.next["costSource"][0].get("erpCategory"), Some(&Value::Null));
+    for invalid in [json!(123), json!("控\n制"), json!("类".repeat(101))] {
+        observations[0]["erpCategory"] = invalid;
+        assert!(normalized_rows(observations.clone()).is_err());
+    }
+}
+
 #[test]
 fn unknown_is_null_and_saved_starred_parts_still_refresh() {
     let mut before = initial();

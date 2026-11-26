@@ -43,7 +43,7 @@ async function fixture(onPatch,count=3){
   normalizeWorkspaceStateAsync,createSourceIndex,bindSources,alignDisplaySourceNames,normalizeProducts,posterModules,assertLoadedChanges,
   cloneEditorState,captureEditorState,withoutActivityLogs,mergeEditorState,rebaseHistorySnapshot,applySavedReceiptDraft,sameEditingState,sourceCatalog,historySnapshotBytes,compactConfigHistory,isConfigHistorySnapshot,
   crypto:{randomUUID},rememberDisplayParts(){},syncHistoryButtons(){},trimHistory(){},renderAll(){},pollDerivedStatus:async()=>{},scheduleImageSave(){},toast(){},
-  active:'c0',pendingImages:new Set(),displayBaseline:new Map(),setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('compact save unexpectedly hydrated full workspace');},
+  inventoryView:null,active:'c0',pendingImages:new Set(),displayBaseline:new Map(),setTimeout:()=>0,ensureFullWorkspace:async()=>{throw Error('compact save unexpectedly hydrated full workspace');},
   captureSaveSnapshot(state,base){const result=scope.captureSaveSnapshot(state,base);captures.push(scope.saveSnapshotIds(result));return result;},
   $:id=>{if(id==='#cloud-close')return null;if(!nodes.has(id))nodes.set(id,{textContent:''});return nodes.get(id);}};
  context.loadedIds=()=>context.state.configs.map(row=>row.id);context.current=()=>context.state.configs.find(row=>row.id===context.active&&!row.deletedAt);
@@ -60,6 +60,8 @@ async function hydrate(c,documents){
 
 test('全局操作后只重新读取有限详情，保留活动编辑对象和完整摘要',async()=>{
  const {context:c,documents,requests}=await fixture(null,250);await hydrate(c,documents);
+ // 库存全屏期间要保留所有详情，返回总表后才恢复压缩。
+ c.inventoryView={};await c.compactWorkspace();assert.equal(c.fullWorkspace,true);c.inventoryView=null;
  const live=c.state.configs[0];c.renderAll=()=>assert.fail('后台释放不能重建输入控件');
  await Promise.all([c.compactWorkspace(),c.compactWorkspace()]);
  assert.equal(c.fullWorkspace,false);assert.equal(c.state.configs.length,1);assert.equal(c.acceptedState.configs.length,1);

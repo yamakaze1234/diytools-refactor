@@ -3,7 +3,7 @@ export async function clickWorkbenchControl(page,selector){
  const control=page.locator(selector);
  // 最左分类导航是旧工具按钮的新可见入口；从菜单点击，由产品自己的转发控制器执行业务。
  const navigation={
-  '#inventory-check-open':['库存','检查商品库存'],'#profit-check-open':['库存','一键检测利润'],
+  '#inventory-check-open':['库存','检查商品库存'],
   '#price-changes-open':['库存','检查价格变化'],'#inventory-export-open':['库存','导出库存监控清单'],
   '#global-batch-open':['维护','批量修改配件 / 加购 / 导图'],'[data-nav="source"]':['维护','输出源维护'],
   '[data-nav="cost-source"]':['维护','三店共用成本价'],'[data-nav="templates"]':['图片','配置模板'],
@@ -29,7 +29,7 @@ export async function openWorkbenchEditor(page,panel){
 
 /** 对话框关闭也使用可见按钮，避免绕过用户关闭时的业务保护。 */
 export async function closeWorkbenchDialog(page){
- await page.locator('#dialog > form button[aria-label="关闭"]').click();
+ await page.locator('#dialog button[aria-label="关闭"]:visible').first().click();
  await page.locator('#dialog').waitFor({state:'hidden'});
 }
 

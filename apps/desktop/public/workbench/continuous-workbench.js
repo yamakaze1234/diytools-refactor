@@ -11,7 +11,8 @@ import {replaceSourcePart} from './source.js';
 import {markSourceFieldManual} from './source-follow.js';
 import {componentStockView} from './component-stock-view.js';
 import {erpDescription} from './erp-part-description.js';
-import {isSpecialComponent} from './special-components.js';
+import {isSpecialComponent,normalizeSpecialComponent} from './special-components.js';
+import {visibleNasCosts} from './nas-cost-overlay.js';
 import {taxOverrideLines} from './tax-override-model.js';
 import {changeOverviewTax,differentTax,overviewTableTotals,overviewTaxDifferenceCount,readOverviewFeeRate} from './overview-table-model.js';
 const blank=(slot,lineId)=>({slot,lineId:lineId||crypto.randomUUID(),name:'',goodsId:'',qty:1,erp:null,tax:null,upgrade:''});
@@ -61,7 +62,7 @@ export function createContinuousWorkbench(api){
  let renderedCanUndo,renderedCanRedo,historySyncQueued=false;
  // 11-19：总表显示时，在页面任意位置按 Ctrl/⌘+Z 撤销、Ctrl+Y 或 Ctrl/⌘+Shift+Z 重做；输入框里交给浏览器自己处理。
  host.ownerDocument.addEventListener('keydown',event=>{
-   if(disposed||host.hidden||document.querySelector('.workspace:is(.price-profit-active,.source-sheet-active)')||document.body.classList.contains('host-template-mode')||event.defaultPrevented||event.isComposing||event.altKey||!(event.ctrlKey||event.metaKey))return;
+   if(disposed||host.hidden||document.querySelector('.workspace:is(.price-profit-active,.source-sheet-active,.inventory-check-active)')||document.body.classList.contains('host-template-mode')||event.defaultPrevented||event.isComposing||event.altKey||!(event.ctrlKey||event.metaKey))return;
   const target=event.target;if(target instanceof HTMLElement&&(target.isContentEditable||target.closest('input, textarea, select')))return;
   const key=event.key.toLowerCase(),redo=key==='y'||key==='z'&&event.shiftKey;
   if(key!=='z'&&key!=='y')return;
@@ -82,16 +83,50 @@ export function createContinuousWorkbench(api){
  const lookupErp=api.erpSearch?async query=>(await api.erpSearch(query)).map(row=>({
   ...row,sourceId:'erp-only:'+row.goodsId,erpOnly:true,stock:componentStockView(row,[row]),
  })):null;
- let catalogVersion,catalogRows=[],stockCosts=new Map(),sourcesById=new Map();const projections=new Map();
- const project=(summary,settings,term)=>{const c=find(summary.id);if(!c)return {id:summary.id,name:summary.name,loading:true};const selected=api.selected().has(c.id),version=JSON.stringify([c,settings,selected,term]),cached=projections.get(c.id);if(cached?.version===version)return cached.value;const rows=projectedRows(c),raw=totals(c,settings),quote=pricing(c,{...settings,linkInstallment:term===null?null:undefined}),value={...c,hardwareIssues:configHardwareIssues(c),rows,extras:rows.extras,raw,totals:overviewTableTotals(c,raw,quote),pricing:quote,selected};projections.set(c.id,{version,value});return value;};
+ let catalogVersion,costRevision=0,catalogRows=[],stockCosts=new Map(),sharedCosts=new Map(),sourcesById=new Map();const projections=new Map();
+ // 只复制展示和实际配件，保护原配置及其草稿基线。
+ function withErpCosts(config,costs){
+  const copyPart=part=>({...normalizeSpecialComponent(part)});
+  return visibleNasCosts({...config,parts:(config.parts||[]).map(copyPart),actualParts:actualParts(config).map(copyPart)},costs,{erpOnly:true});
+ }
+ function project(summary,settings,term,costs){
+  const config=find(summary.id);
+  if(!config)return {id:summary.id,name:summary.name,loading:true};
+  const selected=api.selected().has(config.id),version=JSON.stringify([costRevision,config,settings,selected,term]);
+  const cached=projections.get(config.id);
+  if(cached?.version===version)return cached.value;
+  const view=withErpCosts(config,costs);
+  const rows=projectedRows(view),raw=totals(view,settings);
+  const quote=pricing(view,{...settings,linkInstallment:term===null?null:undefined});
+  const value={...view,hardwareIssues:configHardwareIssues(view),rows,extras:rows.extras,raw,totals:overviewTableTotals(view,raw,quote),pricing:quote,selected};
+  projections.set(config.id,{version,value});
+  return value;
+ }
  // 一次构建库存索引和共享候选；每个输入框不再复制整份目录或逐条扫描成本表。
- const pickerCatalog=shop=>{const version=api.catalogVersion()+':'+shop;if(catalogVersion===version)return catalogRows;const costs=new Map();for(const row of api.costs()){if(!costs.has(row.goodsId))costs.set(row.goodsId,[]);costs.get(row.goodsId).push(row);}stockCosts=costs;catalogRows=api.catalog(shop).map(p=>({...p,value:p.sourceId,label:p.name,searchText:[p.name,p.goodsId,p.erpName,costs.get(p.goodsId)?.[0]?.name].filter(Boolean).join(' ').normalize('NFKC').toLowerCase(),stock:componentStockView(p,costs)}));sourcesById=new Map(catalogRows.map(row=>[row.sourceId,row]));catalogVersion=version;return catalogRows;};
+ const pickerCatalog=shop=>{
+  const version=api.catalogVersion()+':'+shop;
+  if(catalogVersion===version)return catalogRows;
+  const costs=new Map();
+  for(const row of api.costs()){
+   if(!costs.has(row.goodsId))costs.set(row.goodsId,[]);
+   costs.get(row.goodsId).push(row);
+  }
+  catalogRows=api.catalog(shop).map(part=>({...part,value:part.sourceId,label:part.name,
+   searchText:[part.name,part.goodsId,part.erpName,costs.get(part.goodsId)?.[0]?.name].filter(Boolean).join(' ').normalize('NFKC').toLowerCase(),
+   stock:componentStockView(part,costs)}));
+  // 行价与利润缓存使用目录版本号，避免旧卡片长时间保留整份成本索引。
+  stockCosts=costs;
+  sharedCosts=new Map([...costs].map(([id,rows])=>[id,rows[0]]));
+  sourcesById=new Map(catalogRows.map(row=>[row.sourceId,row]));
+  catalogVersion=version;costRevision++;
+  return catalogRows;
+ };
  // 读取当前来源的人工字段，包括清空后为空，避免旧配置副本盖回原颜色。
  const withLiveHardware=(part,sources=sourcesById)=>{
   const source=sources.get(part?.sourceId);
   return source&&source.goodsId===part?.goodsId?{...part,hardwareOverrides:source.hardwareOverrides,hardwareFacts:source.hardwareFacts}:part;
  };
- const model=(cardId=null)=>{const editing=cardId?find(cardId):api.current(),visible=cardId?(api.cardAvailable?.()??api.available()).filter(c=>c.productId===editing?.productId&&c.shopId===editing?.shopId):configs(),details=visible.map(c=>find(c.id)).filter(Boolean),term=details.length===visible.length?productInstallment(details):undefined,settings=api.settings(editing?.shopId),ids=new Set(visible.map(c=>c.id));const catalog=pickerCatalog(editing?.shopId),cardCosts=stockCosts,cardSources=sourcesById,sharedIndex=new Map([...cardCosts].map(([id,rows])=>[id,rows[0]]));const cost=part=>isSpecialComponent(part)?null:cardCosts.get(String(part?.goodsId??''))?.[0];return {portalContainer:host.ownerDocument.body,cardId,active:editing?.id,productId:editing?.productId,loading,error:lastError,retry:()=>render(),configs:visible.map(c=>({...project(c,settings,term),taxOverrides:find(c.id)?taxOverrideLines(find(c.id),sharedIndex):[]})),
+ const model=(cardId=null)=>{const editing=cardId?find(cardId):api.current(),visible=cardId?(api.cardAvailable?.()??api.available()).filter(c=>c.productId===editing?.productId&&c.shopId===editing?.shopId):configs(),details=visible.map(c=>find(c.id)).filter(Boolean),term=details.length===visible.length?productInstallment(details):undefined,settings=api.settings(editing?.shopId),ids=new Set(visible.map(c=>c.id));const catalog=pickerCatalog(editing?.shopId),cardCosts=stockCosts,cardSources=sourcesById,sharedIndex=sharedCosts;const cost=part=>isSpecialComponent(part)?null:cardCosts.get(String(part?.goodsId??''))?.[0];return {portalContainer:host.ownerDocument.body,cardId,active:editing?.id,productId:editing?.productId,loading,error:lastError,retry:()=>render(),configs:visible.map(c=>({...project(c,settings,term,sharedIndex),taxOverrides:find(c.id)?taxOverrideLines(find(c.id),sharedIndex):[]})),
  restoreTaxes:id=>safe(()=>api.restoreTaxes(taxOverrideLines(find(id),sharedIndex).map(line=>({configId:id,lineKey:line.lineKey})))),
  catalog,manualTax:part=>cost(part)?.nasManualTax===true,stock:part=>componentStockView(part,cardCosts),different:part=>differentTax(part,cost(part)),globalTax:part=>cost(part)?.globalTax||null,baseTax:part=>cost(part)?.tax??part.taxOverride?.base??null,
  describePart:(part,shown,slot)=>erpDescription(withLiveHardware(part,cardSources),withLiveHardware(shown,cardSources),
@@ -168,16 +203,16 @@ export function createContinuousWorkbench(api){
   api.toast('已粘贴 '+lines.length+' 行 · 可撤销');
  }),
  copy:(id,indexes)=>safe(()=>{clipboard=copyRows(find(id),indexes);return clipboard;}),
- paste:(id,start,payload=clipboard)=>safe(()=>{const c=find(id);if(!c)throw Error('目标配置已变化');const after=planPasteRows(c,start,payload,api.catalog());api.update(id,target=>Object.assign(target,after),'按位置粘贴配件',true);return true;}),
+ paste:(id,start,payload=clipboard)=>safe(()=>{const c=find(id);if(!c)throw Error('目标配置已变化');const after=planPasteRows(c,start,payload,api.catalog(c.shopId));api.update(id,target=>Object.assign(target,after),'按位置粘贴配件',true);return true;}),
  detail:async(id,target)=>{await api.activate(id);if(api.current()?.id===id)api.tab(target);},
  notice:api.toast,
  // 11-19：在利润格填目标利润，反推到手价（四舍五入到元；勾了取 99 再按 99 规则取整）。
- priceForProfit:(id,kind,target)=>priceForProfit(find(id),kind,target),
+ priceForProfit:(id,kind,target)=>priceForProfit(find(id),kind,target,sharedIndex),
  targetProfit:(id,kind,value)=>safe(()=>{
   const text=String(value??'').normalize('NFKC').replace(/[,，\s]/g,'').replace(/^[−–]/,'-'),target=Number(text);
   if(text===''||text==='-'||!Number.isFinite(target))throw Error('请输入目标利润，可为负数');
   const c=find(id);if(!c)throw Error('配置已变化，请重新选择');
-  const price=priceForProfit(c,kind,target);
+  const price=priceForProfit(c,kind,target,sharedIndex);
   if(price==null)throw Error('成本不完整，无法反推到手价');
   if(price<0)throw Error('目标利润过低，反推出的到手价小于 0');
   if(c.price!==price)api.update(id,next=>{next.price=price;},(kind==='tax'?'按核算利润':'按 ERP 利润')+'反推到手价');
@@ -185,9 +220,10 @@ export function createContinuousWorkbench(api){
  };};
  // 反推公式与 overviewTableTotals 同口径：
  // 核算利润 = 到手价 − 核算成本 − 分期费；ERP 利润 = 到手价 × 98% − ERP 总价（不扣分期）；分期费 = 到手价 × 分期费率。
- function priceForProfit(c,kind,target){
+ function priceForProfit(c,kind,target,costs){
   if(!c||!Number.isFinite(target))return null;
-  return priceForTarget(c,api.settings(c.shopId),kind,target);
+  const settings=api.settings(c.shopId);
+  return priceForTarget(withErpCosts(c,costs),settings,kind,target);
  }
  function draw(){
   if(disposed||!api.current()||api.tab()!=='parts')return;

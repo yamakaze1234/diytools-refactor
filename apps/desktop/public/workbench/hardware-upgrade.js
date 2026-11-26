@@ -1,3 +1,4 @@
+import {categoryFromErp} from './component-category.js';
 import {boardType,boardCaseIssue,copyHardware} from './component-hardware.js';
 /** 手动展示只确认当前文案、选项与机箱；内容或机箱变化后重新提示。 */
 export const hardwareUpgradeKey=(item,config)=>JSON.stringify([item.sourceId,item.goodsId,item.upgrade,item.text,item.choices,item.items,config?.parts?.filter(p=>p.slot==='机箱').map(p=>[p.goodsId,p.name,p.hardwareOverrides,p.hardwareFacts])]);
@@ -13,7 +14,7 @@ export function upgradeHiddenReason(item,config){
  for(const p of candidates){
   // 非主板配件不参与板型判断；自由文案不能仅凭类似型号的字符串猜测。
   const name=p.hardwareName||p.name||p.label||p.text||'';
-  const category=p.slot||p.erpCategory;
+  const category=categoryFromErp(p.erpCategory)||p.slot;
   if(category&&category!=='主板')continue;
   if(!/主板/.test(name)&&/水冷|散热|冷头/.test(name))continue;
   const boardContext=category==='主板'||/主板|大板|小板/.test(name)||!!p.hardwareName;

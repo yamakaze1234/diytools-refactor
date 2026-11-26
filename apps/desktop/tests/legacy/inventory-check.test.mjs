@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {configurationStock,checkInventory,componentStock,inventoryThreshold,stockReplacementPlan,validateStockReplacement} from '../../public/workbench/inventory-check-data.js';
-import {applyReplacement} from '../../public/workbench/global-batch.js';
+import {replaceBothParts} from "../../public/workbench/replace-both-parts.js";
+import {stockReplacementTasksPlan,inventoryCounts,configurationStock,checkInventory,componentStock,inventoryThreshold,stockReplacementPlan,validateStockReplacement} from '../../public/workbench/inventory-check-data.js';
+import {applyReplacement,replacementDiff} from '../../public/workbench/global-batch.js';
 const costs=[{goodsId:'100',stockAvailable:0,stockUpdatedAt:'2026-09-18T10:00:00Z'},{goodsId:'200',stockAvailable:5},{goodsId:'300',stockAvailable:6},{goodsId:'400',stockAvailable:null}];
 const original={sourceId:'old',goodsId:'100',name:'旧 CPU',qty:2,slot:'CPU',posterVisible:false,erp:100,tax:120};
 const config=(id,productId)=>({id,productId,shopId:'intel',product:productId,name:id,parts:[structuredClone(original)],addons:[{sourceId:'old',text:'原绑定加购',variantId:'old-variant'},{text:'独立服务'}]});
@@ -63,4 +64,39 @@ test('现货已空的配件在选择器和总表提示有货在途',async()=>{
  const row={goodsId:'21',stockAvailable:0,stockIncomingAvailable:2};
  assert.match(componentStockView(row,[row]).label,/有货在途.*待入可销 2/);
  assert.doesNotMatch(componentStockView(row,[{...row,stockIncomingAvailable:null}]).label,/待入可销|在途/);
+});
+
+test('ERP 大类优先于部位，历史行回退部位、名称及其他配件',()=>{
+ const c=config('a','p');
+ c.parts=[
+  {slot:'CPU',sourceId:'one',goodsId:'1',name:'型号一'},
+  {slot:'CPU',sourceId:'two',goodsId:'2',name:'型号二'},
+  {slot:'散热风扇',goodsId:'3',name:'型号三'},
+  {slot:'配件1',goodsId:'4',name:'NVMe SSD'},
+  {slot:'配件2',goodsId:'5',name:'未分类型号'}
+ ];
+ const costs=[{goodsId:'1',erpCategory:'固态硬盘',stockAvailable:0},{goodsId:'2',stockAvailable:2}];
+ const sources=['one','two'].map((sourceId,index)=>({sourceId,goodsId:String(index+1),shopId:'intel',erpCategory:'显卡'}));
+ const report=checkInventory([c,{...c,id:'b'}],costs,'intel',5,sources);
+ assert.deepEqual(report.issues.map(i=>i.category),['硬盘','显卡','风扇','硬盘','其他配件']);
+ assert.deepEqual(inventoryCounts(report.issues),{out:1,low:1,unknown:3});
+});
+
+test('库存替换任务只在展示部位写入手工名，实际 BOM 与默认替换一致',()=>{
+ const c=config('a','p'),report=checkInventory([c],costs,'intel');
+ const task={issueKey:'100',productIds:['p'],sourceId:'new',displayName:'  海报名称  '};
+ const plan=stockReplacementTasksPlan([c],costs,[replacement],report,[task]);
+ validateStockReplacement(plan,[c],costs,[replacement]);
+ const after=plan.changes[0].after,expected=structuredClone(c);
+ replaceBothParts(expected,'CPU',replacement);
+ const defaultPlan=stockReplacementTasksPlan([c],costs,[replacement],report,[{...task,displayName:''}]);
+ assert.deepEqual(after.actualParts,defaultPlan.changes[0].after.actualParts);
+ assert.equal(after.parts[0].displayName,'海报名称');
+ assert.equal(after.parts[0].sourceFollow.name.mode,'manual');
+ assert.equal(after.parts[0].name,replacement.name);
+ assert.match(replacementDiff(plan),/海报名称（实际：新 CPU）/);
+ for(const displayName of [null,'  ',replacement.name]){
+  const result=structuredClone(c);replaceBothParts(result,'CPU',replacement,null,{displayName});
+  assert.deepEqual(result,expected);
+ }
 });

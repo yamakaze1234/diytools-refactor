@@ -1,0 +1,172 @@
+/* 保存加购与待确认窗口沿用设计稿的紧凑控件、主题色和固定操作区。 */
+.sd-modal {
+ --sd-canvas:#eeefe9;--sd-panel:#fff;--sd-control:#fafaf8;--sd-soft:#eeeee9;--sd-line:#d8d8d4;--sd-rule:#e7e7e2;
+ --sd-ink:#1e1e1c;--sd-muted:#656561;--sd-accent:#fffa00;--sd-focus:#877b00;--sd-selected:#fff7cf;--sd-selected-ink:#5d4b03;
+ --sd-blue-bg:#e8f3fa;--sd-blue-line:#7eb2d6;--sd-blue-ink:#16557d;
+ --sd-amber-bg:#fff6e0;--sd-amber-line:#dfb357;--sd-amber-ink:#8a5308;
+ --sd-grey-bg:#f1f1ed;--sd-grey-line:#c9c9c2;--sd-grey-ink:#5f5f5a;
+ --sd-ok-bg:#eaf5ed;--sd-ok-line:#84b894;--sd-ok-ink:#1f633a;--sd-out-bg:#fdf0f0;--sd-out-ink:#a92e32;
+ background:var(--sd-panel);color:var(--sd-ink);font:13px/1.45 'Segoe UI','Microsoft YaHei UI','PingFang SC',sans-serif;
+}
+html.dark .sd-modal {
+ color-scheme:dark;--sd-canvas:#1d1e21;--sd-panel:#242529;--sd-control:#2c2d32;--sd-soft:#2e3036;--sd-line:#44464c;--sd-rule:#34363b;
+ --sd-ink:#eceef1;--sd-muted:#a9afb8;--sd-focus:#fffa00;--sd-selected:#34311e;--sd-selected-ink:#fffa00;
+ --sd-blue-bg:#1c2f3d;--sd-blue-line:#3d6d8f;--sd-blue-ink:#8fd0ff;
+ --sd-amber-bg:#372d18;--sd-amber-line:#8c6c24;--sd-amber-ink:#f6cc63;
+ --sd-grey-bg:#2e3035;--sd-grey-line:#565a63;--sd-grey-ink:#b6bcc6;
+ --sd-ok-bg:#1e3528;--sd-ok-line:#3d7554;--sd-ok-ink:#9be0b2;--sd-out-bg:#3b2023;--sd-out-ink:#ff9496;
+}
+body :is(#dialog.source-dialog, #dialog, dialog.source-changes-dialog):has(.sd-review),
+body dialog.sd-saved-dialog {
+ width:min(1100px,calc(100vw - 32px))!important;min-width:0!important;max-width:calc(100vw - 32px)!important;
+ max-height:calc(100dvh - 32px)!important;margin:auto!important;
+ border:1px solid #d8d8d4!important;border-radius:2px!important;box-shadow:0 20px 50px #0004!important;
+ padding:0!important;overflow:hidden!important;
+}
+/* 两种差异窗口共用内容高度，只给中间列表分配可滚动的剩余空间。 */
+body :is(#dialog.source-dialog, #dialog, dialog.source-changes-dialog):has(.sd-review) {
+ height:auto!important;min-height:min(440px,calc(100dvh - 32px))!important;max-height:min(670px,calc(100dvh - 32px))!important;
+ top:50%!important;bottom:auto!important;translate:0 -50%;
+}
+body :is(#dialog,dialog.source-changes-dialog)[open]:has(.sd-review) {display:flex;flex-direction:column;}
+body dialog.sd-saved-dialog {width:min(620px,calc(100vw - 32px))!important;height:auto!important;overflow:auto!important;}
+body :is(#dialog,dialog.source-changes-dialog):has(.sd-review)::backdrop,
+body dialog.sd-saved-dialog::backdrop {background:rgba(15,15,15,.48)!important;backdrop-filter:none!important;}
+body #dialog:has(.sd-review)>form,
+body dialog.source-changes-dialog:has(.sd-review)>.source-changes-close {display:none!important;}
+body #dialog:has(.sd-review) #dialog-body {display:flex;flex-direction:column;flex:1 1 auto;min-height:0;padding:0!important;margin:0!important;overflow:hidden!important;scrollbar-gutter:auto;}
+body .sd-modal [hidden] {display:none!important;}
+body .sd-modal :is(button,select,input[type=search]),body .sd-fields summary {
+ box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:0!important;
+ height:30px;padding:0 10px!important;border:1px solid var(--sd-line)!important;border-radius:2px!important;
+ background:var(--sd-control)!important;color:var(--sd-ink)!important;font-family:inherit;line-height:1.35;font-size:12px!important;font-weight:400;white-space:nowrap;
+}
+body .sd-modal :is(select,input[type=search]) {background:var(--sd-panel)!important;box-shadow:none!important;min-width:0;}
+body .sd-modal :is(button,summary):hover:not(:disabled) {border-color:var(--sd-focus)!important;}
+body .sd-modal button:disabled {opacity:.45;cursor:default;}
+body .sd-modal button.sd-primary {
+ background:var(--sd-accent)!important;color:#161616!important;border-color:var(--sd-focus)!important;font-weight:700;
+ clip-path:polygon(0 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%);
+}
+body .sd-modal :is(label,input[type=checkbox]) {cursor:pointer;}
+body .sd-modal input[type=checkbox] {width:14px!important;height:14px!important;min-height:0!important;margin:0;flex:none;accent-color:var(--sd-focus);}
+.sd-modal small {color:var(--sd-muted);font-size:11px;}
+.sd-modal .sd-badge {display:inline-flex;align-items:center;padding:1px 6px;border:1px solid;border-radius:2px;font-size:11px;font-weight:600;white-space:nowrap;font-variant-numeric:tabular-nums;}
+.sd-modal .sd-cat {background:var(--sd-soft);border-color:var(--sd-line);color:var(--sd-ink);font-weight:500;}
+.sd-modal .sd-blue {background:var(--sd-blue-bg);border-color:var(--sd-blue-line);color:var(--sd-blue-ink);}
+.sd-modal .sd-amber {background:var(--sd-amber-bg);border-color:var(--sd-amber-line);color:var(--sd-amber-ink);}
+.sd-modal .sd-grey {background:var(--sd-grey-bg);border-color:var(--sd-grey-line);color:var(--sd-grey-ink);}
+.sd-modal .sd-ok {background:var(--sd-ok-bg);border-color:var(--sd-ok-line);color:var(--sd-ok-ink);}
+.sd-header,.sd-header>div,.sd-tabbar,.sd-filters,.sd-tabbar>div,.sd-group-head,.sd-group-head>div,.sd-image-types,.sd-select-pair,.sd-saved-footer,.sd-saved-sources {display:flex;align-items:center;flex-wrap:wrap;gap:8px;}
+.sd-header,.sd-tabbar,.sd-group-head,.sd-saved-footer {justify-content:space-between;}
+.sd-header {padding:10px 16px;border-bottom:1px solid var(--sd-line);}
+.sd-header strong {font-size:15px;font-weight:700;}
+body .sd-modal .sd-header button,body .sd-modal .sd-group-head button,body .sd-modal .sd-member button,body .sd-modal .sd-footnote button {height:24px;padding:0 8px!important;font-size:11px!important;}
+/* 宿主的通用 dialog 自带标题，改由弹窗内的店铺标识与关闭按钮承接。 */
+.sd-review {display:flex;flex-direction:column;flex:1 1 auto;min-width:0;min-height:0;}
+.sd-review>:not(.sd-list) {flex:none;}
+.sd-toolbar {background:var(--sd-control);border-bottom:1px solid var(--sd-line);padding:10px 16px;}
+.sd-tabbar>div {gap:6px;}
+.sd-tabbar button[aria-pressed=true] {background:var(--sd-selected)!important;color:var(--sd-selected-ink)!important;border-color:var(--sd-focus)!important;font-weight:650;}
+.sd-filters {margin-top:8px;}
+.sd-filters input[type=search] {flex:1 1 240px;min-width:100px;}
+body .sd-review .sd-filters select {width:auto;min-width:112px;max-width:168px;}
+.sd-fields {position:relative;}
+.sd-fields summary {list-style:none;cursor:pointer;}
+.sd-fields summary::-webkit-details-marker {display:none;}
+body details.sd-fields>summary::after {content:none;}
+.sd-fields>div {position:absolute;top:100%;right:0;z-index:3;min-width:146px;display:grid;gap:8px;padding:10px;background:var(--sd-panel);border:1px solid var(--sd-line);box-shadow:0 4px 15px #0002;}
+.sd-fields label,.sd-footer-settings>label,.sd-image-types label {display:inline-flex;align-items:center;gap:4px;font-size:12px;white-space:nowrap;}
+.sd-list {flex:1 1 auto;min-height:0;overflow:auto;padding:14px;background:var(--sd-canvas);}
+.sd-review>#source-diff {max-height:none;}
+.sd-empty {margin:0;padding:40px;text-align:center;font-size:12px;color:var(--sd-muted);background:var(--sd-panel);border:1px solid var(--sd-line);}
+.sd-group {background:var(--sd-panel);border:1px solid var(--sd-line);border-left:3px solid;border-radius:2px;overflow:hidden;}
+.sd-group+.sd-group {margin-top:10px;}
+.sd-group.sd-follow {border-left-color:var(--sd-blue-ink);}
+.sd-group.sd-manual {border-left-color:var(--sd-amber-ink);}
+.sd-group.is-selected {border-block-color:var(--sd-focus);border-right-color:var(--sd-focus);box-shadow:0 1px 4px color-mix(in srgb,var(--sd-focus) 22%,transparent);}
+.sd-group-head {padding:8px 12px;background:var(--sd-soft);border-bottom:1px solid var(--sd-rule);font-size:12px;}
+.sd-group-head>div:last-child {gap:6px;}
+.sd-compare {display:grid;grid-template-columns:minmax(0,1fr) 24px minmax(0,1fr);align-items:center;gap:8px;background:var(--sd-control);padding:8px 12px;font-size:12px;}
+.sd-compare>div {border:1px solid var(--sd-rule);background:var(--sd-panel);padding:8px;border-radius:2px;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap;}
+.sd-compare small {display:block;margin-bottom:2px;font-size:10px;}
+.sd-compare>b {place-self:center;font-size:16px;line-height:1;color:var(--sd-muted);}
+.sd-compare mark {padding:1px 3px;border-radius:2px;}
+.sd-compare mark.source-before {background:var(--sd-out-bg);color:var(--sd-out-ink);text-decoration:line-through;}
+.sd-compare mark.source-after {background:var(--sd-ok-bg);color:var(--sd-ok-ink);font-weight:600;}
+.sd-members {padding:10px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;border-top:1px dashed var(--sd-rule);}
+.sd-member {padding:6px 10px;min-width:0;display:flex;gap:6px;align-items:center;background:var(--sd-control);border:1px solid var(--sd-rule);border-radius:2px;font-size:12px;}
+.sd-member:has(:checked) {background:var(--sd-selected);border-color:var(--sd-focus);}
+.sd-member label {display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
+.sd-member label :is(strong,span) {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sd-member label span {color:var(--sd-muted);}
+.sd-member small {font-size:10px;white-space:nowrap;}
+.sd-footer {display:grid;gap:8px;padding:8px 16px;border-top:1px solid var(--sd-line);}
+.sd-export-row,.sd-actions {display:flex;align-items:center;justify-content:space-between;gap:12px;}
+.sd-footer-settings,.sd-footer-options,.sd-action-buttons,.sd-footnote {display:flex;align-items:center;gap:6px;}
+.sd-footer-settings {flex:none;font-size:12px;}
+.sd-select-pair,.sd-image-types {gap:6px;}
+.sd-footer :is(.sd-select-pair,.sd-image-types) {flex-wrap:nowrap;}
+.sd-image-types label {font-weight:400;}
+.sd-footer-options select {height:26px!important;font-size:11px!important;padding:0 4px!important;max-width:140px;}
+.sd-action-buttons,.sd-footnote button {flex:none;}
+.sd-action-buttons #source-apply {margin:0;}
+.sd-footnote {min-width:0;justify-content:flex-end;}
+.sd-footnote small {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.sd-muted-options {opacity:.55;}
+/* 保存后的决策窗 */
+.sd-saved-dialog .sd-header,.sd-saved-footer {padding:12px 16px;}
+.sd-saved-content {padding:16px;display:grid;gap:14px;font-size:12px;}
+.sd-saved-sources {background:var(--sd-control);border:1px solid var(--sd-rule);border-radius:2px;padding:8px 12px;gap:6px;max-height:130px;overflow:auto;}
+.sd-split {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+.sd-split section {border:1px solid;border-left-width:3px;border-radius:2px;padding:12px;}
+.sd-split section>div {display:flex;justify-content:space-between;align-items:center;gap:4px;}
+.sd-split strong {font-size:18px;font-variant-numeric:tabular-nums;}
+.sd-split small {display:block;margin-top:4px;}
+.sd-follow-card {background:var(--sd-blue-bg);border-color:var(--sd-blue-line)!important;color:var(--sd-blue-ink);border-left-color:var(--sd-blue-ink)!important;}
+.sd-manual-card {background:var(--sd-amber-bg);border-color:var(--sd-amber-line)!important;color:var(--sd-amber-ink);border-left-color:var(--sd-amber-ink)!important;}
+.sd-saved-export {border:1px solid var(--sd-line);background:var(--sd-control);border-radius:2px;padding:12px;}
+.sd-export-intro {display:flex;align-items:flex-start;gap:8px;}
+.sd-export-intro input {margin-top:2px!important;}
+.sd-export-intro small {display:block;}
+#prompt-export-options {margin-top:10px;padding:8px 0 0 22px;border-top:1px dashed var(--sd-rule);}
+#prompt-export-options .sd-image-types {gap:16px;margin-bottom:8px;}
+#prompt-export-options .sd-image-types>span {color:var(--sd-muted);font-weight:600;}
+#prompt-export-options .sd-select-pair {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+#prompt-export-options .sd-select-pair label>span {display:block;color:var(--sd-muted);font-size:11px;margin-bottom:4px;}
+#prompt-export-options select {width:100%;}
+.sd-saved-footer {border-top:1px solid var(--sd-line);background:var(--sd-control);}
+[data-prompt-status] {margin:0;color:var(--sd-muted);font-size:12px;}
+@media(max-width:740px) {
+ .sd-members,.sd-split {grid-template-columns:1fr;}
+ .sd-compare {grid-template-columns:minmax(0,1fr) 12px minmax(0,1fr);gap:4px;}
+ .sd-footer select {max-width:125px;}
+ .sd-review .sd-header small {display:none;}
+ .sd-toolbar,.sd-footer,.sd-header {padding:8px;}
+ .sd-export-row,.sd-actions,.sd-footer-settings,.sd-footer-options,.sd-action-buttons,.sd-footnote {flex-wrap:wrap;gap:6px;}
+ .sd-footer-settings,.sd-action-buttons {max-width:100%;}
+ .sd-footnote {justify-content:flex-start;}
+ .sd-footnote small {white-space:normal;overflow-wrap:anywhere;}
+}
+
+
+/* 全局 Endfield 主题在层内给所有按钮设了重要规则，仅在这两个窗口恢复原稿控件。 */
+@layer workbench-interaction {
+ html body dialog#modal-save-prompt {
+  position:fixed!important;inset:0!important;margin:auto!important;height:max-content!important;min-height:0!important;
+  font:13px/1.45 'Segoe UI','Microsoft YaHei UI','PingFang SC',sans-serif!important;
+ }
+ html body .sd-modal :is(button,select,input[type=search],summary) {
+  background:var(--sd-control)!important;color:var(--sd-ink)!important;border:1px solid var(--sd-line)!important;
+  border-radius:2px!important;clip-path:none!important;box-shadow:none!important;letter-spacing:normal!important;
+  font-family:'Segoe UI','Microsoft YaHei UI','PingFang SC',sans-serif!important;
+ }
+ html body .sd-modal :is(input[type=search],select) {background:var(--sd-panel)!important;}
+ html body .sd-modal button::before,html body .sd-modal button::after {content:none!important;}
+ html body .sd-modal button:hover:not(:disabled) {border-color:var(--sd-focus)!important;}
+ html body .sd-modal button[aria-pressed=true] {background:var(--sd-selected)!important;border-color:var(--sd-focus)!important;color:var(--sd-selected-ink)!important;}
+ html body .sd-modal button.sd-primary {background:var(--sd-accent)!important;color:#161616!important;border-color:var(--sd-focus)!important;clip-path:polygon(0 0,100% 0,100% calc(100% - 6px),calc(100% - 6px) 100%,0 100%)!important;}
+ html body dialog:has(.sd-review)::backdrop,html body #modal-save-prompt::backdrop {background:rgba(15,15,15,.48)!important;}
+}
+.sd-pagination {display:flex;gap:8px;align-items:center;justify-content:center;background:var(--sd-control);color:var(--sd-muted);font-size:11px;padding:3px;}
+.sd-pagination button {height:24px!important;}

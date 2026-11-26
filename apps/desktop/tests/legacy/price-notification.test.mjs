@@ -8,7 +8,7 @@ function fixture(){
  const opened=[],requests=[],dialog={open:false},listeners={};let pending=false,focused=false,batches=[{revision:5,seen:false}];
  const c={window:{workbenchReady:true,workbenchHasPendingChanges:()=>pending},document:{addEventListener:(name,fn)=>listeners[name]=fn,activeElement:{matches:()=>focused}},conflict:false,workspaceLoad:null,fullActionBusy:0,state:{revision:10},
   $:()=>dialog,setInterval(){},toast(){},console,request:async()=>{requests.push(1);return{batches};},showPriceChanges:async options=>{opened.push(options);}};
- vm.runInNewContext(extract('const priceNotifications=','function openProfitFull('),c);
+ vm.runInNewContext(extract('const priceNotifications=','let inventoryView='),c);
  return{c,opened,requests,dialog,listeners,setPending:v=>pending=v,setFocused:v=>focused=v,setBatches:v=>batches=v};
 }
 test('启动、普通保存版本推进及点击其他按钮不读取或弹出旧未读价格批次',async()=>{
@@ -54,7 +54,7 @@ test('慢查询期间已经点击或按键，即使其他功能已关闭也不�
 test('ERP回载失败或拒绝时清除本次待提示，成功留给解锁后的完成回调',async()=>{
  for(const result of [true,false,'error']){
   const events=[],c={priceNotifications:[],receiveErp:async()=>{events.push('receive');c.priceNotifications.push({revision:11});if(result==='error')throw Error('回载失败');return result;},checkPriceChanges:async()=>events.push('check')};
-  vm.runInNewContext(extract('async function receiveErpForPrices(','function openProfitFull('),c);
+  vm.runInNewContext(extract('async function receiveErpForPrices(','let inventoryView='),c);
   if(result==='error')await assert.rejects(c.receiveErpForPrices({}),/回载失败/);else await c.receiveErpForPrices({});
   assert.deepEqual(events,['receive']);assert.equal(c.priceNotifications.length,result===true?1:0);
  }

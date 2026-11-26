@@ -1,80 +1,138 @@
-/** 库存检测弹窗：展示不足项、定位配置并组织替换预览与确认。 */
-import {mountBatchTasks} from './batch-task-plans.js';
+// 库存全屏页按同一报告筛选和分组，替换业务继续使用统一预览与保存校验。
 import {replacementDiff} from './global-batch.js';
-import {checkInventory,componentStock,stockReplacementTasksPlan,validateStockReplacement,inventoryThreshold} from './inventory-check-data.js';
-import {mountProductSearch} from './product-search.js';
+import {checkInventory,stockReplacementTasksPlan,validateStockReplacement,inventoryThreshold,savedInventoryThreshold,inventoryCategories} from './inventory-check-data.js';
+import {inventoryShell,drawInventoryResults,stockTime} from './inventory-check-view.js';
+import {stockTaskEditor} from './inventory-check-tasks.js';
 import {inventoryLinks} from './inventory-export.js';
 import {sourceImageEntries} from './source-sync-data.js';
-import {isSpecialComponent} from './special-components.js';
 import {renderPoster} from './poster.js';
 import {makeZip} from './zip.js';
 
-const labels={out:'无库存',low:'低库存',unknown:'库存未知',ok:'库存充足'};
-/** 将库存报告、阈值和候选商品选择绑定到统一批量应用流程。 */
 export function openInventoryCheck(api){
- const {openDialog,esc,getConfigs:getAllConfigs,getCosts,getCatalog,shop,save,download,product=null}=api;
- // 固定打开时的链接范围；重新检查、替换预览和导出都读取该链接的最新配置。
- const productId=product?.id;
- const getConfigs=()=>product?inventoryLinks(getAllConfigs(),shop.id).find(group=>group.id===productId)?.configs||[]:getAllConfigs();
- const scope=product?`${shop.name} · 当前链接：${product.name}${product.spu?' · SPU '+product.spu:''}`:`${shop.name} · 全店链接`;
- let threshold=5;try{threshold=inventoryThreshold(localStorage.getItem('diy-stock-threshold')??5);}catch{}
- openDialog(product?'检查该链接库存':'检查链接库存',`<p class="hint">${esc(scope)} · 检查本机最近一次 ERP 库存，特殊配件不参与检查；图片中隐藏的普通配件仍检查。库存未知不视为无库存。当前离线版不采集实时 ERP 库存，时间以本机记录为准。</p><div class="stock-check-toolbar"><label class="field">低库存阈值（≤）<input id="stock-threshold" type="number" min="0" max="100000000" step="1" value="${threshold}"></label><button id="stock-scan" class="primary">重新检查</button></div><p id="stock-summary" class="hint"></p><section id="stock-tasks"></section><div id="stock-results"></div><section id="stock-work" hidden><h3 id="stock-edit-title"></h3><div class="actions"><button id="stock-select-all">全选对应链接</button><button id="stock-select-none">取消全选</button></div><div id="stock-links" class="global-list"></div><div id="stock-picker"></div><p class="hint">展示配件和实际配件按对应部位同时替换，保留各自数量；更新逐项加购描述，独立加购保留。请核对下方变化后应用。</p></section><section id="stock-task-actions"><div class="source-fields"><span>保存后导出所选链接全部配置：</span><label><input type="checkbox" data-stock-layout="long">配置图</label><label><input type="checkbox" data-stock-layout="square">SKU 图</label><label class="field">SKU 图样式<select id="stock-sku-mode"><option value="dedicated">缩略图（专用 SKU 排版）</option><option value="padded" selected>详情图补白至 1:1</option></select></label></div><div class="actions"><button id="stock-preview">预览全部任务</button><button id="stock-apply" class="primary" disabled>应用全部并保存</button><button id="stock-retry" hidden>重新保存并导出</button></div><div id="stock-diff"></div></section><p id="stock-message" class="hint" role="status" aria-live="polite"></p>`);
- const dialog=document.querySelector('#dialog'),root=document.querySelector('#dialog-body'),$=s=>root.querySelector(s);dialog.classList.add('stock-check-dialog');
- let report=null,issue=null,plan=null,picker=null,busy=false,retry=null,locks=[];
- const message=text=>{if(root.isConnected)$('#stock-message').textContent=text;};
- const invalidate=()=>{plan=null;$('#stock-apply').disabled=true;$('#stock-diff').innerHTML='';};
+ const {root,esc,getConfigs:getAllConfigs,getCosts,shop,product,download,getCatalog}=api;
+ const $=selector=>root.querySelector(selector);
+ let single=!!api.single,threshold=savedInventoryThreshold(),report,plan,retry,busy=false,visible=[];
+ const filters={status:'issues',category:'',group:'status'},expanded=new Set();
+ const getConfigs=()=>single?inventoryLinks(getAllConfigs(),shop.id).find(g=>g.id===product?.id)?.configs||[]:getAllConfigs();
+ root.innerHTML=inventoryShell(api,threshold);
+ const message=text=>$('#stock-message').textContent=text;
+ const invalidate=()=>{plan=null;$('#stock-apply').disabled=true;$('#stock-diff').replaceChildren();};
  const layouts=()=>[...root.querySelectorAll('[data-stock-layout]:checked')].map(el=>el.dataset.stockLayout);
- const picked=()=>[...root.querySelectorAll('[data-stock-link]:checked')].map(el=>el.value);
- function lock(value){busy=value;if(value){locks=[...dialog.querySelectorAll('button,input,select,textarea')].map(el=>[el,el.disabled]);locks.forEach(([el])=>el.disabled=true);}else locks.forEach(([el,disabled])=>{if(el.isConnected)el.disabled=disabled;});}
- const controller=new AbortController();dialog.addEventListener('cancel',e=>{if(busy)e.preventDefault();},{signal:controller.signal});dialog.addEventListener('close',()=>controller.abort(),{once:true});
- const date=value=>value?new Date(value).toLocaleString():'未记录时间';
- const describe=row=>isSpecialComponent(row)?'特殊配件 · 不检查库存':(()=>{const s=componentStock(row.goodsId,getCosts(),report?.threshold??threshold);return `ID ${row.goodsId} · ${labels[s.status]}${s.value===null?'':` ${s.value}`} · ${date(s.updatedAt)}${s.incoming!=null&&s.value!=null&&s.incoming>s.value?' · 待入可销 '+s.incoming:''}`;})();
+ const lock=value=>{busy=value;root.inert=value;$('#stock-scan').disabled=value;};
+ const clearRetry=()=>{retry=null;$('#stock-retry').hidden=true;};
+ const snapshot=()=>checkInventory(getConfigs(),getCosts(),shop.id,threshold,getCatalog());
+ const tasks=stockTaskEditor({$,esc,getCatalog,getCosts,getConfigs:getAllConfigs,shop,invalidate,drawReport});
  function drawReport(){
-  const actionable=report.issues.filter(r=>r.status!=='unknown'),unknown=report.issues.filter(r=>r.status==='unknown');
-  $('#stock-summary').textContent=`检查 ${report.linkCount} 个链接、${report.configCount} 套配置；无库存 ${actionable.filter(r=>r.status==='out').length} 种，低库存 ${actionable.filter(r=>r.status==='low').length} 种，未知 ${unknown.length} 种；忽略 ${report.skippedSpecial} 处特殊配件。`;
-  const card=(row,i)=>`<details class="stock-issue"><summary class="stock-issue-heading"><div><strong class="stock-${row.status}">${labels[row.status]}${row.value===null?'':' · '+row.value}</strong><h4>${esc(row.name)}</h4><small>goodsId ${esc(row.goodsId||'未绑定')} · 库存时间：${esc(date(row.updatedAt))}${row.incoming!=null&&row.value!=null&&row.incoming>row.value?' · '+(row.value<=0&&row.incoming>0?'有货在途 · ':'')+'待入可销 '+esc(row.incoming):''}${row.reason?' · '+esc(row.reason):''}</small><small>影响 ${new Set(row.sources.map(s=>s.productId)).size} 个链接 · ${new Set(row.sources.map(s=>s.configId)).size} 套配置 · 点击展开</small></div>${row.status==='unknown'?'':`<button data-stock-edit="${i}">展示和实际一起替换</button>`}</summary><div class="stock-occurrences">${row.sources.map(s=>`<div><span><strong>${esc(s.product)}</strong> · ${esc(s.config)} · ${esc(s.slot)} ×${s.qty}<small>SPU ${esc(s.spu||'未填写')}</small></span><button data-stock-locate="${esc(s.configId)}">定位配置</button></div>`).join('')}</div></details>`;
-  $('#stock-results').innerHTML=actionable.map(row=>card(row,report.issues.indexOf(row))).join('')||(report.configCount?'<p class="hint">本次未发现低库存或无库存配件。</p>':'<p class="hint">当前范围没有可检查的配置。</p>');
-  if(unknown.length)$('#stock-results').innerHTML+=`<details class="stock-unknown"><summary>库存未知（${unknown.length} 种）· 展开查看</summary>${unknown.map(row=>card(row,report.issues.indexOf(row))).join('')}</details>`;
-  $('#stock-results').insertAdjacentHTML('afterbegin','<div class="compact-toolbar"><input type="search" id="stock-result-search" placeholder="搜索配件、ERP ID 或关联链接" aria-label="搜索库存结果"><button id="stock-expand-all">全部展开</button><button id="stock-collapse-all">全部收起</button></div>');
-  $('#stock-result-search').oninput=()=>{const q=$('#stock-result-search').value.trim().toLowerCase();root.querySelectorAll('.stock-issue').forEach(card=>card.hidden=!card.textContent.toLowerCase().includes(q));const unknown=root.querySelector('.stock-unknown');if(unknown)unknown.open=!!q;};
-  $('#stock-expand-all').onclick=()=>root.querySelectorAll('#stock-results details:not([hidden])').forEach(card=>card.open=true);$('#stock-collapse-all').onclick=()=>root.querySelectorAll('#stock-results details').forEach(card=>card.open=false);
-  root.querySelectorAll('[data-stock-locate]').forEach(b=>b.onclick=()=>api.locate(b.dataset.stockLocate));
-  root.querySelectorAll('[data-stock-edit]').forEach(b=>b.onclick=e=>{e.preventDefault();e.stopPropagation();edit(report.issues[Number(b.dataset.stockEdit)]);});
+  visible=drawInventoryResults({$,esc,issues:report?.issues||[],threshold,filters,categories:inventoryCategories,expanded,drafts:tasks.drafts,active:tasks.active});
  }
- async function scan(){if(busy)return;try{threshold=inventoryThreshold($('#stock-threshold').value);lock(true);await save();report=checkInventory(getConfigs(),getCosts(),shop.id,threshold);try{localStorage.setItem('diy-stock-threshold',String(threshold));}catch{}issue=null;retry=null;invalidate();$('#stock-work').hidden=true;drawReport();tasks.reset();message(report.configCount?'检查完成。每条任务可选择一个缺货配件，展示和实际一起替换；重新检查将清空任务。':'当前范围没有可检查的配置。');}catch(e){message(e.message);}finally{lock(false);$('#stock-apply').disabled=true;}}
- function edit(row,draft=null){if(busy)return;issue=row;retry=null;invalidate();$('#stock-work').hidden=false;$('#stock-retry').hidden=true;$('#stock-edit-title').textContent=`替换：${row.name} · ${labels[row.status]} ${row.value}`;
-  const groups=new Map();for(const s of row.sources){if(!groups.has(s.productId))groups.set(s.productId,[]);groups.get(s.productId).push(s);}
-  $('#stock-links').innerHTML=[...groups].map(([id,items])=>`<label><input type="checkbox" data-stock-link value="${esc(id)}"><span><strong>${esc(items[0].product)}</strong><small>SPU ${esc(items[0].spu||'未填写')} · ${esc([...new Set(items.map(s=>s.config))].join('、'))}</small></span></label>`).join('');
-  root.querySelectorAll('[data-stock-link]').forEach(el=>el.onchange=invalidate);
-  picker=mountProductSearch($('#stock-picker'),{getRows:getCatalog,idKey:'sourceId',label:'选择替换配件',inputId:'stock-new-query',selected:draft?.sourceId||'',describe,onChange:invalidate});
-  if(draft)root.querySelectorAll('[data-stock-link]').forEach(el=>el.checked=draft.productIds.includes(el.value));
-  $('#stock-work').scrollIntoView({block:'start'});message('勾选要修改的链接，再选择新配件并预览。');
+ function showSnapshot(){
+  report=snapshot();expanded.clear();
+  if(report.issues.length)expanded.add(report.issues[0].key);
+  // 用库存源实际更新时间；扫描本地报告的时间不能冒充 ERP 同步时间。
+  const latest=getCosts().reduce((ts,c)=>Math.max(ts,Date.parse(c.stockUpdatedAt)||0),0);
+  $('#stock-summary').textContent=`● 本机 ERP 库存时间：${stockTime(latest)||'未记录'} · 忽略 ${report.skippedSpecial} 处特殊配件 · 检查 ${report.linkCount} 个链接、${report.configCount} 套配置`;
+  $('[data-scope-btn="shop"]').textContent=`全店链接 (${api.getShopLinkCount()})`;
+  tasks.reset(threshold);drawReport();
  }
- const tasks=mountBatchTasks({root:$('#stock-tasks'),prefix:'stock',esc,invalidate,isBusy:()=>busy,
-  blank:()=>({issueKey:'',productIds:[],sourceId:'',name:'',replacementName:''}),
-  capture:()=>({issueKey:issue?.key||'',productIds:picked(),sourceId:picker?.value()||'',name:issue?.name||'',replacementName:picker?.row()?.name||''}),
-  describe:task=>task.issueKey?`${task.name} → ${task.replacementName||'请选择新配件'} · ${task.productIds.length} 个链接`:'从库存结果选择要替换的配件',
-  restore:task=>{
-   issue=null;picker=null;$('#stock-links').innerHTML='';$('#stock-work').hidden=true;
-   if(task.issueKey){const row=report?.issues.find(r=>r.key===task.issueKey);if(row)edit(row,task);else message('该任务的库存结果已变化，请重新选择配件。');}
+ async function scan(){
+  if(busy)return;
+  for(const b of root.querySelectorAll('[data-scope-btn]'))b.setAttribute('aria-pressed',String(b.dataset.scopeBtn===(single?'link':'shop')));
+  try{
+   threshold=inventoryThreshold($('#stock-threshold').value);
+   lock(true);await api.load(single?product?.id:null);
+   showSnapshot();clearRetry();try{localStorage.setItem('diy-stock-threshold',String(threshold));}catch{}
+   message('检查完成。点击中间配件的「展示和实际一起替换」即可开始。');
+  }catch(error){message(error.message);}finally{lock(false);}
+ }
+ function resetReport(){
+  report=null;expanded.clear();tasks.reset(threshold);clearRetry();drawReport();
+  $('#stock-summary').textContent='请重新检查库存。';message('请重新检查库存。');
+ }
+ $('#stock-results').onclick=e=>{
+  const b=e.target.closest('button');if(!b)return;
+  if(b.hasAttribute('data-stock-locate'))return api.locate(b.dataset.stockLocate);
+  if(b.hasAttribute('data-stock-toggle')){
+   const key=b.dataset.stockToggle;if(expanded.has(key))expanded.delete(key);else expanded.add(key);
+   drawReport();
+  }else if(b.hasAttribute('data-stock-edit')){
+   const row=report.issues.find(r=>r.key===b.dataset.stockEdit);
+   tasks.open(row);message('已载入替换任务，核对链接与新配件后点击「预览全部任务」。');
   }
- });
- $('#stock-scan').onclick=scan;$('#stock-threshold').oninput=()=>{report=null;issue=null;invalidate();$('#stock-results').innerHTML='';$('#stock-work').hidden=true;$('#stock-summary').textContent='阈值已修改，请重新检查。';};
- $('#stock-select-all').onclick=()=>{root.querySelectorAll('[data-stock-link]').forEach(el=>el.checked=true);invalidate();};$('#stock-select-none').onclick=()=>{root.querySelectorAll('[data-stock-link]').forEach(el=>el.checked=false);invalidate();};root.querySelectorAll('[data-stock-layout]').forEach(el=>el.onchange=invalidate);
+ };
+ function pickStatus(key){filters.status=key;drawReport();}
+ $('#stock-statuses').onclick=e=>{const b=e.target.closest('[data-stock-status]');if(b)pickStatus(b.dataset.stockStatus);};
+ $('#stock-kpis').onclick=e=>{const b=e.target.closest('[data-stock-kpi]');if(b)pickStatus(b.dataset.stockKpi);};
+ $('#stock-categories').onclick=e=>{const b=e.target.closest('[data-stock-cat]');if(b){filters.category=b.dataset.stockCat;drawReport();}};
+ $('#stock-reset-cat').onclick=()=>{filters.category='';drawReport();};
+ for(const b of root.querySelectorAll('[data-stock-group]'))b.onclick=()=>{
+  filters.group=b.dataset.stockGroup;
+  for(const el of root.querySelectorAll('[data-stock-group]'))el.setAttribute('aria-pressed',String(el===b));
+  drawReport();
+ };
+ $('#stock-result-search').oninput=drawReport;$('#stock-only-transit').onchange=drawReport;$('#stock-sort').onchange=drawReport;
+ $('#stock-expand-all').onclick=()=>{for(const row of visible)expanded.add(row.key);drawReport();};
+ $('#stock-collapse-all').onclick=()=>{expanded.clear();drawReport();};
+ $('#stock-scan').onclick=scan;$('#stock-threshold').oninput=resetReport;
+ $('#stock-scope').onclick=e=>{
+  const b=e.target.closest('[data-scope-btn]');if(!b||single===(b.dataset.scopeBtn==='link'))return;
+  single=b.dataset.scopeBtn==='link';resetReport();scan();
+ };
+ $('#stock-back').onclick=()=>api.back();
+ $('#stock-task-actions').onchange=invalidate;
  $('#stock-preview').onclick=()=>{try{
-  plan=stockReplacementTasksPlan(getConfigs(),getCosts(),getCatalog(),report,tasks.snapshot());
+  plan=stockReplacementTasksPlan(getConfigs(),getCosts(),getCatalog(),report,tasks.drafts);
   $('#stock-diff').innerHTML=`<pre>${esc(replacementDiff(plan))}</pre>`;
-  $('#stock-apply').disabled=!plan.changes.length;message(`${plan.taskCount} 条任务，将修改 ${plan.productIds.length} 个链接、${plan.changes.length} 套配置，展示和实际配件同时替换。${layouts().length?'保存后导出所选链接全部配置的'+layouts().map(l=>l==='long'?'配置图':'SKU 图').join('、')+'。':''}`);
- }catch(e){invalidate();message(e.message);}};
+  $('#stock-apply').disabled=!plan.changes.length;
+  message(`${plan.taskCount} 条任务，将修改 ${plan.productIds.length} 个链接、${plan.changes.length} 套配置。`);
+ }catch(error){invalidate();message(error.message);}};
  async function exportImages(saved){
   if(!saved.layouts.length)return;
   const configs=inventoryLinks(getConfigs(),shop.id).filter(g=>saved.productIds.includes(g.id)).flatMap(g=>g.configs);
-  const entries=sourceImageEntries(configs,null,$('#stock-sku-mode').value).filter(e=>saved.layouts.includes(e.config.layout)),files=[],failures=[];
+  const entries=sourceImageEntries(configs,null,saved.skuMode).filter(e=>saved.layouts.includes(e.config.layout)),files=[],failures=[];
   for(const [i,entry] of entries.entries()){message(`修改已保存，正在生成 ${i+1}/${entries.length}：${entry.config.name}`);try{const result=await renderPoster(entry.config,1400);if(result.overflow)throw Error('内容超出画布，请调整版式');const blob=await new Promise(resolve=>result.canvas.toBlob(resolve,'image/png'));if(!blob)throw Error('图片生成失败');files.push({name:entry.name,bytes:new Uint8Array(await blob.arrayBuffer())});}catch(e){failures.push({name:entry.name,error:e.message});}}
+  if(!entries.length)throw Error('当前没有可导出的配置图');
   if(!files.length)throw Error('没有成功生成图片：'+failures.map(f=>f.error).join('；'));
   const summary={createdAt:new Date().toISOString(),expected:entries.length,success:files.map(f=>f.name),failures};files.push({name:'导出结果.json',bytes:new TextEncoder().encode(JSON.stringify(summary,null,2))});download(makeZip(files),`库存替换配置图_${Date.now()}.zip`);message(`修改已保存，导出 ${summary.success.length}/${entries.length} 张图片${failures.length?'；失败项见 ZIP 内导出结果.json，可重试。':'。'}`);
+  if(failures.length)throw Error('部分图片生成失败，详情见 ZIP 内导出结果。');
  }
- $('#stock-apply').onclick=async()=>{if(busy||!plan)return;const approved=plan;try{validateStockReplacement(approved,getConfigs(),getCosts(),getCatalog());lock(true);const exportRequest={productIds:approved.productIds,layouts:layouts()};await api.apply(approved);retry=exportRequest;plan=null;await exportImages(retry);if(!retry.layouts.length)message(`已保存 ${approved.changes.length} 套配置的展示配件、实际配件与逐项升级说明修改。`);report=checkInventory(getConfigs(),getCosts(),shop.id,threshold);drawReport();tasks.reset();$('#stock-retry').hidden=false;}catch(e){message('操作未完成：'+e.message);if(retry)$('#stock-retry').hidden=false;}finally{lock(false);invalidate();}};
- $('#stock-retry').onclick=async()=>{if(busy||!retry)return;try{lock(true);await save();await exportImages(retry);if(!retry.layouts.length)message('修改已保存。');}catch(e){message(e.message);}finally{lock(false);}};
+// 保存回执和导出分别记录。出图失败只重试导出，避免再次提交替换。
+ async function finishSaved(saved){
+  await api.load(single?product?.id:null);
+  showSnapshot();
+  if(saved.layouts.length){await exportImages(saved);}
+  else message(`已保存 ${saved.count} 套配置的展示配件、实际配件与逐项升级说明修改。`);
+ }
+ async function apply(){
+  if(busy||!plan)return;
+  const approved=plan;
+  const saved={count:plan.changes.length,productIds:plan.productIds,layouts:layouts(),skuMode:$('#stock-sku-mode').value};
+  lock(true);clearRetry();
+  try{
+   validateStockReplacement(approved,getConfigs(),getCosts(),getCatalog());
+   await api.apply(approved);invalidate();retry=saved;
+   await finishSaved(saved);clearRetry();
+  }catch(error){
+   if(error.retryStockSave){
+    invalidate();retry={...saved,save:error.retryStockSave};message('保存待确认：'+error.message);$('#stock-retry').textContent='重试原保存并导出';
+   }else if(retry){message('修改已保存，刷新或导出未完成：'+error.message);$('#stock-retry').textContent='重试刷新与导出';}
+   else{message('保存未完成：'+error.message+'。请重新预览后重试。');invalidate();$('#stock-retry').textContent='重新预览';}
+   $('#stock-retry').hidden=false;
+  }finally{lock(false);}
+ }
+ $('#stock-apply').onclick=apply;
+ $('#stock-retry').onclick=async()=>{
+  if(busy)return;
+  if(!retry){$('#stock-preview').click();return;}
+  lock(true);
+  try{
+   // 原保存确认后移除保存回调，后续导图失败只重试出图。
+   if(retry.save){await retry.save();delete retry.save;}
+   await finishSaved(retry);clearRetry();
+  }catch(error){
+   message((retry.save?'保存待确认：':'修改已保存，刷新或导出未完成：')+error.message);
+   if(!retry.save)$('#stock-retry').textContent='重试刷新与导出';
+  }finally{lock(false);}
+ };
  scan();
+ return {busy:()=>busy,dispose:()=>{root.replaceChildren();}};
 }

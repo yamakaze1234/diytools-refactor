@@ -189,21 +189,21 @@
   }
   html[data-workbench-design] body { background: var(--ef-paper) !important; color: var(--ef-ink) !important; }
   /* 启动更新提醒采用独立的圆角卡片和按钮配色。 */
-  html[data-workbench-design] :is(button, input, textarea, select, summary, dialog, [data-slot], .continuous-sheet, .config-item, .gallery-card, .source-item, .app-more-menu, .update-dialog, .login-card):not(:where(.startup-update-notice, .startup-update-notice *)) {
+  html[data-workbench-design] :is(button, input, textarea, select, summary, dialog, [data-slot], .continuous-sheet, .config-item, .gallery-card, .source-item, .app-more-menu, .update-dialog, .login-card):not(:where(.startup-update-notice, .startup-update-notice *, #inventory-check-page *)) {
     border-radius: 0 !important; box-shadow: none !important;
   }
-  html[data-workbench-design] :is(input:not([type=checkbox]):not([type=radio]):not([type=color]), select, textarea):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *)) {
+  html[data-workbench-design] :is(input:not([type=checkbox]):not([type=radio]):not([type=color]), select, textarea):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *,#inventory-check-page *)) {
     background-color: var(--ef-panel) !important; color: var(--ef-ink) !important; border-color: var(--ef-rule) !important;
   }
-  html[data-workbench-design] :is(input,select,textarea):not(:where(#source-sheet-page *))::placeholder { color: var(--ef-ink-2) !important; opacity: .8; }
-  html[data-workbench-design] :is(input,select,textarea):focus:not(:where(#source-sheet-page *)) { outline-color: var(--ef-trace) !important; border-color: var(--ef-trace) !important; }
+  html[data-workbench-design] :is(input,select,textarea):not(:where(#source-sheet-page *,#inventory-check-page *))::placeholder { color: var(--ef-ink-2) !important; opacity: .8; }
+  html[data-workbench-design] :is(input,select,textarea):focus:not(:where(#source-sheet-page *,#inventory-check-page *)) { outline-color: var(--ef-trace) !important; border-color: var(--ef-trace) !important; }
   html[data-workbench-design] [aria-invalid=true] { border-color: var(--ef-trace) !important; outline: 2px solid var(--ef-trace) !important; background-color: var(--ef-signal) !important; color: var(--ef-on-signal) !important; }
-  html[data-workbench-design] :where(button:not(.color-swatch):not(.poster-resize-handle):not([data-slot=checkbox]):not([data-slot=autocomplete-trigger]):not([data-slot=autocomplete-clear]):not([role=checkbox])):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *,.startup-update-notice *)) {
+  html[data-workbench-design] :where(button:not(.color-swatch):not(.poster-resize-handle):not([data-slot=checkbox]):not([data-slot=autocomplete-trigger]):not([data-slot=autocomplete-clear]):not([role=checkbox])):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *,#inventory-check-page *,.startup-update-notice *)) {
     clip-path: polygon(0 0,100% 0,100% calc(100% - 5px),calc(100% - 5px) 100%,0 100%);
     background-color: var(--ef-chip) !important; color: var(--ef-ink) !important; border-color: transparent !important;
     transition: background-color 100ms var(--ef-mech),color 100ms var(--ef-mech) !important;
   }
-  html[data-workbench-design] :is(button.primary,button[data-ui-primary=true],button[data-slot=button].bg-primary):not(:where(#source-sheet-page *)) {
+  html[data-workbench-design] :is(button.primary,button[data-ui-primary=true],button[data-slot=button].bg-primary):not(:where(#source-sheet-page *,#inventory-check-page *)) {
     background-color: var(--ef-ink) !important; color: var(--ef-panel) !important;
   }
   /* 主机模板沿用原型的蓝红平台、黑白配色与黑黄主操作。 */
@@ -229,10 +229,10 @@
     background:#f3f134!important; color:#181a19!important; font-weight:700; box-shadow:inset 4px 0 #181a19!important;
   }
   html[data-workbench-design] :is(button.danger,button[data-ui-destructive=true]) { color: var(--ef-danger) !important; }
-  html[data-workbench-design] button:not(:disabled):not(.color-swatch):not(.poster-resize-handle):not([role=checkbox]):is(:hover,:focus-visible):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *,.ov-preview-modes *)) {
+  html[data-workbench-design] button:not(:disabled):not(.color-swatch):not(.poster-resize-handle):not([role=checkbox]):is(:hover,:focus-visible):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *,#inventory-check-page *,.ov-preview-modes *)) {
     background-color: var(--ef-signal) !important; color: var(--ef-on-signal) !important;
   }
-  html[data-workbench-design] :is(button,summary,[role=button],input,select,textarea):focus-visible:not(:where(#source-sheet-page *)) {
+  html[data-workbench-design] :is(button,summary,[role=button],input,select,textarea):focus-visible:not(:where(#source-sheet-page *,#inventory-check-page *)) {
     outline: 2px solid var(--ef-trace) !important; outline-offset: -3px !important;
   }
   html[data-workbench-design] :is(input[type=checkbox],input[type=radio]) { accent-color: var(--ef-trace); }
@@ -240,7 +240,7 @@
   html[data-workbench-design] [role=checkbox][aria-checked=true] { color: var(--ef-on-signal) !important; background: var(--ef-signal) !important; border-color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.hint,.muted,.sidebar-note,.preview-hint,.storage-note,.image-status,.breadcrumb,.product-heading small,.selection-tools,.field,.dialog-title small) { color: var(--ef-ink-2) !important; }
   html[data-workbench-design] :is(.workspace > .main,.workspace > .sidebar,.workspace > .preview-side,.config-editor,.config-sidebar,.login-card,.checks,.config-fields,.parts-scroll,dialog:not(:where(.startup-update-notice)),.update-dialog,.update-versions) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; border-color: var(--ef-rule) !important; box-shadow: none !important; }
-  html[data-workbench-design] :is(h1,h2,h3,.product-heading strong,.preview-head h2,.side-title,.config-item strong,.source-item strong,.gallery-card strong):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *)) { color: var(--ef-ink) !important; }
+  html[data-workbench-design] :is(h1,h2,h3,.product-heading strong,.preview-head h2,.side-title,.config-item strong,.source-item strong,.gallery-card strong):not(:where(#continuous-workbench *,#price-profit-page *,#source-sheet-page *,#inventory-check-page *)) { color: var(--ef-ink) !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) { background: #161616 !important; color: #ededed !important; border-color: #353535 !important; box-shadow: none !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) :is(.brand,.brand span,#save-status,small,.prototype,.sandbox-label,.app-more > summary) { color: #a3a3a3 !important; border-color: #353535 !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) .brand { color: #ededed !important; }
@@ -354,7 +354,7 @@
   html[data-workbench-design] :is(.canvas-toolbar,.preview-controls) { background: var(--ef-panel) !important; color: var(--ef-ink) !important; }
   html[data-workbench-design] :is([data-slot=autocomplete-trigger],[data-slot=autocomplete-clear]) { color: var(--ef-ink-2) !important; }
   html[data-workbench-design] .config-item.config-located { outline-color: var(--ef-trace) !important; background: var(--ef-paper) !important; }
-  html[data-workbench-design] input[type=checkbox] { accent-color: var(--ef-trace) !important; }
+  html[data-workbench-design] input[type=checkbox]:not(:where(#inventory-check-page *)) { accent-color: var(--ef-trace) !important; }
   html[data-workbench-design] .color-swatch { background: var(--swatch) !important; }
 }
 
@@ -732,7 +732,7 @@
 @layer endfield-theme {
  html[data-workbench-design] .overview-dialog .overview-head { background:var(--ef-paper) !important; color:var(--ef-ink-2) !important; border-color:var(--ef-rule) !important; }
  html[data-workbench-design] .price-group summary small { color:var(--ef-ink-2) !important; }
- html[data-workbench-design] button:not(:disabled):is(:hover,:focus-visible) :is(small,strong,span):not([data-slot=badge]) { color:inherit !important; }
+ html[data-workbench-design] button:not(:disabled):is(:hover,:focus-visible) :is(small,strong,span):not([data-slot=badge]):not(:where(#inventory-check-page *,#pp-stock-badge)) { color:inherit !important; }
 }
 
 @layer endfield-theme {

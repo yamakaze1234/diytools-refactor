@@ -1,13 +1,35 @@
 /** 库存检查及缺货替换规则：从配置实际用量构造报告，再校验替换计划是否仍可应用。 */
+import {categoryFromErp,categoryFromName,observedErpCategory} from './component-category.js';
 import {actualParts} from './actual-parts.js';
 import {inventoryLinks} from './inventory-export.js';
 import {isSpecialComponent} from './special-components.js';
 import {replaceBothParts} from './replace-both-parts.js';
 import {mergeTaskPlans} from './batch-task-plans.js';
-import {applyReplacement} from './global-batch.js';
+import {validateReplacement} from './global-batch.js';
 
 export function inventoryThreshold(value){
  const text=String(value).trim();if(!/^\d+$/.test(text)||Number(text)>100000000)throw Error('低库存阈值须为 0 至 100000000 的整数');return Number(text);
+}
+export function savedInventoryThreshold(){
+ try{return inventoryThreshold(localStorage.getItem('diy-stock-threshold')??5);}catch{return 5;}
+}
+export const inventoryCategories=['CPU','主板','显卡','内存','硬盘','散热','风扇','机箱','电源','其他配件'];
+// 成本表和绑定输出源的 ERP 大类优先，旧数据再从部位与型号识别。
+export function inventoryCategory(part,cost,source){
+ const category=observedErpCategory(cost?.erpCategory,source?.erpCategory,part.erpCategory)||categoryFromErp(part.slot);
+ if(category)return category;
+ // 展示名称可手工改成无型号文案；未识别时再用 ERP 原名和型号判断。
+ for(const name of [part.name,cost?.erpName,cost?.name,cost?.erpModel,source?.erpName,part.erpName,part.erpModel,part.originalName]){
+  if(!name)continue;
+  const inferred=categoryFromName(name);
+  if(inferred)return inferred;
+ }
+ return '其他配件';
+}
+export function inventoryCounts(issues){
+ const counts={out:0,low:0,unknown:0};
+ for(const issue of issues)counts[issue.status]++;
+ return counts;
 }
 /** 结合成本源和阈值计算商品库存状态，区分未知与不足。 */
 export function componentStock(goodsId,costs,threshold=5){
@@ -42,47 +64,76 @@ export function configurationStock(config,costs){
  return {stockAvailable:capacity('value'),stockIncomingAvailable:capacity('incoming')};
 }
 /** 在店铺范围内检查配置配件库存，生成供界面筛选的报告。 */
-export function checkInventory(configs,costs,shopId,threshold=5){
+export function checkInventory(configs,costs,shopId,threshold=5,catalog=[]){
+ const sources=new Map(),goodsCategories=new Map();
+ for(const row of catalog){
+  if(row.deletedAt||row.shopId!==shopId)continue;
+  sources.set(row.sourceId,row);
+  const category=row.erpCategory===null?null:categoryFromErp(row.erpCategory);
+  if(!row.goodsId||category===undefined)continue;
+  // 老配置缺少来源绑定时，只采用同一货号所有输出源一致的大类。
+  if(!goodsCategories.has(row.goodsId))goodsCategories.set(row.goodsId,category);
+  else if(goodsCategories.get(row.goodsId)!==category)goodsCategories.set(row.goodsId,undefined);
+ }
  threshold=inventoryThreshold(threshold);const groups=inventoryLinks(configs,shopId),map=new Map(),stocks=new Map();let skippedSpecial=0;
  for(const row of costs){if(!stocks.has(row.goodsId))stocks.set(row.goodsId,[]);stocks.get(row.goodsId).push(row);}
  for(const group of groups)for(const config of group.configs)for(const [index,part] of actualParts(config).entries()){
   if(isSpecialComponent(part)){skippedSpecial++;continue;}if(!part.name&&!part.goodsId)continue;
   const stock=componentStock(part.goodsId,stocks,threshold);if(stock.status==='ok')continue;
   const key=typeof part.goodsId==='string'&&/^[1-9]\d*$/.test(part.goodsId)?part.goodsId:JSON.stringify([config.id,index]);
-  if(!map.has(key))map.set(key,{...stock,key,name:part.name||part.goodsId,sources:[]});
+  if(!map.has(key)){
+   const hits=stocks.get(part.goodsId);
+   const source=sources.get(part.sourceId);
+   const bound=source&&source.goodsId===part.goodsId?source:undefined;
+   const sourceCategory=bound?.erpCategory===undefined?goodsCategories.get(part.goodsId):bound.erpCategory;
+   const category=inventoryCategory(part,hits?.length===1?hits[0]:null,{...bound,erpCategory:sourceCategory});
+   map.set(key,{...stock,key,category,name:part.name||part.goodsId,sources:[]});
+  }
   map.get(key).sources.push({configId:config.id,config:config.name,productId:group.id,product:group.name,spu:group.spu,slot:part.slot,index,qty:part.qty,name:part.name});
  }
  const issues=[...map.values()].sort((a,b)=>({out:0,low:1,unknown:2}[a.status]-{out:0,low:1,unknown:2}[b.status]));
  return {shopId,threshold,issues,skippedSpecial,linkCount:groups.length,configCount:groups.reduce((n,g)=>n+g.configs.length,0),checkedAt:new Date().toISOString()};
 }
 /** 基于报告中的缺货配件和选择的来源生成替换预览。 */
-export function stockReplacementPlan(configs,costs,catalog,report,key,productIds,sourceId){
+export function stockReplacementPlan(configs,costs,catalog,report,key,productIds,sourceId,displayName=''){
  const original=report.issues.find(r=>r.key===key);if(!original||original.status==='unknown')throw Error('请先选择一个低库存或无库存配件');
  if(!productIds.length)throw Error('请勾选要修改的链接');
- const current=checkInventory(configs,costs,report.shopId,report.threshold).issues.find(r=>r.key===key);
- if(JSON.stringify(current)!==JSON.stringify(original))throw Error('库存或配件使用情况已变化，请重新检查');
+ const current=checkInventory(configs,costs,report.shopId,report.threshold,catalog).issues.find(r=>r.key===key);
+ // 大类用于展示；四参报告也可与随后补齐的输出源一起预览。
+ if(!current||JSON.stringify({...current,category:original.category})!==JSON.stringify(original))throw Error('库存或配件使用情况已变化，请重新检查');
  const replacement=catalog.find(r=>r.sourceId===sourceId&&r.shopId===report.shopId&&!r.deletedAt);if(!replacement)throw Error('请选择本店有效的新配件');
  const selected=new Set(productIds),changes=[];
  for(const config of configs.filter(c=>!c.deletedAt&&!c.emptyLinkDraft&&c.shopId===report.shopId)){
   const targets=original.sources.filter(s=>s.configId===config.id&&selected.has(s.productId));if(!targets.length)continue;
-  const after=structuredClone(config);for(const target of targets)replaceBothParts(after,target.slot,replacement);
+  const after=structuredClone(config);for(const target of targets)replaceBothParts(after,target.slot,replacement,null,{displayName});
   if(JSON.stringify(config)!==JSON.stringify(after))changes.push({id:config.id,productId:targets[0].productId,product:config.product,name:config.name,before:structuredClone(config),after});
  }
  if(!changes.length)throw Error('所选链接没有需要替换的配件');
- return {changes,productIds:[...new Set(changes.map(c=>c.productId))],shopId:report.shopId,issue:structuredClone(original),threshold:report.threshold,replacement:structuredClone(replacement)};
+ return {changes,productIds:[...new Set(changes.map(c=>c.productId))],shopId:report.shopId,issue:structuredClone(original),displayName:typeof displayName==='string'?displayName.trim():'',threshold:report.threshold,replacement:structuredClone(replacement)};
 }
 /** 确认报告、现有配置和候选商品仍匹配，防止应用过期替换计划。 */
 export function validateStockReplacement(plan,configs,costs,catalog){
- if(plan.taskPlans){for(const taskPlan of plan.taskPlans)validateStockReplacement(taskPlan,configs,costs,catalog);applyReplacement(plan,structuredClone(configs));return;}
+ if(plan.taskPlans){for(const taskPlan of plan.taskPlans)validateStockReplacement(taskPlan,configs,costs,catalog);validateReplacement(plan,configs);return;}
  const current=componentStock(plan.issue.goodsId,costs,plan.threshold);
  for(const key of ['value','incoming','status','updatedAt','reason'])if(current[key]!==plan.issue[key])throw Error('库存已变化，请重新检查');
- const row=catalog.find(r=>r.sourceId===plan.replacement.sourceId);if(JSON.stringify(row)!==JSON.stringify(plan.replacement))throw Error('新配件或绑定加购已变化，请重新预览');
- applyReplacement(plan,structuredClone(configs));
+ const row=catalog.find(r=>r.sourceId===plan.replacement.sourceId&&r.shopId===plan.shopId);if(JSON.stringify(row)!==JSON.stringify(plan.replacement))throw Error('新配件或绑定加购已变化，请重新预览');
+ // 启用了现货筛选的任务，在保存前再次读取候选库存。
+ if(plan.onlyAvailable&&!(componentStock(row.goodsId,costs,plan.threshold).value>0))throw Error('新配件已无可确认的现货，请重新选择');
+ validateReplacement(plan,configs);
 }
 
 /** 库存任务共享同一报告，验证全部任务后才交给一次批量保存。 */
 export function stockReplacementTasksPlan(configs,costs,catalog,report,tasks){
  if(!report)throw Error('请先重新检查库存');
- const taskPlans=tasks.map((task,index)=>{try{return stockReplacementPlan(configs,costs,catalog,report,task.issueKey,task.productIds,task.sourceId);}catch(error){throw Error(`任务 ${index+1}：${error.message}`);}});
+ const taskPlans=tasks.map((task,index)=>{
+  try{
+   const plan=stockReplacementPlan(configs,costs,catalog,report,task.issueKey,task.productIds,task.sourceId,task.displayName);
+   if(task.available){
+    plan.onlyAvailable=true;
+    validateStockReplacement(plan,configs,costs,catalog);
+   }
+   return plan;
+  }catch(error){throw Error(`任务 ${index+1}：${error.message}`);}
+ });
  return {...mergeTaskPlans(taskPlans),taskPlans,replacements:taskPlans.map(plan=>plan.replacement)};
 }

@@ -8,7 +8,17 @@ const effective=(part,field)=>String(field==='name'?(part.displayName||part.name
 const sourceValue=(config,row,field,part)=>field==='name'?String(row.name||''):part?.sourceFollow?.upgrade?.textOnly===true?
  String(row.addonText??''):sourceUpgradeDescription(row,config.addons?.filter(addon=>addon.sourceId===row.sourceId)||[]);
 const catalog=rows=>new Map(selectableComponents(rows).filter(row=>!row.deletedAt).map(row=>[JSON.stringify([row.shopId||'intel',row.sourceId]),row]));
-function observe(record,value){if(record.sourceValue!==value)delete record.ignoredSourceValue;record.sourceValue=value;}
+const DAY_MS=86400000;
+export const IGNORED_RETENTION_MS=7*DAY_MS;
+function clearIgnore(record){
+ delete record.ignoredSourceValue;
+ delete record.ignoredAt;
+}
+function observe(record,value){
+ // 忽略绑定到本次来源内容；下个不同版本重新提醒，已过期的同值仍保持静默。
+ if(Object.hasOwn(record,'ignoredSourceValue')&&record.ignoredSourceValue!==value)clearIgnore(record);
+ record.sourceValue=value;
+}
 function sourceFor(index,config,part){
  const row=index.get(JSON.stringify([config.shopId||'intel',part.sourceId]));
  return row&&row.sourceId&&String(row.goodsId??'')===String(part.goodsId??'')?row:null;
@@ -45,7 +55,7 @@ function writeFollow(part,field,value){
  part.sourceFollow[field]={mode:'follow',value,sourceValue:value,...(textOnly?{textOnly:true}:{}),...(structured?{structured:true}:{})};
 }
 /** 比较来源前后值，只更新仍符合跟随条件的配置字段。 */
-export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges=false}={}){
+export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges=false,deferUpgrade=false}={}){
  const beforeIndex=catalog(beforeRows),afterIndex=catalog(afterRows),configIds=new Set();let count=0;
  const automatic=new Map();
  for(const config of configs){
@@ -56,7 +66,7 @@ export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges
    const previousPart=JSON.stringify(part),tracking=initializePart(config,part,before);
    for(const field of ['name','upgrade']){
     const oldSource=sourceValue(config,before,field,part),target=sourceValue(config,after,field,part),record=tracking[field];
-    if(oldSource!==target&&record.mode==='follow'){
+    if(oldSource!==target&&record.mode==='follow'&&!(deferUpgrade&&field==='upgrade')){
      if(effective(part,field)!==target){
       count++;configIds.add(config.id);
       if(captureChanges){
@@ -79,31 +89,90 @@ export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges
  return {configIds:[...configIds],count,...(captureChanges?{autoChanges:[...automatic.values()]}:{})};
 }
 export const sourceFollowKey=(configId,sourceId,partIndex,slot,field)=>JSON.stringify([configId,sourceId,partIndex,slot,field]);
-/** 按店铺与字段范围生成来源跟随预览。 */
+// 时间缺失的旧忽略记录继续有效，无法确定剩余天数时不进入七天回看列表。
+export function ignoreDaysLeft(ignoredAt,now){
+ const remaining=Date.parse(ignoredAt)+IGNORED_RETENTION_MS-now;
+ return remaining>0?Math.max(1,Math.ceil(remaining/DAY_MS)):0;
+}
+// 角标、复核和保存后提示共用一个差异判据。只有真正构造保存计划时复制配置正文。
+function* differences(configs,rows,fields,shopId,options){
+ const action=options.action??'update',now=new Date(options.now??Date.now());
+ const sourceIds=options.sourceIds?new Set(options.sourceIds):null;
+ const index=catalog(sourceIds?rows.filter(row=>sourceIds.has(row.sourceId)):rows);
+ const keys=options.keys?new Set(options.keys):null;
+ for(const config of configs){
+  if(config.deletedAt||(config.shopId||'intel')!==shopId||options.productIds&&!options.productIds.includes(config.productId))continue;
+  for(const [partIndex,part] of (config.parts||[]).entries()){
+   const row=sourceFor(index,config,part);if(!row)continue;
+   // 在副本上识别旧数据的跟随状态；只把明确选中的字段写入计划正文。
+   const working={...part,sourceFollow:copy(part.sourceFollow)};
+   const tracking=initializePart(config,working,row);
+   for(const field of fields){
+    const key=sourceFollowKey(config.id,part.sourceId,partIndex,part.slot,field);if(keys&&!keys.has(key))continue;
+    const target=field==='tax'?row.tax:tracking[field].sourceValue,current=field==='tax'?part.tax:effective(part,field),record=tracking[field];
+    if((current??'')===(target??''))continue;
+    // 核算价始终需要人工确认，且不能忽略。
+    const kind=field==='tax'?'manual':record.mode;
+    const ignored=field!=='tax'&&Object.hasOwn(record,'ignoredSourceValue')&&record.ignoredSourceValue===target;
+    const ignoredAt=ignored?record.ignoredAt??null:null;
+    const daysLeft=ignored?ignoreDaysLeft(ignoredAt,now):0;
+    if(ignored&&(!daysLeft||!options.includeIgnored&&action!=='unignore'))continue;
+    if(action==='unignore'&&!ignored)continue;
+    if(action==='ignore'&&(field==='tax'||ignored))continue;
+    if(options.kind&&options.kind!==kind)continue;
+    const detail={key,slot:part.slot,partIndex,sourceId:part.sourceId,field,before:current??'',after:target??'',
+     kind,manual:kind==='manual'&&field!=='tax',sourceName:row.name||row.erpName||row.originalName||'',
+     changedAt:row.updatedAt||null,ignored,ignoredAt,daysLeft,action};
+    yield {config,row,detail,record,target};
+   }
+  }
+ }
+}
+
+/** 按店铺与字段范围生成可核验的计划，未选择的字段（包括人工记录）原样保留。 */
 export function sourceFollowPlan(configs,rows,fields,shopId,options={}){
  fields=[...new Set(fields.map(field=>field==='addon'?'upgrade':field))].filter(field=>['name','upgrade','tax'].includes(field));
  if(!fields.length)throw Error('请至少勾选一个同步字段');
- const index=catalog(rows),sources=new Map(),changes=[],keys=options.keys?new Set(options.keys):null;
- for(const config of configs){
-  if(config.deletedAt||(config.shopId||'intel')!==shopId||options.productIds&&!options.productIds.includes(config.productId))continue;
-  const after=copy(config),details=[];
-  for(const [partIndex,part] of (after.parts||[]).entries()){
-   const row=sourceFor(index,after,part);if(!row)continue;
-   initializePart(after,part,row);
-   for(const field of fields){
-    const key=sourceFollowKey(config.id,part.sourceId,partIndex,part.slot,field);if(keys&&!keys.has(key))continue;
-    const target=field==='tax'?row.tax:sourceValue(after,row,field,part),current=field==='tax'?part.tax:effective(part,field),record=part.sourceFollow[field];
-    if((current??'')===(target??''))continue;
-    if(field!=='tax'&&(record.mode!=='manual'||Object.hasOwn(record,'ignoredSourceValue')&&record.ignoredSourceValue===target))continue;
-    if(field==='tax'&&options.action==='ignore')continue;
-    details.push({key,slot:part.slot,partIndex,sourceId:part.sourceId,field,before:current??'',after:target??'',manual:field!=='tax',action:options.action==='ignore'?'ignore':'update'});
-    if(field==='tax'){part.tax=target;after.taxUpdatedAt=new Date().toISOString();}
-    else if(options.action==='ignore'){record.ignoredSourceValue=target;record.mode='manual';}
-    else writeFollow(part,field,target);
-    sources.set(row.sourceId,copy(row));
-   }
-  }
-  if(details.length)changes.push({id:config.id,product:config.product,name:config.name,before:copy(config),after,details});
+ const sources=new Map(),changes=new Map(),action=options.action??'update',now=options.now??Date.now();
+ const at=new Date(now).toISOString();
+ for(const {config,row,detail,record,target} of differences(configs,rows,fields,shopId,{...options,now})){
+  if(!sources.has(row.sourceId))sources.set(row.sourceId,copy(row));
+  if(!changes.has(config.id))changes.set(config.id,{id:config.id,product:config.product,name:config.name,before:copy(config),after:copy(config),details:[]});
+  const change=changes.get(config.id),{field,sourceId,partIndex}=detail;
+  change.details.push(detail);
+  const edited=change.after.parts[partIndex];
+  if(field==='tax'){edited.tax=target;change.after.taxUpdatedAt=at;continue;}
+  if(detail.ignored&&action!=='unignore')continue;
+  if(!edited.sourceFollow||edited.sourceFollow.sourceId!==sourceId)edited.sourceFollow={sourceId};
+  edited.sourceFollow[field]=record;
+  if(action==='ignore'){record.ignoredSourceValue=target;record.ignoredAt=at;}
+  else if(action==='unignore')clearIgnore(record);
+  else writeFollow(edited,field,target);
  }
- return {shopId,fields,action:options.action==='ignore'?'ignore':'update',sources:[...sources.values()],changes};
+ return {shopId,fields,action,sources:[...sources.values()],changes:[...changes.values()]};
+}
+
+// 导航提醒和弹窗首次打开使用同一组文案字段。核算单价可在差异窗内单独核对。
+export const sourceAlertFields=Object.freeze(['upgrade','name']);
+/** 轻量统计本店待确认明细，不复制完整配置或图片资料。 */
+export function sourceFollowSummary(configs,rows,shopId,{fields=sourceAlertFields,sourceIds,now}={}){
+ let count=0,latestChangedAt=null,latestTime=-Infinity;
+ for(const {detail} of differences(configs,rows,fields,shopId,{sourceIds,now})){
+  count++;
+  const time=Date.parse(detail.changedAt);
+  if(time>latestTime){latestTime=time;latestChangedAt=detail.changedAt;}
+ }
+ return {count,latestChangedAt};
+}
+
+/** 保存后的决策窗只处理本店刚变动来源的跟随文案，人工文案仅计数。 */
+export function followPendingAddonPlan(configs,rows,shopId,{sourceIds=[]}={}){
+ const plan=sourceFollowPlan(configs,rows,['upgrade'],shopId,{sourceIds,kind:'follow'});
+ const linkKey=c=>c.productId||c.product||c.spu||c.id;
+ const manualIds=new Set(),manualLinks=new Set();
+ for(const {config} of differences(configs,rows,['upgrade'],shopId,{sourceIds,kind:'manual'})){
+  manualIds.add(config.id);manualLinks.add(linkKey(config));
+ }
+ return {...plan,followConfigCount:plan.changes.length,followLinkCount:new Set(plan.changes.map(c=>linkKey(c.before))).size,
+  manualConfigCount:manualIds.size,manualLinkCount:manualLinks.size};
 }

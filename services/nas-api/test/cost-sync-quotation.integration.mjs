@@ -35,6 +35,7 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   await assert.rejects(replace({...current.document,skuId:'12346'}),{code:'QUOTATION_REVIEW_REQUIRED'});
   assert.equal((await intel.me()).shops.filter(row=>row.role==='operations').map(row=>row.shop_id).join(','),'intel');
   await assert.rejects(client('gigabyte',localOperator).costSyncSnapshot(),{code:'FORBIDDEN'});
+  for(const name of ['020-workbench-global-tax.sql','021-workbench-alias-addons.sql'])await api.db.exec(await migration(name));
   await api.db.exec(await migration('027-quotation-identity-invalidation.sql'));
   await api.db.exec(await migration('028-cross-shop-cost-sync.sql'));
   // 已装旧 028 但未装 030，回执保护必须回滚三店写入。
@@ -42,15 +43,40 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   const oldPlan=planSharedCostSync(oldSchema,[{goodsId:'100001',name:'测试',sku:'A',erp:1,stockAvailable:-1,stockIncomingAvailable:2}],'erp','intel');
   await assert.rejects(intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:oldPlan.changes}),{code:'NAS_COST_SYNC_NOT_INSTALLED'});
   assert.deepEqual(await intel.costSyncSnapshot(),oldSchema);
+  await api.db.exec(await migration('029-manual-tax-protection.sql'));
   // 重复安装不重建任何业务记录。
   for(let i=0;i<2;i++)await api.db.exec(await migration('030-incoming-stock.sql'));
 
-  // 建源初次写入成本行时也保留独立的最终可销、待入可销。
+  // 老库会忽略新字段。核对 503 后三店快照和操作回执均回滚。
+  const categoryId=randomUUID();
+  const categoryChanges=structuredClone(oldPlan.changes);
+  categoryChanges[0].fields.erpCategory='内存';
+  const beforeCategory=await intel.costSyncSnapshot();
+  await assert.rejects(intel.workspaceWrite('costs',{operation_id:categoryId,changes:categoryChanges}),{code:'NAS_COST_SYNC_NOT_INSTALLED',status:503});
+  assert.deepEqual(await intel.costSyncSnapshot(),beforeCategory);
+  for(const shop of nasShopIds)assert.equal((await api.db.query(`SELECT 1 FROM ${shop}_live.workspace_receipts WHERE operation_id=$1`,[categoryId])).rows.length,0);
+  const adoptionRequest={operation_id:randomUUID(),document:{id:'9901234',name:'新配件',
+   erpAdoption:{name:'新品',erp:99,sku:'A01',stockAvailable:-2,stockIncomingAvailable:8,erpCategory:'机箱'}}};
+  await assert.rejects(shopClients.intel.saveCatalog('shared-sources','9901234','create',adoptionRequest),{code:'NAS_COST_SYNC_NOT_INSTALLED'});
+  // 刻意破坏最后一个锚点：即使前面函数已执行替换，事务仍应还原。
+  const patch=await migration('031-erp-category.sql');
+  const broken=patch.replace('$q$IF attrs IS NULL AND erp_name IS NOT NULL THEN$q$', '$q$失配的合成测试锚点$q$');
+  await assert.rejects(api.db.exec(broken),/ERP 类别迁移/);
+  await api.db.exec('ROLLBACK');
+  await assert.rejects(intel.workspaceWrite('costs',{operation_id:categoryId,changes:categoryChanges}),{code:'NAS_COST_SYNC_NOT_INSTALLED'});
+  for(let i=0;i<2;i++)await api.db.exec(patch);
+
+  // 三店共用建源保留分店草稿和分类；单店建源将观察同时写入成本和来源。
+  const sharedId='9901235';
+  await shopClients.intel.saveCatalog('shared-sources',sharedId,'create',{operation_id:randomUUID(),document:{
+   id:sharedId,erpName:'合成测试商品',erpCategory:'内存',edits:{shared:{values:{name:'共用配件'},restore:[]}}}});
+  for(const shop of nasShopIds)assert.equal((await shopClients[shop].workspaceCatalog()).sourceCatalog.find(row=>row.goodsId===sharedId)?.erpCategory,'内存');
   const newId='9901234';
-  await shopClients.intel.saveCatalog('shared-sources',newId,'create',{operation_id:randomUUID(),document:{
-   id:newId,name:'新配件',erpAdoption:{name:'新品',erp:99,sku:'A01',stockAvailable:-2,stockIncomingAvailable:8}}});
+  await shopClients.intel.saveCatalog('shared-sources',newId,'create',adoptionRequest);
   const adopted=await shopClients.intel.resource('costs',newId);
-  assert.deepEqual([adopted.document.stockAvailable,adopted.document.stockIncomingAvailable],[-2,8]);
+  assert.deepEqual([adopted.document.stockAvailable,adopted.document.stockIncomingAvailable,adopted.document.erpCategory],[-2,8,'机箱']);
+  const catalog=await shopClients.intel.workspaceCatalog();
+  for(const key of ['costSource','sourceCatalog'])assert.equal(catalog[key].find(row=>row.goodsId===newId)?.erpCategory,'机箱');
 
   await chosen(intel,current);
   current=await intel.detail(configId);
@@ -144,5 +170,50 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   const afterIncoming=await intel.costSyncSnapshot();
   for(const shop of nasShopIds)assert.equal(afterIncoming.stores[shop]['100001'].stockIncomingAvailable,-1);
   assert.equal(planSharedCostSync(afterIncoming,[update],'erp','intel').changes.length,0);
+
+  // 旧 worker 从未提供大类，首次明确清空即使不改价和库存也要写入；重读后无须再次提交。
+  for(const shop of nasShopIds)assert.equal(Object.hasOwn(afterIncoming.stores[shop][update.goodsId],'erpCategory'),false);
+  const cleared={...update,erpCategory:null};
+  const firstClear=planSharedCostSync(afterIncoming,[cleared],'erp','intel');
+  assert.equal(firstClear.changes.length,1);
+  assert.equal(firstClear.changes[0].fields.erpCategory,null);
+  await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:firstClear.changes});
+  const afterClear=await intel.costSyncSnapshot();
+  for(const shop of nasShopIds){
+   assert.equal(afterClear.stores[shop][update.goodsId].erpCategory,null);
+   assert.equal((await shopClients[shop].resource('costs',update.goodsId)).document.erpCategory,null);
+  }
+  assert.equal(planSharedCostSync(afterClear,[cleared],'erp','intel').changes.length,0);
+  assert.equal(planSharedCostSync(afterClear,[update],'erp','intel').changes.length,0);
+
+  // 仅分类变化有同步回执和版本，没有价格历史。旧客户端的后续同步保留分类。
+  const change=structuredClone(incomingPlan.changes[0]);
+  const refresh=async()=>{
+   const {stores}=await intel.costSyncSnapshot();
+   change.expected_versions=Object.fromEntries(nasShopIds.map(shop=>[shop,stores[shop][change.id].version]));
+   change.expected_version=change.expected_versions.intel;
+  };
+  await refresh();
+  for(const invalid of [false,'越'.repeat(101),'坏\u0085值']){
+   change.fields.erpCategory=invalid;
+   await assert.rejects(intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:[change]}),{code:'VALIDATION_FAILED'});
+  }
+  change.fields.erpCategory='散热器';
+  const categoryOnly=randomUUID();
+  await intel.workspaceWrite('costs',{operation_id:categoryOnly,changes:[change]});
+  const withCategory=await intel.costSyncSnapshot();
+  for(const shop of nasShopIds){
+   assert.equal(withCategory.stores[shop][change.id].erpCategory,'散热器');
+   assert.equal((await api.db.query(`SELECT 1 FROM ${shop}_live.price_history WHERE operation_id=$1`,[categoryOnly])).rows.length,0);
+  }
+  await refresh();
+  delete change.fields.erpCategory;
+  change.fields.stockAvailable=1;
+  await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:[change]});
+  for(const shop of nasShopIds)assert.equal((await shopClients[shop].resource('costs',change.id)).document.erpCategory,'散热器');
+  await refresh();
+  change.fields.erpCategory=null;
+  await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:[change]});
+  for(const shop of nasShopIds)assert.equal((await shopClients[shop].resource('costs',change.id)).document.erpCategory,null);
  }finally{await api.close();}
 });

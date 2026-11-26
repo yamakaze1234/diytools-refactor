@@ -53,7 +53,7 @@ function requestInput(request){
 function replacement(state,request){
  const shopId=request.shopId,sourceId=request.action.sourceId;
  // 与店铺输出源选择器相同：特殊预设、成本合并及星号禁用规则都由现有模块处理。
- const rows=withSpecialPresets((state.sourceCatalog||[]).filter(row=>(row.shopId||'intel')===shopId),shopId);
+ const rows=withSpecialPresets((state.sourceCatalog||[]).filter(row=>(row.shopId||'intel')===shopId),shopId,state.shopSettings?.[shopId]?.purgedSourcePresets);
  const selected=rows.filter(row=>row.sourceId===sourceId);
  if(selected.length!==1)fail('替换输出源不存在、跨店铺或不唯一');
  const raw=selected[0];

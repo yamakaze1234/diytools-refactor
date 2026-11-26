@@ -1,21 +1,16 @@
+import {observedErpCategory,categoryFromName} from './component-category.js';
 // 统一按配件类型控制维护表单的显示范围。
-const categoryKind=value=>({CPU:'cpu','处理器':'cpu','主板':'board','机箱':'case','显卡':'vramGb','内存':'memoryGb','硬盘':'storageGb','固态':'storageGb','固态硬盘':'storageGb','机械硬盘':'storageGb','存储':'storageGb','散热':'other','散热器':'other','风扇':'other','电源':'other'}[String(value||'').trim().toUpperCase()]);
+const categoryKind=value=>({CPU:'cpu','处理器':'cpu','主板':'board','机箱':'case','显卡':'vramGb','内存':'memoryGb','硬盘':'storageGb','固态':'storageGb','固态硬盘':'storageGb','机械硬盘':'storageGb','存储':'storageGb','散热':'other','其他配件':'other','散热器':'other','风扇':'other','电源':'other'}[String(value||'').trim().toUpperCase()]);
 export function maintenanceKind(row,configs=[],costs=[]){
  if(row.specialComponent)return 'other';
  const cost=row.goodsId?costs.find(item=>item.goodsId===row.goodsId):null;
- const explicit=categoryKind(row.erpCategory)||categoryKind(cost?.erpCategory)||categoryKind(row.slot);
+ const explicit=categoryKind(observedErpCategory(cost?.erpCategory,row.erpCategory));
  if(explicit)return explicit;
  const used=new Set();
  for(const config of configs){if(config.deletedAt||(config.shopId||'intel')!==(row.shopId||'intel'))continue;for(const part of [...config.parts||[],...config.actualParts||[]])if((row.sourceId&&part.sourceId===row.sourceId)||(!part.sourceId&&row.goodsId&&part.goodsId===row.goodsId)){const kind=categoryKind(part.slot);if(kind)used.add(kind);}}
  if(used.size===1)return [...used][0];
- const name=[row.erpName,row.name,cost?.name].filter(Boolean).join(' ').normalize('NFKC');
- if(/散热|风扇|水冷|电源|控制器|转接|线材/i.test(name))return 'other';
- if(/机箱/i.test(name))return 'case';
- if(/主板|(?:^|[^A-Z0-9])[ABHXZ]\d{3}[A-Z]?(?:\b|[- ])/i.test(name))return 'board';
- if(/显卡|RTX|GTX|RADEON|\bRX\s*\d{3,4}|\bARC\s*[AB]\d{3}/i.test(name))return 'vramGb';
- if(/硬盘|固态|SSD|NVME|SATA/i.test(name))return 'storageGb';
- if(/内存|DDR[345]|海力士/i.test(name))return 'memoryGb';
- if(/CPU|处理器|酷睿|锐龙|\bRYZEN|\bULTRA\s*[3579]|\bI[3579][ -]?\d{4,5}|\b\d{4,5}(?:KF|K|F|X3D|X)\b|\b\d{3}K(?:F|\s*PLUS)?\b/i.test(name))return 'cpu';
+ const kind=categoryKind(row.slot)||categoryKind(categoryFromName([cost?.name,row.erpName,row.name].filter(Boolean).join(' ')));
+ if(kind)return kind;
  if(row.hardwareOverrides?.gpuName)return 'vramGb';
  // 新建时允许直接维护简称；名称尚未能识别时，保存后仍能找到已填的维护项。
  if(row.hardwareOverrides?.caseBoards?.length)return 'case';

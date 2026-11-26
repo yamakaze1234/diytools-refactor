@@ -40,7 +40,7 @@ try{
   try{applySourceSync(plan,backend.configs,backend.rows);savedPlans.push(clone(plan));await route.fulfill({json:clone(backend)});}
   catch(error){await route.fulfill({status:409,json:{error:error.message}});}
  });
- const html=`<!doctype html><html><head><meta charset="utf-8"><script src="/workbench/endfield-init.js"></script>${['endfield/endfield.css','endfield-workbench.css','style.css','workbench-ui.css','workbench-simple.css','desktop-layout.css','ui-polish.css','reui-layout.css'].map(file=>'<link rel="stylesheet" href="/workbench/'+file+'">').join('')}</head><body>
+ const html=`<!doctype html><html><head><meta charset="utf-8"><script src="/workbench/endfield-init.js"></script>${['endfield/endfield.css','endfield-workbench.css','style.css','workbench-ui.css','workbench-simple.css','desktop-layout.css','ui-polish.css','reui-layout.css','source-sheet.css'].map(file=>'<link rel="stylesheet" href="/workbench/'+file+'">').join('')}</head><body>
  <button id="fixture-open">打开输出源维护</button><dialog id="dialog"><form method="dialog"><div class="dialog-title"><h2 id="dialog-title"></h2><button class="close" aria-label="关闭">×</button></div></form><div id="dialog-body"></div></dialog>
  <script type="module">
  import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;
@@ -57,22 +57,29 @@ try{
  window.fixture={snapshot:()=>structuredClone({...state,applied})};window.fixtureReady=true;
  </script></body></html>`;
  await page.route('**/workbench/source-sync-group-fixture*',route=>route.fulfill({contentType:'text/html',body:html}));
- const open=async seed=>{backend=clone(seed);savedPlans=[];conflictNext=null;await page.goto(base+'/workbench/source-sync-group-fixture');await page.waitForFunction(()=>window.fixtureReady);await page.locator('#fixture-open').click();await page.locator('#source-open-pending').click();await page.getByRole('dialog',{name:'待确认差异',exact:true}).locator('[data-review-link]').waitFor();};
+ const open=async seed=>{backend=clone(seed);savedPlans=[];conflictNext=null;await page.goto(base+'/workbench/source-sync-group-fixture');await page.waitForFunction(()=>window.fixtureReady);await page.locator('#fixture-open').click();await page.locator('#source-open-pending').click();await review().locator('[data-source-select]').first().waitFor({state:'attached'});await review().locator('[data-review-export]').uncheck();};
  const review=()=>page.getByRole('dialog',{name:'待确认差异',exact:true});
  const link=async id=>review().locator('[data-review-link]').selectOption(id||'');
  const category=async name=>review().locator('[data-review-slot]').selectOption(name||'');
  const snapshot=()=>page.evaluate(()=>window.fixture.snapshot());
+ // 历史回归覆盖核算单价，先通过真实字段筛选显式启用，再等待异步差异刷新。
+ const includeTax=async()=>{
+  const fields=review().locator('.sd-fields');
+  await fields.locator('summary').click();
+  await fields.locator('[data-source-field=tax]').check();
+  await fields.locator('summary').click();
+  await review().locator('[data-source-select][value*=tax]').first().waitFor({state:'attached'});
+ };
  const choose=async(id,field)=>{
   const inputs=review().locator('[data-source-select]'),values=await inputs.evaluateAll(els=>els.map(el=>el.value));
   const index=values.findIndex(value=>{const key=JSON.parse(value);return key[0]===id&&key.at(-1)===field;});assert.ok(index>=0,'missing visible-filter field '+id+'/'+field);
-  const input=inputs.nth(index),details=input.locator('xpath=ancestor::details[1]');
-  if(!await details.evaluate(el=>el.open))await details.locator('summary').click();
+  const input=inputs.nth(index);
+  if(!await input.isVisible())await input.locator('xpath=ancestor::*[@data-source-description-group][1]').locator('[data-toggle-group]').click();
   if(await input.isChecked())await input.uncheck();else await input.check();
  };
  const applied=async n=>{await page.waitForFunction(n=>window.fixture.snapshot().applied.length===n,n);await review().locator('#source-apply').waitFor();};
 
- await open(first);
- assert.equal(await review().locator('[data-source-select]:visible').count(),0,'默认成员明细折叠');
+ await open(first);await includeTax();
  assert.equal(await review().locator('[data-source-select]:checked').count(),0,'默认不勾选字段');
  assert.equal(await review().locator('#source-apply').isDisabled(),true,'未选择字段不能保存');
  assert.equal(await review().locator('[data-review-link]').inputValue(),'');
@@ -92,18 +99,21 @@ try{
  assert.equal(await review().locator('[data-source-select]').count(),1,'忽略版本后的升级文案不再提醒，只剩核算价');
  await choose('a','tax');conflictNext='config';await review().locator('#source-apply').click();await review().locator('[data-source-sync-message]').filter({hasText:'配置已变化'}).waitFor();
  assert.equal(savedPlans.length,2);assert.equal((await snapshot()).configs[0].parts[0].tax,100);
- await review().locator('#source-check').click();await choose('a','tax');conflictNext='source';await review().locator('#source-apply').click();await review().locator('[data-source-sync-message]').filter({hasText:'输出源已变化'}).waitFor();
+ // 冲突后的刷新会清空旧预览并异步重挂复选框，先等待目标字段回到 DOM。
+ await review().locator('#source-check').click();
+ await review().locator('[data-source-select]').first().waitFor({state:'attached'});
+ await choose('a','tax');conflictNext='source';await review().locator('#source-apply').click();await review().locator('[data-source-sync-message]').filter({hasText:'输出源已变化'}).waitFor();
  assert.equal(savedPlans.length,2);
  result=await snapshot();for(let i=0;i<2;i++){assert.deepEqual(result.configs[i].actualParts,first.configs[i].actualParts);assert.deepEqual(result.configs[i].addons,first.configs[i].addons);}
- checks.push('默认明细折叠和零选择','链接筛选保留隐藏选择','所选字段保存和恢复follow','保持可见手动文案并忽略本次源版本','核算价不能忽略','并发配置/来源改动拒绝且无部分保存','实际BOM和人工加购保留');
+ checks.push('默认零选择','链接筛选保留隐藏选择','所选字段保存和恢复follow','保持可见手动文案并忽略本次源版本','核算价不能忽略','并发配置/来源改动拒绝且无部分保存','实际BOM和人工加购保留');
 
- await open(categories);await link('p1');
- assert.deepEqual(await review().locator('[data-source-part-group]').evaluateAll(els=>els.map(el=>el.dataset.sourcePartGroup)),['CPU','内存','扩展配件']);
- await category('CPU');assert.equal(await review().locator('[data-source-select]').count(),4);assert.match(await review().locator('[data-source-description-group]').first().textContent(),/2 项/);
- await review().locator('[data-source-select-all]').check();await category('内存');assert.equal(await review().locator('[data-source-select]:checked').count(),0);assert.match(await review().locator('[data-source-sync-message]').innerText(),/其中 4 项在其他链接或配件分类中/);
- await choose('a','name');await category('CPU');assert.equal(await review().locator('[data-source-select]:checked').count(),4);await review().locator('[data-source-select-all]').uncheck();
+ await open(categories);await includeTax();await link('p1');
+ assert.deepEqual(await review().locator('[data-review-slot] option').allTextContents(),['全部配件','CPU','散热','内存','扩展配件']);
+ await category('CPU');assert.equal(await review().locator('[data-source-select]').count(),4);assert.match(await review().locator('[data-source-description-group]').first().textContent(),/2 套配置/);
+ for(const group of await review().locator('[data-source-select-group]').all())await group.check();await category('内存');assert.equal(await review().locator('[data-source-select]:checked').count(),0);
+ await choose('a','name');await category('CPU');assert.equal(await review().locator('[data-source-select]:checked').count(),4);for(const group of await review().locator('[data-source-select-group]').all())await group.uncheck();
  await category('散热');assert.equal(await review().locator('[data-source-select]').count(),0,'链接1不能显示链接2的散热差异');await link('p2');assert.equal(await review().locator('[data-source-select]').count(),2);await choose('c','name');
- await category('内存');await link('p1');assert.equal(await review().locator('[data-source-select]:checked').count(),1);assert.equal(await review().locator('[data-source-select-all]').evaluate(el=>el.indeterminate),true);
+ await category('内存');await link('p1');assert.equal(await review().locator('[data-source-select]:checked').count(),1);assert.equal(await review().locator('[data-source-select-group]:checked').count(),1);
  await review().locator('[data-source-clear]').click();assert.equal(await review().locator('#source-apply').isDisabled(),true);
  await choose('a','name');await category('');await page.screenshot({path:path.join(out,'part-category-preview.png')});await review().locator('#source-apply').click();await applied(1);
  result=await snapshot();assert.equal(result.applied[0].changes[0].details.length,1);assert.equal(result.configs[0].parts[0].name,'内存新名称');assert.equal(result.configs[0].parts[1].name,'原名称');assert.equal(result.configs[0].parts[0].tax,100);assert.equal(result.configs[2].parts[0].name,'原名称');
@@ -111,8 +121,8 @@ try{
 
  await open(descriptions);await category('内存');
  const descriptionGroups=review().locator('[data-source-description-group]');assert.equal(await descriptionGroups.count(),4);
- const sharedGroup=descriptionGroups.filter({hasText:'逐项升级说明'}).filter({hasText:'3 项 · 2 个链接 · 3 套配置'});assert.equal(await sharedGroup.count(),1);assert.equal(await sharedGroup.locator('[data-source-description]').count(),1);assert.equal(await sharedGroup.locator('[data-source-select]').count(),3);
- assert.match(await descriptionGroups.filter({hasText:/当前内容\s*（空）/}).textContent(),/输出源新内容\s*【\+200元升级64GB内存】/);
+ const sharedGroup=descriptionGroups.filter({hasText:'逐项升级说明'}).filter({hasText:'3 套配置 · 2 个链接'});assert.equal(await sharedGroup.count(),1);assert.equal(await sharedGroup.locator('[data-source-description]').count(),1);assert.equal(await sharedGroup.locator('[data-source-select]').count(),3);
+ assert.match(await descriptionGroups.filter({hasText:/（空）/}).textContent(),/输出源最新加购\s*【\+200元升级64GB内存】/);
  await choose('a','upgrade');assert.equal(await sharedGroup.locator('[data-source-select-group]').evaluate(el=>el.indeterminate),true);
  await sharedGroup.locator('[data-source-select-group]').check();assert.equal(await review().locator('[data-source-select]:checked').count(),3);assert.equal(await review().locator('#source-keep-all').isEnabled(),true);
  await link('p1');assert.equal(await review().locator('[data-source-select]:checked').count(),1);await review().locator('[data-source-select-group]').uncheck();
@@ -124,7 +134,7 @@ try{
  checks.push('同描述跨链接分组','不同原文/新文案/字段分离','组选择半选状态','链接筛选下组选择范围','组保存只改所选升级文案','窄窗口真实渲染');
  assert.deepEqual(errors,[]);assert.deepEqual(blocked,[]);
  const report={passed:true,fixture:'真实React输出源维护/待确认窗口；Node内存后端应用真实source-sync领域计划',productionAccess:false,checks,errors,blocked,
- defaultNoDetails:true,singleLinkDetails:true,defaultNoFields:true,crossLinkSelectionPreserved:true,selectedFieldsOnly:true,confirmedFieldsFollow:true,ignoredVersionHidden:true,taxBlocksIgnore:true,staleConfigRejected:true,staleSourceRejected:true,actualPartsAndAddonsPreserved:true,categoryCountsAndOrder:true,categoryFiltersLinks:true,crossCategorySelectionPreserved:true,selectAllOnlyVisibleCategory:true,clearIncludesHiddenSelections:true,categoryApplyOnlySelected:true,sameDescriptionGroupedAcrossLinks:true,differentBeforeAfterAndFieldSeparated:true,groupSelectionIndeterminate:true,groupSelectionRespectsLinkFilter:true,groupApplyOnlySelected:true};
+ singleLinkDetails:true,defaultNoFields:true,crossLinkSelectionPreserved:true,selectedFieldsOnly:true,confirmedFieldsFollow:true,ignoredVersionHidden:true,taxBlocksIgnore:true,staleConfigRejected:true,staleSourceRejected:true,actualPartsAndAddonsPreserved:true,categoryCountsAndOrder:true,categoryFiltersLinks:true,crossCategorySelectionPreserved:true,selectAllOnlyVisibleCategory:true,clearIncludesHiddenSelections:true,categoryApplyOnlySelected:true,sameDescriptionGroupedAcrossLinks:true,differentBeforeAfterAndFieldSeparated:true,groupSelectionIndeterminate:true,groupSelectionRespectsLinkFilter:true,groupApplyOnlySelected:true};
  await fs.writeFile(path.join(out,'result.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }catch(error){if(page)await page.screenshot({path:path.join(out,'failure.png'),fullPage:true}).catch(()=>{});await fs.writeFile(path.join(out,'failure.json'),JSON.stringify({error:error.stack,errors,blocked,checks},null,2));throw error;}
 finally{await browser.close();}

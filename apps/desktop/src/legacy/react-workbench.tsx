@@ -48,12 +48,16 @@ function ConfigList({markup,document}: {markup: string; document: Document}) {
 /** 分类入口沿用已有按钮控制器；弹层不占用商品链接列表高度。 */
 function WorkbenchNavigation({doc}:{doc:Document}) {
  const [open,setOpen]=useState<string|null>(null),[shown,setShown]=useState<string|null>(null);const nav=useRef<HTMLDivElement>(null);const panel=useRef<HTMLElement>(null);const motion=useRef<Animation|null>(null);
+ // 摘要可能先于 React 挂载完成，首次读取和后续通知使用同一个快照。
+ const readAlert=()=>({count:Number(doc.body.dataset.sourceDiffCount)||0,time:doc.body.dataset.sourceDiffTime||''});
+ const [alert,setAlert]=useState(readAlert);
+ useEffect(()=>{const update=()=>setAlert(readAlert());doc.addEventListener('source-diff-change',update);update();return()=>doc.removeEventListener('source-diff-change',update);},[doc]);
  const changeMenu=(next:string|null)=>{setOpen(next);if(next)setShown(next);};
  const nas=new URLSearchParams(doc.defaultView?.location.search).get('workspace')==='nas';
  const groups=[
   {label:'图片',title:'配置与图片',Icon:Images,items:[['配置模板','[data-nav="templates"]'],['机箱图库','#case-gallery-open']]},
   {label:'维护',title:'批量维护',Icon:Boxes,items:[['批量修改配件 / 加购 / 导图','#global-batch-open'],['加购包维护','#addon-pack-maintenance-open'],['输出源维护','[data-nav="source"]'],[nas?'当前店铺核算价':'三店共用成本价','[data-nav="cost-source"]']]},
-  {label:'库存',title:'库存与核算',Icon:PackageSearch,items:[['检查商品库存','#inventory-check-open'],['一键检测利润','#profit-check-open'],['检查价格变化','#price-changes-open'],['导出库存监控清单','#inventory-export-open']]},
+  {label:'库存',title:'库存与核算',Icon:PackageSearch,items:[['检查商品库存','#inventory-check-open'],['检查价格变化','#price-changes-open'],['导出库存监控清单','#inventory-export-open']]},
  ];
  useEffect(()=>{const outside=(e:Event)=>{if(!nav.current?.contains(e.target as Node))setOpen(null);};const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'){setOpen(null);nav.current?.querySelector<HTMLButtonElement>('[aria-expanded=true]')?.focus();}};doc.addEventListener('pointerdown',outside);doc.addEventListener('keydown',escape);return()=>{motion.current?.cancel();doc.removeEventListener('pointerdown',outside);doc.removeEventListener('keydown',escape);};},[doc]);
  // 只在分类展开期间定位，跟随图标并限制在可视窗口内。
@@ -78,7 +82,19 @@ function WorkbenchNavigation({doc}:{doc:Document}) {
  },[open,shown,doc]);
  const run=(selector:string)=>{setOpen(null);doc.querySelector<HTMLButtonElement>(selector)?.click();};
  const group=groups.find(g=>g.label===shown);
- return <div ref={nav} className="rail-navigation"><strong>D·</strong><button className="rail-nav-button" title="返回当前配置" onClick={()=>run('[data-nav="configs"]')}><LayoutGrid/>配置</button><button className="rail-nav-button" title="价格与利润" onClick={()=>run('#price-profit-open')}><ChartNoAxesCombined/>价格</button>{groups.map(({label,Icon})=><button key={label} className="rail-nav-button" aria-expanded={open===label} aria-controls="rail-tool-panel" onClick={()=>changeMenu(open===label?null:label)}><Icon/>{label}</button>)}<button className="rail-nav-button" onClick={()=>run('#logs-open')}><History/>记录</button>{group&&<section ref={panel} id="rail-tool-panel" className="rail-tool-panel" aria-label={group.title} inert={!open} aria-hidden={!open||undefined}><header><strong>{group.title}</strong><button aria-label="关闭工具分类" onClick={()=>setOpen(null)}><X/></button></header>{group.items.map(([label,selector])=><button key={selector} onClick={()=>run(selector)}>{label}</button>)}</section>}</div>;
+ return <div ref={nav} className="rail-navigation"><strong>D·</strong>
+  <button className="rail-nav-button" title="返回当前配置" onClick={()=>run('[data-nav="configs"]')}><LayoutGrid/>配置</button>
+  <button className="rail-nav-button" title="价格与利润" onClick={()=>run('#price-profit-open')}><ChartNoAxesCombined/>价格</button>
+  {groups.map(({label,Icon})=><button key={label} className="rail-nav-button" aria-label={label} aria-describedby={label==='维护'&&alert.count?'rail-source-count':undefined} aria-expanded={open===label} aria-controls="rail-tool-panel" onClick={()=>changeMenu(open===label?null:label)}>
+   <Icon/>{label}{label==='维护'&&alert.count>0&&<span id="rail-source-count" className="rail-alert-pill" aria-label={`待确认 ${alert.count}`}>{alert.count>99?'99+':alert.count}</span>}
+  </button>)}
+  <button className="rail-nav-button" onClick={()=>run('#logs-open')}><History/>记录</button>
+  {group&&<section ref={panel} id="rail-tool-panel" className="rail-tool-panel" aria-label={group.title} inert={!open} aria-hidden={!open||undefined}>
+   <header><strong>{group.title}</strong><button aria-label="关闭工具分类" onClick={()=>setOpen(null)}><X/></button></header>
+   {group.items.map(([label,selector])=><button key={selector} aria-label={label} onClick={()=>run(selector)}>{selector==='[data-nav="source"]'&&alert.count>0?
+    <span className="rail-source-alert"><span>{label}{alert.time&&<small data-source-menu-time>最近变动 {alert.time}</small>}</span><span data-source-menu-badge>待确认 {alert.count}</span></span>:label}</button>)}
+  </section>}
+ </div>;
 }
 /** 每个 iframe 独立登记 React root，卸载和导航时全部释放。 */
 export function createWorkbenchReactRenderer() {

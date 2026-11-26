@@ -79,6 +79,8 @@ export async function startSourceAcceptance({fixture,folder,root,authenticate,tl
    if(folder)console.error('026-erp-adoption-shared-fields: applied');
   }
  }
+ // 合成验收服务与桌面使用同一回收站接口；这里只安装函数，不在服务启动时直接清理样本。
+ await db.exec(await readFile(new URL('../sql/032-recycle-retention.sql',import.meta.url),'utf8'));
  let pending = Promise.resolve();
  // PGlite 验收库只使用一个连接，真实 PostgreSQL 使用各店池及各自运行角色。
  const underRole = task => {
