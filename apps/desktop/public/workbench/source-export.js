@@ -1,5 +1,6 @@
 /** 输出源表格导出：生成含商品身份与成本的行数据，并组装工作簿内容。 */
 import {selectedSourceAddons} from './addon-data.js';
+import {latestErpName} from './erp-part-description.js';
 import {makeZip} from './zip.js';
 import {isSpecialComponent} from './special-components.js';
 
@@ -7,7 +8,7 @@ export const sourceExportHeaders=['goodsid（ERP ID）','ERP名称','展示名�
 const xml=value=>String(value??'').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g,'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 /** 按店铺筛选来源并关联成本，形成导出行。 */
 export function sourceExportRows(rows,costs,shopId){
- const erpNames=new Map(costs.filter(r=>r.goodsId).map(r=>[String(r.goodsId),r.name||r.erpName||'']));
+ const erpNames=new Map(costs.filter(r=>r.goodsId).map(r=>[String(r.goodsId),latestErpName(r)]));
  return rows.filter(r=>r.shopId===shopId&&!r.deletedAt).map(r=>{
   if(typeof r.goodsId==='number'&&!Number.isSafeInteger(r.goodsId))throw Error('ERP ID 已丢失数字精度，请重新绑定文本 ID 后导出');
   const id=isSpecialComponent(r)?'':String(r.goodsId??'');

@@ -44,6 +44,11 @@ function fixture(scenario){
    sourceFollow:{sourceId:source.sourceId,name:{mode:'follow',value:source.name,sourceValue:source.name},upgrade:{mode:'follow',value:source.addonText,sourceValue:source.addonText}}});
   config.actualParts=config.parts.map(part=>({...part}));state.configs.push(config);
  }
+ if(scenario==='name'){
+  const part=state.configs.find(config=>config.id==='m1').parts[0];
+  part.displayName='人工定制处理器名';
+  part.sourceFollow.name={mode:'manual',value:part.displayName,sourceValue:name};
+ }
  if(scenario==='tax'){
   // 仅保留本店配置的核算价差异。输入的名称与加购都已跟随。
   state.configs=state.configs.filter(config=>config.id==='f1');
@@ -223,6 +228,32 @@ async function verify(scenario){
    await checkFooter();
    assert.equal(exports.length,0);assert.deepEqual(errors,[]);assert.deepEqual(foreign,[]);return;
   }
+  if(scenario==='name'){
+   const field=sheet.locator('[data-sheet-row="'+goodsId+'"] [data-sheet-field=name]');
+   const stageName=async value=>{await field.fill(value);await field.press('Enter');};
+   const renamed='英文版处理器展示名';
+   await stageName(renamed);
+   await sheet.locator('[data-sheet-action=save]').click();
+   await prompt.getByText('是否立即更新本店配置的展示名称？',{exact:true}).waitFor();
+   assert.equal(await prompt.locator('#prompt-follow-cnt').innerText(),'1 套');
+   assert.equal(await prompt.locator('#prompt-manual-cnt').innerText(),'1 套');
+   assert.equal(read('f1').name,name);
+   await chooseUpdateAlone();
+   assert.equal(read('f1').name,renamed);
+   assert.equal(read('f1').upgrade,oldText);
+   assert.equal(read('m1').displayName,'人工定制处理器名');
+   await receiptCount(1);
+
+   const both='同批修改的处理器名称';
+   await stageName(both);await editAddon(goodsId,newText);
+   await prompt.getByText('是否立即更新本店配置的展示名称与加购？',{exact:true}).waitFor();
+   assert.match(await prompt.locator('#btn-update-now').innerText(),/展示名称与加购并导图/);
+   await chooseUpdateAlone();
+   assert.deepEqual([read('f1').name,read('f1').upgrade],[both,newText]);
+   assert.deepEqual([read('m1').displayName,read('m1').upgrade],['人工定制处理器名',manual]);
+   assert.deepEqual([read('other').name,read('other').upgrade],[name,oldText]);
+   assert.deepEqual(errors,[]);assert.deepEqual(foreign,[]);return;
+  }
   await badge(1);
   await editAddon(goodsId,newText);
   const promptBox=await centered(prompt,620),footer=await prompt.locator('footer').boundingBox();
@@ -311,6 +342,6 @@ async function verify(scenario){
  finally{await page.close();}
 }
 try{
- for(const scenario of ['immediate','deferred','receipts','tax','layout'])await verify(scenario);
- console.log('通过：当前店保存决策、人工文案保护、真实双图导出、暂缓/仅导图、忽略/恢复、三级角标、补导记录合并、核算价显式确认、深色徽章、差异窗口自适应高度与两行底栏。');
+ for(const scenario of ['immediate','deferred','receipts','tax','layout','name'])await verify(scenario);
+ console.log('通过：当前店名称与加购保存决策、人工文案保护、真实双图导出、暂缓/仅导图、忽略/恢复、三级角标、补导记录合并、核算价显式确认、深色徽章、差异窗口自适应高度与两行底栏。');
 }finally{await browser.close();}

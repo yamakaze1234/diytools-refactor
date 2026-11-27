@@ -7,7 +7,7 @@ import {readHardwareFields} from './source-hardware-ui.js';
 import {shortCpu} from './legacy-names.js';
 import {gpuSpec} from './host-template-model.js';
 import {sourceGoodsId} from './shared-source-fields.js';
-import {sheetTaxInput,sourceSheetCategories,sourceSheetCategory,sourceSheetTaxCompare} from './source-sheet-model.js';
+import {sheetTaxInput,sourceSheetCategories,sourceSheetCategory,sourceSheetDefaultTax,sourceSheetTaxCompare} from './source-sheet-model.js';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const badge=(text,type)=>`<span class="badge badge-${type}">${esc(text)}</span>`;
@@ -46,7 +46,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
  <div class="ss-part-feedback" hidden><span data-feedback></span><button type="button" class="wb-btn wb-btn-sm" data-locate hidden>定位到已有记录 →</button></div>
  <div class="ss-part-preview" hidden></div></section>
  <section><strong class="ss-add-title" data-name-title></strong><div class="ss-add-pricing"><div><div class="ss-add-label"><label for="ss-part-name">${shared?'三店共用展示名称':'展示名称'} <em>*</em></label><button type="button" data-reset-name>填入 ERP 精简名</button></div><input class="wb-input" id="ss-part-name" maxlength="512" placeholder="用于配置表和消费者海报展示" autocomplete="off"></div>
- <div data-tax-wrap><div class="ss-add-label"><label for="ss-part-tax">含税核算价(元)</label><span data-delta></span></div><input class="wb-input" id="ss-part-tax" inputmode="decimal" placeholder="选填，留空待填"></div></div>
+ <div data-tax-wrap><div class="ss-add-label"><label for="ss-part-tax">默认核算价(元)</label><button type="button" data-reset-tax>恢复默认</button></div><input class="wb-input" id="ss-part-tax" inputmode="decimal" placeholder="选填，留空待填"><div class="ss-add-tax-status"><span data-tax-mode></span><span data-delta></span></div></div></div>
  <div class="ss-add-category" hidden><label>配件大类<select class="wb-input" data-category><option value="">按名称识别</option>${options(sourceSheetCategories.slice(1,-1))}</select></label><small>未从 ERP 查到分类时，可按展示名称识别或手动指定。</small></div></section>
  <details class="ss-add-specs" open><summary><strong>3. 配置简称显示与硬件识别资料（按 <span data-spec-cat></span> 自动匹配）</strong>${badge('用于配置简称生成 & 兼容校验','sel')}<small></small></summary><div class="ss-add-spec-grid"></div></details>
  <div class="ss-add-scope"><div><b>建源范围：</b>${shops.map(s=>badge(s,'ok')).join(' ')}<small>${adoptOnly?'加入后即可维护本店配件':'加入草稿后可继续编辑，统一保存'}</small></div><label data-open-wrap><input data-open-addons type="checkbox"> 加入草稿后立即配置升级项</label></div></div>
@@ -54,6 +54,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
  const $=selector=>host.querySelector(selector);
  const id=$('#ss-part-id'),name=$('#ss-part-name'),tax=$('#ss-part-tax'),category=$('[data-category]'),results=$('#ss-add-results'),lookup=$('[data-lookup]'),add=$('[data-add]'),specs=$('.ss-add-spec-grid'),preview=$('.ss-part-preview'),jump=$('[data-locate]');
  let revision=0,timer,special=false,normalName='',specialName='',manualGoodsId='',manualName=false,manualTax=false,candidate=null,blocked=false,loading=false,saving=false,info='',miss=false,currentCat='',choices=[],index=-1;
+ let defaultTax={tax:null};
  const current=token=>isCurrent()&&host.isConnected&&revision===token;
  const duplicate=()=>sourceGoodsId(id.value.trim())&&findExisting(id.value.trim());
  function closeResults(){
@@ -62,7 +63,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
  function resetMatch(goodsId){
   // 同一货号重查时保留人工值；改查或选中其他商品时由新商品重新带入。
   if(manualGoodsId&&manualGoodsId!==goodsId){manualName=false;manualTax=false;manualGoodsId='';}
-  candidate=null;blocked=false;loading=false;miss=false;info='';preview.hidden=true;category.value='';currentCat='';
+  defaultTax={tax:null};candidate=null;blocked=false;loading=false;miss=false;info='';preview.hidden=true;category.value='';currentCat='';
   if(!manualName)name.value='';if(!manualTax)tax.value='';
  }
  function renderSpecs(cat){
@@ -102,6 +103,9 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
   const label={high:'高于ERP +¥'+amount,low:'低于ERP -¥'+amount,equal:'= 与 ERP 持平'};
   $('[data-delta]').className='badge badge-'+({high:'ok',low:'low',equal:'ok'}[delta.status]||'unk');
   $('[data-delta]').textContent=label[delta.status]||'待对比';
+  const mode=tax.value.trim()?(manualTax?'manual':defaultTax.taxMode):null;
+  $('[data-tax-mode]').textContent={default_table:'默认·成本表',default_erp:'默认·取ERP',manual:'手改价'}[mode]||'待填';
+  $('[data-reset-tax]').disabled=!manualTax||loading||saving;
   $('[data-reset-name]').disabled=!candidate||saving;
   $('.ss-add-category').hidden=special||!!candidate?.erpCategory||!!existing||!valid||adoptOnly;
  }
@@ -109,7 +113,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
   host.dataset.partMode=special?'special':'normal';
   for(const b of host.querySelectorAll('[data-mode]'))b.setAttribute('aria-pressed',String((b.dataset.mode==='special')===special));
   for(const selector of ['[data-ordinary]','[data-tax-wrap]','.ss-add-specs','[data-reset-name]','[data-open-wrap]'])$(selector).hidden=special;
-  $('[data-name-title]').textContent=special?'展示名称':'2. 展示名称与含税核算价';
+  $('[data-name-title]').textContent=special?'展示名称':'2. 展示名称与默认核算价';
   $('[data-mode-hint]').textContent=!canSpecial?'特殊配件需要三店维护权限':special?'成本固定为 ¥0':'支持按名称联想搜索，或直接输货号查 ERP';
   update();
  }
@@ -125,10 +129,11 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
   candidate={...row,name:erpName,erpName};id.value=String(row.goodsId);miss=false;
   if(manualName||manualTax)manualGoodsId=id.value;
   if(!manualName)name.value=splitErpName(erpName).main;
-  renderPreview(candidate);info='正在读取参考核算价…';update();
+  renderPreview(candidate);info='正在读取默认核算价…';update();
   const reference=await api.readTaxCurrent?.(id.value);
   if(current(token)){
-   if(!manualTax)tax.value=Number.isFinite(reference)?String(reference):'';
+   defaultTax=sourceSheetDefaultTax(reference,candidate.erp);
+   if(!manualTax)tax.value=defaultTax.tax??'';
    info='已查到 ERP 商品。';
   }
  }
@@ -137,7 +142,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
   clearTimeout(timer);closeResults();const token=++revision;
   id.value=String(row.goodsId);resetMatch(id.value);if(duplicate()){update();return;}
   loading=true;
-  try{await applyMatch(row,token);}catch(e){if(current(token))info='读取 ERP 核算价失败：'+e.message;}
+  try{await applyMatch(row,token);}catch(e){if(current(token))info='读取默认核算价失败：'+e.message;}
   finally{if(current(token)){loading=false;update();}}
  }
  id.oninput=()=>{
@@ -168,7 +173,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
    if(!row||String(row.goodsId)!==goodsId||row.erpMissing||!(row.erpName||row.name)){
     miss=true;info=adoptOnly?'未查到 ERP 商品，单店建源需要有效候选。':'未查到 ERP 商品，可手动选择大类并填写展示名称。';
    }else await applyMatch(row,token);
-  }catch(e){if(current(token)){miss=!candidate;info=(candidate?'参考核算价读取失败：':'ERP 查询失败：')+e.message;}}
+  }catch(e){if(current(token)){miss=!candidate;info=(candidate?'默认核算价读取失败：':'ERP 查询失败：')+e.message;}}
   finally{if(current(token)){loading=false;update();}}
  };
  for(const b of host.querySelectorAll('[data-mode]'))b.onclick=()=>{
@@ -182,6 +187,7 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
  tax.oninput=()=>{manualTax=true;manualGoodsId=id.value.trim();update();};
  specs.oninput=category.onchange=update;
  $('[data-reset-name]').onclick=()=>{if(candidate){manualName=false;name.value=splitErpName(candidate.erpName).main;update();}};
+ $('[data-reset-tax]').onclick=()=>{manualTax=false;tax.value=defaultTax.tax??'';update();};
  jump.onclick=()=>{const row=duplicate();if(row&&row.base.deletedAt==null){api.closeDialog();locate(row.id);}};
  $('[data-cancel]').onclick=$('[data-close]').onclick=()=>{if(!saving)api.closeDialog();};
  add.onclick=async()=>{
@@ -190,7 +196,9 @@ export function mountAddPart(host,{api,shared,adoptOnly,shops,findExisting,locat
   try{
    const data=special?{displayName:name.value.trim()}:{...candidate,goodsId:id.value.trim(),erpName:candidate?.erpName||'',erpCategory:candidate?.erpCategory||category.value||undefined,
     displayName:name.value.trim(),hardwareOverrides:readHardwareFields(specs),capacityOverrides:readCapacityFields(specs)};
-   await submit(data,special?0:sheetTaxInput(tax.value),special,!special&&$('[data-open-addons]').checked);
+   const value=special?0:sheetTaxInput(tax.value);
+   const taxMode=value==null||special?undefined:manualTax?'manual':defaultTax.taxMode;
+   await submit(data,{tax:value,taxMode},special,!special&&$('[data-open-addons]').checked);
   }catch(e){info=e.message||String(e);}
   finally{host.inert=false;saving=false;if(isCurrent())update();}
  };

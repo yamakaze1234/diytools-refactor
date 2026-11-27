@@ -100,4 +100,7 @@ test('单店预览区分尚未观察类别和已确认空类别，保持重复�
  assert.equal(plan(cleared,row)[0].fields.erpCategory,null);
  assert.deepEqual(plan(cleared,cleared),[]);
  assert.deepEqual(plan(row,cleared),[]);
+ // 存量记录可能仅 ERP 原名落后。修正一次后，同一份观察应当不再产生变更。
+ assert.equal(plan(row,{...row,erpName:'旧原名'})[0]?.fields.name,row.name);
+ assert.deepEqual(plan(row,{...row,erpName:row.name}),[]);
 });

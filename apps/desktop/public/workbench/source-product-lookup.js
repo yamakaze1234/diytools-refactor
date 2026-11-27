@@ -1,3 +1,4 @@
+import {latestErpName} from './erp-part-description.js';
 import {componentStockHtml} from './component-stock-view.js';
 
 /** 绑定输出源表单，先显示同步记录，按需使用公司 ERP 只读查询。 */
@@ -19,7 +20,7 @@ export function mountSourceProductLookup(root,{draft,getCosts,onChange,nas=false
    price.value=value!=null&&Number.isFinite(Number(value))&&Number(value)>=0?Number(value).toFixed(2):'暂无';
    stock.innerHTML=componentStockHtml({goodsId:lastId},stockRows);
   }
-  if(fillName&&!edited&&(row?.erpName||row?.name))name.value=row.erpName||row.name;
+  if(fillName&&!edited&&latestErpName(row))name.value=latestErpName(row);
   status.textContent=message;
   onChange();
  };

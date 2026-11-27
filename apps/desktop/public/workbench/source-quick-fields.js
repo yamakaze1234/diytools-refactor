@@ -1,3 +1,4 @@
+import {latestErpName} from './erp-part-description.js';
 import {componentStock} from './inventory-check-data.js';
 import {isSpecialComponent} from './special-components.js';
 
@@ -27,7 +28,7 @@ export function quickSourceFieldsHtml(row,{nas,shopName}){
 /** ERP 行情只显示实查/已同步的数据，未知的价格和数量都保留未知。 */
 export function showQuickObservation(root,row,observed,stockRows){
  const title=root.querySelector('[data-quick-erp-name]');
- const original=observed?.erpName||(observed!==row&&observed?.name)||row.erpName||'ERP 原名待同步';
+ const original=latestErpName(observed===row&&!row.nasErpOverride?null:observed,row.erpName||'ERP 原名待同步');
  title.textContent=original;
  title.title=original;
  const amount=observed?.erp;

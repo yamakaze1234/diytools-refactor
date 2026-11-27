@@ -760,7 +760,11 @@ export class LiveStore extends Store{
      const document={...old?.document,...fields,goodsId:id};
      // 普通维护和 ERP 读取会替代全局改价基线，禁止沿用旧恢复标记。
      delete document.globalTax;
-     if(action==='erp_snapshot'){document.erpMissing=false;document.erpUnknown=fields.erp===null;document.stockMissing=false;document.nasErpOverride=true;}
+     if(action==='erp_snapshot'){
+      // 兼容只同步 ERP 单价与库存的旧客户端，仅在本次有名称观察时刷新原名。
+      if(own(fields,'name'))document.erpName=fields.name;
+      document.erpMissing=false;document.erpUnknown=fields.erp===null;document.stockMissing=false;document.nasErpOverride=true;
+     }
      else{
       document.nasTaxOverride=true;
       document.nasManualTax=action==='tax_edit';

@@ -8,6 +8,9 @@ const normalized=value=>String(value??'').normalize('NFKC').trim();
 const searchable=value=>normalized(value).toLowerCase();
 const textOf=part=>[part?.erpName,part?.erpModel,part?.erpSpec,part?.name].filter(Boolean).join(' ');
 
+/** ERP 同步标记表明成本行的 name 比历史 ERP 原名快照更新。 */
+export const latestErpName=(cost,fallback='')=>cost?.nasErpOverride&&cost.name?cost.name:cost?.erpName||cost?.name||fallback;
+
 /** ERP 的状态前缀和最后一组括号独立显示，原名可悬停查看和搜索。 */
 export function splitErpName(value){
  const raw=normalized(value),tags=[];

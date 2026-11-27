@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {sourceSheetCategories,sourceSheetCategory,buildSourceSheet,sourceSheetView,sourceSheetMatches,editSourceSheetField,
  createSourceSheetDraft,sourceSheetChanges,sourceSheetEffective,sheetTaxInput,sourceSheetRestorePlan,
- promoteSourceSheetField,sourceSheetNavCounts,sheetAddonItems,sourceSheetTaxCompare} from '../../public/workbench/source-sheet-model.js';
+ promoteSourceSheetField,sourceSheetNavCounts,sheetAddonItems,sourceSheetDefaultTax,sourceSheetTaxCompare} from '../../public/workbench/source-sheet-model.js';
 
 const shops=['intel','gigabyte','jonsbo'];
 const alias=(sourceId,fields={},legacy=[])=>({sourceId,fields,legacy});
@@ -231,4 +231,38 @@ test('建源将人工简称、容量、颜色写入共用及离线草稿，特�
  const {item,draft}=createSourceSheetDraft({displayName:'无独显',hardwareOverrides:{color:'白'}},{...opts,special:true});
  const [special]=sourceSheetChanges(item,draft);
  assert.deepEqual(special.managed.edits.shared.values,{name:'无独显'});assert.equal(special.row.tax,0);
+});
+
+test('共用改名解除同名冗余覆盖，同店不同名的历史别名仍受保护',()=>{
+ const scoped=structuredClone(entry);
+ scoped.stores.jonsbo[0].fields.name=entry.common.name;
+ const [item]=buildSourceSheet({rows,entries:[scoped],costs,shops,shop:'jonsbo'});
+ const draft=editSourceSheetField(item,undefined,'shared','name','新共用名称');
+ const view=sourceSheetView(item,draft);
+ assert.equal(view.scopeRows.get('jonsbo').name,'新共用名称');
+ assert.equal(view.scopeRows.get('intel').name,'英特尔原名');
+ assert.equal(sourceSheetEffective(item,draft,rows[3]).name,'乔思伯乙');
+ assert.deepEqual(view.differences.find(diff=>diff.scope==='jonsbo').fields,['name']);
+});
+
+test('新建核算价区分成本表零价、ERP 暂代价、手改价和留空',()=>{
+ assert.deepEqual(sourceSheetDefaultTax(0,8),{tax:0,taxMode:'default_table'});
+ const provisional=sourceSheetDefaultTax(null,8);
+ assert.deepEqual(provisional,{tax:8,taxMode:'default_erp'});
+ assert.deepEqual(sourceSheetDefaultTax(null,null),{tax:null});
+ const {item,draft}=createSourceSheetDraft({goodsId:'501',name:'新配件'},{shop:'intel',shops,managed:true,...provisional});
+ const payload=next=>sourceSheetChanges(item,next)[0].managed;
+ assert.equal(payload(draft).taxMode,'default_erp');
+ const manual=editSourceSheetField(item,draft,'shared','tax',9);
+ assert.equal(payload(manual).taxMode,'manual');
+ const empty=editSourceSheetField(item,manual,'shared','tax',null);
+ assert.equal(payload(empty).taxMode,undefined);
+ assert.equal(payload(empty).edits.shared.values.tax,null);
+});
+
+test('ERP 同步名称优先于历史原名快照，主表和升级项一致',()=>{
+ const updated=costs.map((row,index)=>({...row,nasErpOverride:true,erpName:'历史 ERP 名称 '+index}));
+ const [item]=buildSourceSheet({rows,entries:[entry],costs:updated,shops});
+ assert.equal(item.erpName,costs[0].name);
+ assert.equal(sheetAddonItems({addonChoices:[{goodsId:'502'}]},item.stockIndex)[0].targetRawName,costs[1].name);
 });

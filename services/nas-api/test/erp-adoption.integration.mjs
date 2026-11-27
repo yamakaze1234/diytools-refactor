@@ -61,7 +61,12 @@ test('ERP 新品本店创建、原号回执、沿用已有价和正常补表',as
   await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:[{
    id:fresh,action:'erp_snapshot',expected_version:erpBefore.version,fields:{erp:128,stockAvailable:7,name:'ERP 主板 白色'},
   }]});
-  assert.equal((await cost(intel,fresh)).document.erp,128);
+  const renamed=await cost(intel,fresh);
+  assert.deepEqual([renamed.document.erp,renamed.document.name,renamed.document.erpName],[128,'ERP 主板 白色','ERP 主板 白色']);
+  await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:[{
+   id:fresh,action:'erp_snapshot',expected_version:renamed.version,fields:{erp:128,stockAvailable:8},
+  }]});
+  assert.equal((await cost(intel,fresh)).document.erpName,'ERP 主板 白色');
   assert.equal((await source()).hardwareOverrides.color,'黑');
   await tablePrice(fresh,125);
   assert.equal((await cost(intel,fresh)).document.nasProvisionalTax,undefined);

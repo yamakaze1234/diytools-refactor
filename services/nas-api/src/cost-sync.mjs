@@ -59,6 +59,8 @@ export async function applyCostSync(db,{member,shop,rows,action,operationId,requ
    const context=data[id];
    for(const row of context.changes){
     const fields=expected.get(row.id);
+    // 031 的函数会更新 name，却可能保留旧 erpName。三店均写实才登记成功回执。
+    if(action==='erp_sync'&&row.after?.erpName!==fields.name)throw new Fault('NAS_COST_SYNC_NOT_INSTALLED',503);
     for(const key of ['stockIncomingAvailable','erpCategory']){
      if(Object.hasOwn(fields,key)&&row.after?.[key]!==fields[key])throw new Fault('NAS_COST_SYNC_NOT_INSTALLED',503);
     }

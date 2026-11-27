@@ -20,7 +20,7 @@ import {mountSourceSync} from './source-sync-ui.js';
 import {SourceChangeSession} from './source-sync-data.js';
 import {sameNasDocument as equal} from './nas-main-workspace.js';
 import {sourceSheetCategories,sourceSheetFilters,buildSourceSheet,sourceSheetView,sourceSheetMatches,
- sourceSheetNavCounts,sourceSheetTaxCompare,sheetTaxInput,editSourceSheetField,createSourceSheetDraft,sourceSheetChanges,sourceSheetEffective,
+ sourceSheetNavCounts,sourceSheetTaxCompare,sourceSheetDefaultTax,sheetTaxInput,editSourceSheetField,createSourceSheetDraft,sourceSheetChanges,sourceSheetEffective,
  sourceSheetRestorePlan,sourceSheetCommonCanRestore,promoteSourceSheetField} from './source-sheet-model.js';
 
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -217,17 +217,18 @@ export function openSourceSheet(root,api){
  function baseInfo(row){
   const facts=row.common.hardwareOverrides??{};
   const automatic=row.base.hardwareFacts??{},raw=splitErpName(row.erpName);
+  const spec=row.cost?.nasErpOverride&&raw.spec?raw.spec:row.base.erpSpec||row.cost?.erpSpec||raw.spec;
   const sizes=Object.values(row.common.capacityOverrides??{});
   if(!sizes.length&&['内存','硬盘','显卡'].includes(row.category)){
-   const capacity=autoCapacity(row.base.erpSpec||raw.spec||row.erpName);
+   const capacity=autoCapacity(spec||row.erpName);
    if(capacity!=null)sizes.push(capacity);
   }
   const power=row.category==='电源'?row.erpName?.match(/\b\d{3,4}\s*w\b/i)?.[0]:'';
-  const supported=row.category==='机箱'?caseSupport(row.common):null;
+  const supported=row.category==='机箱'?caseSupport({...row.common,erpName:row.erpName,erpSpec:spec}):null;
   const aliases=Object.values(row.entry.stores).reduce((max,items)=>Math.max(max,items.length),0);
   return [...new Set([facts.cpuName||automatic.cpuName,facts.gpuName||automatic.gpuName,...sizes.map(value=>value+' GB'),power,
-   facts.color||automatic.color,facts.boardType||(row.category==='主板'?boardType(row.common):''),
-   ...(facts.caseBoards??supported?.exact??(supported?.type?[supported.type]:[])),row.base.erpSpec||row.cost?.erpSpec||raw.spec,
+   facts.color||automatic.color,facts.boardType||(row.category==='主板'?boardType({...row.common,erpName:row.erpName,erpSpec:spec}):''),
+   ...(facts.caseBoards??supported?.exact??(supported?.type?[supported.type]:[])),spec,
    aliases>1?`历史别名 ×${aliases}`:''].filter(Boolean))].join(' · ');
  }
  function overrideHead(row,id,fields,restore){
@@ -244,8 +245,10 @@ export function openSourceSheet(root,api){
    ${action('restore-store','恢复共用',`data-scope="${esc(id)}"${canRestore&&editable(row)?'':' disabled'} title="${esc(blocked.length?restoreHint(blocked):'恢复本店可用的共用设置')}"`)}</div>`;
  }
  function scopeCell(row,id,restore){
-  const active=sideScopes.get(JSON.stringify([row.id,id]))??(scope==='shared'?scope:id);
-  const fields=storeFields(row,id),canRestore=restore.targets.some(target=>target.scope===id&&target.field==='name');
+  const fields=storeFields(row,id);
+  // 有独享名称的格子直接编辑本店，显式切换过范围时沿用用户选择。
+  const active=sideScopes.get(JSON.stringify([row.id,id]))??(scope==='shared'&&!fields.includes('name')?'shared':id);
+  const canRestore=restore.targets.some(target=>target.scope===id&&target.field==='name');
   return `<td class="ss-store-cell ${fields.length?'is-override':''}">
    ${scope==='shared'?`<div class="ss-name-scopes" role="group" aria-label="名称编辑范围" data-store="${id}">
     ${action('name-scope','三店共用',`data-scope="shared" aria-pressed="${active==='shared'}"`)}
@@ -255,7 +258,7 @@ export function openSourceSheet(root,api){
    ${overrideHead(row,id,fields,restore)}
    ${nameField(row,active,id)}${rowAddons(row,id)}</td>`;
  }
- function overrideCard(row,{scope:id,fields,row:store}){
+ function overrideCard(row,{scope:id,fields,row:store},restore){
   const values=sourceFields(store);
   const summary=fields.map(field=>{
    const value=values[field];
@@ -263,8 +266,12 @@ export function openSourceSheet(root,api){
     field.startsWith('capacityOverrides.')&&value!=null?value+' GB':Array.isArray(value)?value.join('、'):value??'自动识别';
    return sharedSourceLabels[field]+' '+shown;
   }).join('；');
-  return action('store-override',`<strong>${esc(scopeName(id))} · 独享</strong><span title="${esc(summary)}">${esc(summary)}</span>`,
+  const card=action('store-override',`<strong>${esc(scopeName(id))} · 独享</strong><span title="${esc(summary)}">${esc(summary)}</span>`,
    `data-scope="${id}" class="ss-override-card"`);
+  const canRestore=restore.targets.some(target=>target.scope===id);
+  const blocked=fields.filter(field=>restore.blocked.includes(field));
+  return `<div class="ss-override-row">${card}${action('restore-store','恢复共用',
+   `data-scope="${id}"${canRestore&&editable(row)?'':' disabled'} title="${esc(blocked.length?restoreHint(blocked):'恢复本店可用的共用设置')}"`)}</div>`;
  }
  function rowHtml(row){
   const special=isSpecialComponent(row.base),isMarked=row.id===marked;
@@ -280,7 +287,8 @@ export function openSourceSheet(root,api){
   const restoreControls=row.differences.length?action('restore-all',restoreLabel(restore),editable(row)&&restore.targets.length?'':'disabled')+
    `<small class="ss-muted" data-sheet-restore-hint${restore.blocked.length?'':' hidden'}>${restore.blocked.length?esc(restoreHint(restore.blocked)):''}</small>`:'';
   const diff=shopIds.length<2?'<span class="ss-muted">本店可见</span>':row.differences.length?
-   row.differences.map(diff=>overrideCard(row,diff)).join('')+restoreControls:
+   row.differences.map(diff=>overrideCard(row,diff,restore)).join('')+restoreControls+
+   (row.differences.some(diff=>diff.fields.includes('name'))?'<small class="ss-muted" data-sheet-name-protection>独享名称继续生效，选择恢复共用后才会跟随。</small>':''):
    '<span class="ss-muted">三店一致</span>'+action('store-addons','＋ 单店设置',`data-scope="${shop}"`);
   const middle=mode==='common'?`<td>${nameField(row,scope)}</td><td>${rowAddons(row,scope)}</td><td class="ss-differences">${diff}</td>`:shopIds.map(id=>scopeCell(row,id,restore)).join('');
   return `<tr data-sheet-row="${esc(row.id)}" tabindex="-1" class="${isMarked?'is-marked ':''}${row.draft?'is-pending':''}">
@@ -435,25 +443,31 @@ export function openSourceSheet(root,api){
   if(field.dataset.displayStore)field.value=views.get(id).scopeRows.get(field.dataset.scope)?.name??'';
   editing={id,field,value:field.value};
  }
- // 输入时仅预览恢复按钮；按下按钮后先提交共用价，再按最新草稿解除覆盖。
- function previewTaxRestore(field){
-  if(field.dataset.sheetField!=='tax'||field.dataset.scope!=='shared'||field.readOnly)return;
+ // 输入时预览名称和价格的恢复状态；点击后先记入共用草稿，再解除所选覆盖。
+ function previewRestore(field){
+  if(field.dataset.scope!=='shared'||field.readOnly)return;
+  const key=field.dataset.sheetField;
   const tr=field.closest('[data-sheet-row]'),button=tr?.querySelector('[data-sheet-action="restore-all"]');
   if(!button)return;
   const item=itemById(tr.dataset.sheetRow),hint=tr.querySelector('[data-sheet-restore-hint]');
-  const storeButtons=tr.querySelectorAll('[data-sheet-action="restore-store"]');
-  let tax;
-  try{tax=sheetTaxInput(field.value);}catch(error){
+  const storeButtons=tr.querySelectorAll('[data-sheet-action="restore-store"],[data-sheet-action="restore-name"]');
+  let draft=pending.get(item.id);
+  try{
+   const value=key==='tax'?sheetTaxInput(field.value):field.value.trim();
+   if(editing?.field===field&&editing.value!==field.value)draft=editSourceSheetField(item,draft,'shared',key,value);
+  }catch(error){
    button.disabled=true;hint.hidden=false;hint.textContent=error.message;
    for(const control of storeButtons){control.disabled=true;control.title=error.message;}
    return;
   }
-  const draft=editSourceSheetField(item,pending.get(item.id),'shared','tax',tax);
-  const row={...views.get(item.id),draft},plan=sourceSheetRestorePlan(row);
+  const row=project(item,draft),plan=sourceSheetRestorePlan(row);
+  const protection=tr.querySelector('[data-sheet-name-protection]');
+  if(protection)protection.hidden=!row.differences.some(diff=>diff.fields.includes('name'));
   for(const control of storeButtons){
    const store=control.dataset.scope;
-   control.disabled=!editable(item)||!plan.targets.some(target=>target.scope===store);
-   const blocked=storeFields(row,store).filter(field=>plan.blocked.includes(field));
+   const onlyName=control.dataset.sheetAction==='restore-name';
+   control.disabled=!editable(item)||!plan.targets.some(target=>target.scope===store&&(!onlyName||target.field==='name'));
+   const blocked=storeFields(row,store).filter(field=>plan.blocked.includes(field)&&(!onlyName||field==='name'));
    control.title=blocked.length?restoreHint(blocked):'恢复本店可用的共用设置';
   }
   button.disabled=!editable(item)||!plan.targets.length;
@@ -465,7 +479,7 @@ export function openSourceSheet(root,api){
   if(!editing||editing.field!==field)return;
   const {id,value}=editing;editing=null;
   const showValue=next=>{field.value=field.dataset.displayStore?views.get(id).scopeRows.get(field.dataset.displayStore)?.name??'':next??'';};
-  if(cancel){showValue(value);previewTaxRestore(field);updateStatus();return;}
+  if(cancel){showValue(value);previewRestore(field);updateStatus();return;}
   if(value===field.value){showValue(value);updateStatus();return;}
   try{
    const type=field.dataset.sheetField;
@@ -474,7 +488,7 @@ export function openSourceSheet(root,api){
    changeField(itemById(id),field.dataset.scope,type,next);
    showValue(next);
    message('');
-  }catch(error){showValue(value);previewTaxRestore(field);message(error.message);updateStatus();}
+  }catch(error){showValue(value);previewRestore(field);message(error.message);updateStatus();}
  }
 
  function closeCombo(){
@@ -520,20 +534,20 @@ export function openSourceSheet(root,api){
   const candidate=entry.candidate;
   const existing=[...views.values()].find(row=>row.base.goodsId===candidate.goodsId);
   if(existing)return locate(existing.id);
-  busy=true;message('正在读取 ERP 参考核算价');updateStatus();
+  busy=true;message('正在读取默认核算价');updateStatus();
   try{
-   const tax=await api.readTaxCurrent?.(candidate.goodsId);
+   const initialTax=sourceSheetDefaultTax(await api.readTaxCurrent?.(candidate.goodsId),candidate.erp);
    // ERP 搜索返回的 name 是原名，表单的 name 则可以是人工展示名。
    const erpName=candidate.erpName||candidate.name;
-   const added=await addPart({...candidate,erpName,displayName:splitErpName(erpName).main},tax);
+   const added=await addPart({...candidate,erpName,displayName:splitErpName(erpName).main},initialTax);
    locate(added.id,{focusName:true});message(added.notice);
   }catch(error){message(error.message||String(error));}
   finally{busy=false;updateStatus();}
  }
  // 工具栏与弹窗共用建源逻辑。单店建源收到回执后读取版本，再暂存本店人工规格。
- async function addPart(candidate,tax,special=false){
+ async function addPart(candidate,initialTax,special=false){
   if(adoptOnly){
-   const sourceId=await api.adoptErp(candidate,tax);
+   const sourceId=await api.adoptErp(candidate,initialTax);
    try{await api.sharedSources?.refresh?.();}
    catch(error){throw Error('已加入当前店铺，但目录版本读取失败。请重试以接续维护：'+error.message);}
    readRows();
@@ -545,7 +559,7 @@ export function openSourceSheet(root,api){
    if(draft)setDraft(item,draft);
    return {id:item.id,notice:draft?'已加入当前店铺，硬件资料已加入草稿，请点击「保存全部更改」':'已加入当前店铺输出源'};
   }
-  const {item,draft}=createSourceSheetDraft(candidate,{shop,shops:shopIds,managed:!!api.sharedSources,special,tax});
+  const {item,draft}=createSourceSheetDraft(candidate,{shop,shops:shopIds,managed:!!api.sharedSources,special,...initialTax});
   created.set(item.id,item);setDraft(item,draft);
   return {id:item.id,notice:'已加入待保存草稿，请核对后点击右下角「保存全部更改」'};
  }
@@ -560,11 +574,11 @@ export function openSourceSheet(root,api){
     return rows.find(row=>row.base.deletedAt==null)??rows[0];
    },
    locate:id=>locate(id,{focusName:true}),
-   submit:async(candidate,tax,special,openAddons)=>{
+   submit:async(candidate,initialTax,special,openAddons)=>{
     if(busy)return;
     busy=true;updateStatus();
     let result;
-    try{result=await addPart(candidate,tax,special);}
+    try{result=await addPart(candidate,initialTax,special);}
     finally{busy=false;updateStatus();}
     if(isCurrent())api.closeDialog();
     if(disposed)return;
@@ -881,7 +895,7 @@ const row=views.get(item.id),addons=panel==='addons';
   sync=mountSourceSync(host,{getRows:api.getReviewRows??sheetRows,getConfigs:api.getConfigs,shopId:api.shopId,isEdited:hasPending,
    flush:async()=>{await api.flush();if(firstRead){await api.refreshAlerts?.();firstRead=false;}},
    saveSkuMode:api.saveSkuMode,apply:api.applySync,validateImage:api.validateImage,download:api.download,
-   prepareExport:api.prepareExport,onChanged:api.refreshAlerts,message,view,deferRefresh:true});
+   prepareExport:api.prepareExport,onChanged:api.refreshAlerts,errorText:api.errorText,message,view,deferRefresh:true});
   if(view==='automatic')sync.showAutomaticChanges(automatic.records);
   else void sync.refresh();
  }
@@ -914,7 +928,7 @@ const row=views.get(item.id),addons=panel==='addons';
  root.addEventListener('input',event=>{
   if(event.target.id==='source-sheet-filter'){query=event.target.value;refreshTable(true);}
   else if(event.target===combo)comboSearch();
-  else if(event.target.matches('[data-sheet-field]')){previewTaxRestore(event.target);updateStatus();}
+  else if(event.target.matches('[data-sheet-field]')){previewRestore(event.target);updateStatus();}
  },events);
  root.addEventListener('change',event=>{
   if(event.target.id!=='source-sheet-shop')return;

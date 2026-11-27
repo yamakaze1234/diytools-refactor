@@ -1,3 +1,4 @@
+import {latestErpName} from './erp-part-description.js';
 import {componentStock,inventoryCategory} from './inventory-check-data.js';
 import {categoryFromErp} from './component-category.js';
 import {actualParts} from './actual-parts.js';
@@ -61,7 +62,7 @@ export function stockTaskEditor({$,esc,getCatalog,getCosts,getConfigs,shop,inval
   candidates=getCatalog().filter(r=>!r.deletedAt&&r.shopId===shop.id).map(r=>{
    const hits=costs.get(r.goodsId),cost=hits?.length===1?hits[0]:null;
    const category=inventoryCategory({...r,slot:r.slot||slots.get(r.goodsId)},cost);
-   return {...r,category,stock:componentStock(r.goodsId,costs,threshold),erpName:r.erpName||cost?.erpName||cost?.name||r.originalName};
+   return {...r,category,stock:componentStock(r.goodsId,costs,threshold),erpName:latestErpName(cost,r.erpName||r.originalName)};
   });
   render();
  }

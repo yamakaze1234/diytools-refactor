@@ -1,5 +1,6 @@
 /** 正式页面与 CSP 下的工作表操作。只连接隔离 PGlite，并用合成 ERP 商品。 */
 import {verifyAddonChoices} from './source-addon-redesign-check.mjs';
+import {openAdvanced} from './continuous-regression-helper.mjs';
 import {verifyQuickSource} from './source-quick-edit-check.mjs';
 import assert from 'node:assert/strict';
 import {mkdtemp,readFile} from 'node:fs/promises';
@@ -16,7 +17,7 @@ const api=await startSourceAcceptance({fixture:resolve(fixture),root,
  authenticate:async()=>({uid:fixtureActor,workspaceId:fixtureWorkspace})});
 // 用已安装 ERP 分类迁移的隔离库，验证两种权限的建源都能读回原始类别。
 for(const file of ['020-workbench-global-tax.sql','021-workbench-alias-addons.sql','027-quotation-identity-invalidation.sql',
- '028-cross-shop-cost-sync.sql','029-manual-tax-protection.sql','030-incoming-stock.sql','031-erp-category.sql'])
+ '028-cross-shop-cost-sync.sql','029-manual-tax-protection.sql','030-incoming-stock.sql','031-erp-category.sql','033-source-default-tax-and-erp-name.sql'])
  await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+file,import.meta.url),'utf8'));
 // 三组隔离样例分别覆盖缺共用价、缺共用名称和只有基础信息独享。
 await api.db.exec(`
@@ -24,6 +25,7 @@ await api.db.exec(`
  UPDATE intel_live.sources SET attrs=attrs||jsonb_build_object('updatedAt',now()-interval '8 days');
  UPDATE intel_live.parts SET attrs=attrs||'{"displayName":"待确认的旧 CPU 名称"}'
  WHERE configuration_id='fixture-overlap' AND part_kind='display' AND goodsid='100001';
+ UPDATE intel_live.costs SET attrs=attrs||'{"name":"测试显卡新 ERP（16GB 新规格）","erpName":"历史 ERP 显卡","erpSpec":"旧规格","nasErpOverride":true}' WHERE goodsid='9900011';
  UPDATE workbench_sources.entries SET fields=(fields-'tax')||'{"hardwareOverrides.gpuName":"LongGPUModelName1234567890LongGPUModelName1234567890LongGPUModelName1234567890"}'::jsonb WHERE id='9900011';
  UPDATE workbench_sources.aliases SET fields=CASE shop_id
   WHEN 'intel' THEN '{"tax":1400}'::jsonb WHEN 'jonsbo' THEN '{"tax":1398}'::jsonb ELSE '{}'::jsonb END
@@ -49,7 +51,7 @@ const excluded={goodsId:'9900932',name:'排除商品 NVMe *!',erp:414,stockAvail
 const cpuPart={goodsId:'9900937',name:'Intel 酷睿 i5-14600KF 散片（14核20线程）',erpCategory:'处理器',erp:1401.41,sku:'TEST-CPU',stockAvailable:42,stockIncomingAvailable:60};
 const single={goodsId:'9900933',name:'仅本店合成 SSD',erp:153,stockAvailable:6,erpCategory:'固态硬盘'};
 const headers={'x-workbench-deployment':fixtureDeployment,'content-type':'application/json'};
-async function settings(page,{singleShop=false}={}){
+async function settings(page,{singleShop=false,configWrites=[]}={}){
  page.on('pageerror',error=>{errors.push(error.message);console.error(error.stack);});
  page.on('dialog',dialog=>dialog.accept());
  page.setDefaultTimeout(14000);
@@ -60,6 +62,7 @@ async function settings(page,{singleShop=false}={}){
   if(command==='nas_native_request'&&args.route==='/settings')return result({
    configured:true,main_editor:true,endpoint_id:'isolated-source-sheet',deployment_id:fixtureDeployment,acceptance:true});
   if(command==='nas_native_request'){
+   if(args.method==='POST'&&args.route.includes('/workspace/configurations'))configWrites.push(...JSON.parse(args.body).changes);
    const res=await fetch(api.url+args.route,{method:args.method,headers,body:args.body??undefined});
    return {status:res.status,body:await res.text()};
   }
@@ -68,7 +71,7 @@ async function settings(page,{singleShop=false}={}){
    if(args.kind==='erp-status')return result({ok:true,saved:true});
    if(args.kind==='erp')return result({ok:true,rows:[...rows,formPart].filter(row=>args.goodsIds.includes(row.goodsId))});
    if(args.kind==='erp-catalog')return result({ok:true,total:rows.length,complete:true,rows});
-   if(args.kind==='tax-current')return result({ok:true,rows:[{goods_id:product.goodsId,tax:488.13},{goods_id:single.goodsId,tax:183.24},{goods_id:formPart.goodsId,tax:289.5},{goods_id:cpuPart.goodsId,tax:1290}]});
+   if(args.kind==='tax-current')return result({ok:true,rows:[{goods_id:single.goodsId,tax:183.24},{goods_id:formPart.goodsId,tax:289.5}]});
    return result({ok:true,rows:[]});
   }
   return 1;
@@ -135,6 +138,124 @@ const readSource=async(id,shop='intel')=>{
  assert.equal(response.status,200);
  return (await response.json()).data.document;
 };
+async function verifyNameAndDependencies(){
+ await api.db.exec(`
+  UPDATE workbench_sources.aliases a SET fields=a.fields||jsonb_build_object('name',
+   CASE WHEN a.shop_id='gigabyte' THEN '技嘉独享旧名' ELSE e.fields->>'name' END)
+   FROM workbench_sources.entries e WHERE a.entry_id=e.id AND e.id='9900011' AND a.shop_id IN ('gigabyte','jonsbo');
+  SELECT workbench_sources.project('9900011',ARRAY['gigabyte','jonsbo'],now());
+  UPDATE intel_live.parts p SET name=s.name,attrs=(p.attrs-'displayName')||jsonb_build_object(
+   'sourceFollow',jsonb_build_object('sourceId',p.source_id,'name',jsonb_build_object('mode','follow','value',s.name,'sourceValue',s.name)))
+  FROM intel_live.sources s WHERE s.source_id=p.source_id AND p.configuration_id='fixture-overlap' AND p.part_kind='display';
+ `);
+ const context=await browser.newContext({viewport:{width:1540,height:940}}),page=await context.newPage(),configWrites=[];
+ try{
+  const frame=await settings(page,{configWrites}),sheet=await openSheet(frame);
+  const target=row(sheet,'9900011'),prompt=frame.locator('#modal-save-prompt'),review=frame.locator('#dialog');
+  const sourceStatus=sheet.locator('[data-sheet-message]');
+  await button(sheet,'stores').click();
+  const gigabyte=target.getByRole('textbox',{name:'技嘉展示名称'});
+  assert.equal(await gigabyte.inputValue(),'技嘉独享旧名');
+  await gigabyte.fill('技嘉独享新名');await gigabyte.press('Enter');
+  assert.equal(await gigabyte.inputValue(),'技嘉独享新名');
+  await button(sheet,'common').click();
+  const shared=target.getByRole('textbox',{name:'三店共用展示名称'});
+  await shared.fill('三店共用新显卡');await shared.press('Enter');
+  assert.match(await target.locator('[data-sheet-name-protection]').innerText(),/独享名称继续生效/);
+  await button(sheet,'save').click();
+  await sourceStatus.getByText(/已保存 1 条/).waitFor();
+  const gpu=await readSource('9900011');
+  assert.equal(gpu.stores.gigabyte[0].fields.name,'技嘉独享新名');
+  assert.equal(Object.hasOwn(gpu.stores.jonsbo[0].fields,'name'),false);
+  assert.equal((await api.db.query("SELECT name FROM jonsbo_live.sources WHERE goodsid='9900011'")).rows[0].name,'三店共用新显卡');
+
+  const renameCpu=async value=>{
+   await button(sheet,'stores').click();
+   const input=row(sheet,'100001').getByRole('textbox',{name:'英特尔展示名称'});
+   await input.fill(value);await input.press('Enter');
+   await button(sheet,'save').click();
+   await prompt.getByText('是否立即更新本店配置的展示名称？',{exact:true}).waitFor();
+   assert.equal(await prompt.locator('#prompt-follow-cnt').innerText(),'1 套');
+   await prompt.locator('#btn-defer-update').click();
+   await sourceStatus.getByText(/已保存 1 条/).waitFor();
+  };
+  const bumpVersions=()=>api.db.exec(`
+   UPDATE intel_live.sources SET version=version+1 WHERE source_id='fixture-local';
+   UPDATE intel_live.costs SET version=version+1 WHERE goodsid='100001';
+   UPDATE intel_live.intel_cost_overrides SET version=version+1 WHERE goodsid='100001';
+  `);
+  const expectSavedName=async name=>assert.equal((await api.db.query(
+   "SELECT name FROM intel_live.parts WHERE configuration_id='fixture-overlap' AND part_kind='display'"
+  )).rows[0].name,name);
+  const selectName=async(value,sourceSheet=sheet,dialog=review)=>{
+   await button(sourceSheet,'differences').click();
+   await dialog.locator('[data-diff-tab=follow]').click();
+   const group=dialog.locator('[data-source-description-group]').filter({hasText:value});
+   await group.locator('[data-source-select-group]').check();
+   await dialog.locator('[data-review-export]').uncheck();
+  };
+  const newName='依赖测试新展示名称';
+  await renameCpu(newName);
+  await bumpVersions();
+  await selectName(newName);
+  // 差异列表已载入后再推进两类版本，应用前也必须重新读取。
+  await bumpVersions();
+  await review.locator('#source-apply').click();
+  await review.locator('[data-source-sync-message]').getByText('已更新 1 套配置。',{exact:true}).waitFor();
+  await expectSavedName(newName);
+  assert.equal(configWrites.length,1);
+  const {rows:[versions]}=await api.db.query(`SELECT
+   (SELECT version::text FROM intel_live.sources WHERE source_id='fixture-local') AS source,
+   coalesce((SELECT version::text FROM intel_live.intel_cost_overrides WHERE goodsid='100001'),
+    (SELECT version::text FROM intel_live.costs WHERE goodsid='100001')) AS cost`);
+  assert.equal(configWrites[0].dependencies.sources['fixture-local'],versions.source);
+  assert.equal(configWrites[0].dependencies.costs['100001'],versions.cost);
+  await review.locator('[data-close]').click();
+  await button(sheet,'back').click();
+
+  const configuration=frame.locator('[data-id="fixture-overlap"]');
+  if(!await configuration.isVisible())await frame.locator('[data-product-toggle="fixture-link"] .link-arrow').click();
+  await configuration.click();await openAdvanced(frame,'display');
+  // 同成员的第二个窗口先加载干净详情，再由第一个窗口写出实际 IndexedDB 草稿。
+  const peer=await context.newPage(),peerFrame=await settings(peer,{configWrites});
+  const peerConfig=peerFrame.locator('[data-id="fixture-overlap"]');
+  if(!await peerConfig.isVisible())await peerFrame.locator('[data-product-toggle="fixture-link"] .link-arrow').click();
+  await peerConfig.click();await openAdvanced(peerFrame,'display');
+  const nameInput=frame.locator('[data-config="name"]');
+  await nameInput.fill('本机草稿保留');await nameInput.press('Tab');
+  await nameInput.evaluate(()=>window.workbenchBeforeQuit());
+  const getDraft=()=>frame.locator('body').evaluate(()=>new Promise((resolve,reject)=>{
+   const request=indexedDB.open('diy-nas-drafts',1);
+   request.onerror=()=>reject(request.error);
+   request.onsuccess=()=>{
+    const db=request.result;
+    const read=db.transaction('drafts').objectStore('drafts').getAll();
+    read.onerror=()=>{db.close();reject(read.error);};
+    read.onsuccess=()=>{db.close();resolve(read.result.map(value=>JSON.parse(value)).find(row=>row.id==='fixture-overlap'));};
+   };
+  }));
+  const before=await getDraft();
+  assert.equal(before.document.name,'本机草稿保留');
+  await openSheet(frame);
+  const lastName='有草稿时应等待确认的名称';
+  await renameCpu(lastName);
+  await bumpVersions();await selectName(lastName);
+  await review.locator('#source-apply').click();
+  const error=review.locator('[data-source-sync-message]');
+  await error.getByText(/存在未保存的本地草稿/).waitFor();
+  assert.doesNotMatch(await error.innerText(),/UNSAVED_DRAFT|DEPENDENCY_CONFLICT/);
+  assert.deepEqual(await getDraft(),before);
+  const peerSheet=await openSheet(peerFrame),peerReview=peerFrame.locator('#dialog');
+  await selectName(lastName,peerSheet,peerReview);
+  await peerReview.locator('#source-apply').click();
+  await peerReview.locator('[data-source-sync-message]').getByText(/存在未保存的本地草稿/).waitFor();
+  assert.deepEqual(await getDraft(),before);
+  await peer.close();
+  assert.equal(configWrites.length,1,'有草稿的配置不得用于批量提交');
+  await expectSavedName(newName);
+ }finally{await context.close();}
+}
+
 try{
  const page=await browser.newPage({viewport:{width:1540,height:940}});
  const frame=await settings(page);
@@ -165,6 +286,9 @@ try{
  const title=target.getByRole('textbox',{name:'三店共用展示名称'});
  const drawer=sheet.getByRole('complementary',{name:'编辑输出源'}),pane=drawer.locator('.ss-drawer-pane:visible');
  const original=await title.inputValue();
+ assert.match(await target.locator('.ss-identity strong').innerText(),/测试显卡新 ERP/);
+ assert.match(await button(target,'details').innerText(),/16GB 新规格/);
+ assert.doesNotMatch(await target.innerText(),/历史 ERP 显卡|旧规格/);
  assert.equal(await target.getByRole('textbox',{name:'核算价'}).inputValue(),'');
  assert.equal(await button(target,'restore-all').isDisabled(),true,'欠缺共用核算价时应明确阻止恢复');
  assert.match(await target.innerText(),/先填写共用核算价/);
@@ -286,7 +410,13 @@ try{
  const otherBeforeReset=await target.elementHandle();
  await button(cpu,'reset-row').click();
  assert.equal(await otherBeforeReset.evaluate(element=>element.isConnected),true);
- await cpuName.fill('三店 CPU 共用名称');await cpuName.press('Enter');
+ assert.equal(await button(cpu,'restore-all').isDisabled(),true);
+ assert.equal(await button(cpu,'restore-store').isDisabled(),true);
+ await cpuName.fill('三店 CPU 共用名称');
+ assert.equal(await button(cpu,'restore-all').isEnabled(),true);
+ assert.equal(await button(cpu,'restore-store').isEnabled(),true);
+ assert.match(await cpu.locator('[data-sheet-name-protection]').innerText(),/独享名称继续生效/);
+ await cpuName.press('Enter');
  await card(cpu,'intel').click();
  assert.equal(await drawer.locator('.ss-store-override:visible [data-sheet-action=drawer-restore-store]').isEnabled(),true);
  await drawer.locator('.ss-store-override:visible [data-sheet-action=drawer-restore-store]').click();
@@ -439,12 +569,18 @@ try{
  await form.locator('[data-lookup]').click();await form.getByText('已查到 ERP 商品。').waitFor();
  assert.equal(await form.locator('#ss-part-name').inputValue(),'旧 CPU 专属名称');
  assert.equal(await form.locator('#ss-part-tax').inputValue(),'540');
+ assert.equal(await form.locator('[data-tax-mode]').innerText(),'手改价');
+ await form.locator('[data-reset-tax]').click();
+ assert.equal(await form.locator('#ss-part-tax').inputValue(),'1401.41');
+ assert.equal(await form.locator('[data-tax-mode]').innerText(),'默认·取ERP');
  await form.locator('#ss-part-id').fill(formPart.goodsId);
  assert.equal(await form.locator('[data-add]').isDisabled(),true);
  await form.locator('[data-lookup]').click();await form.getByText('固态硬盘 → 归类：硬盘').waitFor();
  assert.equal(await form.locator('#ss-part-name').inputValue(),'表单测试 SSD');
  await form.getByText('已查到 ERP 商品。').waitFor();
  assert.equal(await form.locator('#ss-part-tax').inputValue(),'289.5');
+ assert.equal(await form.locator('[data-tax-mode]').innerText(),'默认·成本表');
+ assert.match(await form.locator('[data-delta]').innerText(),/低于ERP/);
  assert.match(await form.locator('.ss-part-preview').innerText(),/现货 0\s*待入 4/);
  await form.locator('#ss-part-name').fill('定制展示 SSD');
  await form.locator('[data-lookup]').click();await form.getByText('已查到 ERP 商品。').waitFor();
@@ -485,7 +621,9 @@ try{
  await form.locator('[data-lookup]').click();await form.getByText(/未查到 ERP 商品/).waitFor();
  await form.locator('#ss-part-name').fill('手填风扇（白色）');await form.locator('#ss-part-tax').fill('-1');
  assert.equal(await form.locator('[data-add]').isDisabled(),true);
- await form.locator('#ss-part-tax').fill('18.15');await form.locator('[data-add]').click();
+ await form.locator('#ss-part-tax').fill('18.15');
+ assert.equal(await form.locator('[data-tax-mode]').innerText(),'手改价');
+ await form.locator('[data-add]').click();
  await row(sheet,manualId).getByText('新增 · 待保存').waitFor();
  assert.equal((await api.db.query("SELECT count(*)::int n FROM workbench_sources.entries WHERE id=ANY($1)",[[manualId,formPart.goodsId]])).rows[0].n,0);
  await button(sheet,'save').click();await sheet.locator('[data-sheet-message]').getByText(/已保存 5 条/).waitFor();
@@ -495,6 +633,13 @@ try{
  assert.equal((await readSource(memoryId)).common['capacityOverrides.memoryGb'],32);
  const savedSsd=(await readSource(formPart.goodsId)).common;
  assert.equal(savedSsd.name,'定制展示 SSD');assert.equal(savedSsd.tax,289.5);
+ const initialCosts=new Map((await api.db.query('SELECT goodsid,document FROM intel_live.intel_cost_overrides WHERE goodsid=ANY($1)',[
+  [formPart.goodsId,cpuPart.goodsId,manualId,gpuId],
+ ])).rows.map(({goodsid,document})=>[goodsid,document]));
+ assert.deepEqual([initialCosts.get(formPart.goodsId).nasManualTax,initialCosts.get(formPart.goodsId).nasProvisionalTax],[false,undefined]);
+ assert.deepEqual([initialCosts.get(cpuPart.goodsId).nasManualTax,initialCosts.get(cpuPart.goodsId).nasProvisionalTax],[false,true]);
+ assert.deepEqual([initialCosts.get(manualId).tax,initialCosts.get(manualId).nasManualTax],[18.15,true]);
+ assert.deepEqual([initialCosts.get(gpuId).tax,initialCosts.get(gpuId).nasManualTax],[null,false]);
  const manual=await readSource(manualId);assert.equal(manual.common.name,'手填风扇（白色）');assert.equal(manual.common.tax,18.15);
  verified.push('普通配件表单查重定位、ERP 回填并保留人工名称、未命中手填和三店草稿保存');
 
@@ -508,14 +653,18 @@ try{
  await candidate.click();
  const added=row(sheet,product.goodsId);await added.waitFor();
  await added.getByText('新增 · 待保存').waitFor();
- assert.equal(await added.getByRole('textbox',{name:'核算价'}).inputValue(),'488.13');
+ const quickTax=added.getByRole('textbox',{name:'核算价'});
+ assert.equal(await quickTax.inputValue(),'458');
+ await quickTax.fill('462');await quickTax.press('Enter');
  assert.equal(await added.getByRole('textbox',{name:'三店共用展示名称'}).inputValue(),'WD 合成 NVMe SSD');
  assert.match(await added.innerText(),/ERP ¥458\.00.*缺货.*待入 4/);
  await button(sheet,'save').click();
  await sheet.locator('[data-sheet-message]').getByText(/已保存 1 条/).waitFor();
  const created=await readSource(product.goodsId);
  assert.deepEqual(Object.keys(created.stores).sort(),['gigabyte','intel','jonsbo']);
- assert.equal(created.common.tax,488.13);
+ assert.equal(created.common.tax,462);
+ const {rows:[quickCost]}=await api.db.query('SELECT document FROM intel_live.intel_cost_overrides WHERE goodsid=$1',[product.goodsId]);
+ assert.deepEqual([quickCost.document.nasManualTax,quickCost.document.nasProvisionalTax],[true,undefined]);
  for(const shop of ['intel','gigabyte','jonsbo']){
   const source=await api.db.query(`SELECT attrs->>'erpCategory' AS category FROM ${shop}_live.sources WHERE goodsid=$1`,[product.goodsId]);
   assert.equal(source.rows[0].category,product.erpCategory);
@@ -578,6 +727,10 @@ try{
  verified.push('冲突保留草稿，配置总表快捷修改、放弃与保存');
  await page.close();
 
+ // 另开验证页，隔离检查共同更名、存量引用和本机配置草稿。
+ await verifyNameAndDependencies();
+ verified.push('三店并排独享名称直接保存，冗余同名随共用改名，依赖刷新与配置草稿冲突保护');
+
  // 删除的只是合成库中另两店的测试授权。以 HTTP 与实际库回读核对单店建源。
  await api.db.exec("DELETE FROM nas_business.operation_group_shops WHERE group_code='dou-intel-operations' AND shop_id<>'intel'");
  const member=await (await fetch(api.url+'/api/v1/me',{headers})).json();
@@ -610,6 +763,8 @@ try{
  assert.deepEqual(counts.rows[0],{intel:1,gigabyte:0,jonsbo:0});
  const adopted=await api.db.query("SELECT attrs->>'erpCategory' AS category FROM intel_live.sources WHERE goodsid=$1",[single.goodsId]);
  assert.equal(adopted.rows[0].category,single.erpCategory);
+ const {rows:[singleCost]}=await api.db.query('SELECT document FROM intel_live.intel_cost_overrides WHERE goodsid=$1',[single.goodsId]);
+ assert.deepEqual([singleCost.document.tax,singleCost.document.nasManualTax],[183.24,false]);
  const singleName=row(oneSheet,single.goodsId).locator('[data-sheet-field=name]').first();
  assert.equal(await singleName.inputValue(),'仅此店展示');
  const stored=await api.db.query("SELECT attrs->>'erpName' AS erp_name FROM intel_live.sources WHERE goodsid=$1",[single.goodsId]);

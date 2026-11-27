@@ -66,6 +66,7 @@ function reviewHtml(shop){
 }
 
 export function mountSourceSync(root,api){
+ const errorText=error=>api.errorText?.(error)??error.message;
  const $=selector=>root.querySelector(selector),all=selector=>[...root.querySelectorAll(selector)];
  const dialog=root.closest('dialog')||root;
  let busy=false,locked=[],generation=0,preview=null,undo=null,lastExport=null,expiryTimer=null,groups=[],tab='all',items=[],visible=[],filtered=[];
@@ -208,7 +209,7 @@ export function mountSourceSync(root,api){
    }
    updateFilters();render();
    scheduleRetention();
-  }catch(error){if(token===generation){render();message(error.message);}}
+  }catch(error){if(token===generation){render();message(errorText(error));}}
  }
  async function applySelected(action,keys=[...selected]){
   if(busy||!preview||!keys.length)return;
@@ -228,7 +229,7 @@ export function mountSourceSync(root,api){
     const task=await exportSourceImages(api,approved.changes,approved.shopId,options,message);
     result='配置已更新。'+task.message;
    }else result=action==='ignore'?'已忽略本次输出源内容，配置文案已保留。':action==='unignore'?'已恢复待确认。':`已更新 ${approved.changes.length} 套配置。`;
-  }catch(error){result=(saved?'配置已保存，后续操作未完成：':'操作未完成：')+error.message;}
+  }catch(error){result=(saved?'配置已保存，后续操作未完成：':'操作未完成：')+errorText(error);}
   finally{lock(false);if(saved)await refresh();else invalidate();message(result);}
  }
  $('#source-apply').onclick=()=>applySelected('update');
@@ -248,7 +249,7 @@ export function mountSourceSync(root,api){
    lock(true);await api.flush();const reversal=batchRevertPlan(undo,api.getConfigs());
    if(reversal.changes.length)await api.apply({...reversal,shopId:api.shopId(),sources:[],action:'restore'});
    undo=null;lastExport=null;$('#source-undo').hidden=true;$('#source-export-retry').hidden=true;await api.onChanged?.();status='已还原本次修改并保存。';
-  }catch(error){status='还原未完成：'+error.message;}finally{lock(false);await refresh();message(status);}
+  }catch(error){status='还原未完成：'+errorText(error);}finally{lock(false);await refresh();message(status);}
  };
  $('#source-export-retry').onclick=async()=>{
   if(busy||!lastExport)return;

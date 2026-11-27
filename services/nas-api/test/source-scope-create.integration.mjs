@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {startSourceAcceptance,fixtureActor,fixtureWorkspace,fixtureDeployment} from '../tools/shared-sources-acceptance.mjs';
 import {createNasApiClient} from '../../../apps/desktop/public/workbench/nas-api-client.js';
@@ -11,6 +12,11 @@ test('范围差异原子创建与原号重放，失去三店权限后拒绝整�
  const client=createNasApiClient({shopId:'intel',nativeRequest:(path,options)=>fetch(api.url+path,{...options,headers:{...options.headers,'x-workbench-deployment':fixtureDeployment}})});
  client.bindIdentity(fixtureWorkspace,fixtureActor);
  try{
+  // 在 033 的新保存函数上重跑原创建请求，旧客户端仍默认保护数字价。
+  for(const name of ['020-workbench-global-tax.sql','021-workbench-alias-addons.sql','027-quotation-identity-invalidation.sql',
+   '028-cross-shop-cost-sync.sql','029-manual-tax-protection.sql','030-incoming-stock.sql','031-erp-category.sql','033-source-default-tax-and-erp-name.sql']){
+   await api.db.exec(await readFile(new URL('../sql/'+name,import.meta.url),'utf8'));
+  }
   const id='9900191',document={id,edits:{shared:{values:{name:'共用新品',tax:100,'capacityOverrides.memoryGb':48},restore:[]},intel:{values:{name:'英特尔新品',tax:110},restore:[]},jonsbo:{values:{name:'乔思伯新品','capacityOverrides.memoryGb':64},restore:[]}}};
   const body={operation_id:randomUUID(),document};
   await client.saveCatalog('shared-sources',id,'create',body);
@@ -21,6 +27,7 @@ test('范围差异原子创建与原号重放，失去三店权限后拒绝整�
   for(const shop of ['intel','gigabyte','jonsbo']){
    const read=createNasApiClient({shopId:shop,nativeRequest:(path,options)=>fetch(api.url+path,{...options,headers:{...options.headers,'x-workbench-deployment':fixtureDeployment}})});read.bindIdentity(fixtureWorkspace,fixtureActor);
    const row=await read.resource('sources',first.document.stores[shop][0].sourceId);
+   assert.equal((await read.resource('costs',id)).document.nasManualTax,true);
    assert.equal(row.document.tax,shop==='intel'?110:100);assert.equal(row.document.capacityOverrides.memoryGb,shop==='jonsbo'?64:48);
   }
   await api.db.query('DELETE FROM nas_business.operation_group_shops WHERE workspace_id=$1 AND shop_id=$2',[fixtureWorkspace,'jonsbo']);

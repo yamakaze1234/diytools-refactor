@@ -11,6 +11,9 @@ import {excludedComponent} from '../../../apps/desktop/public/workbench/componen
 
 const scopes = ['shared','intel','gigabyte','jonsbo'];
 const keys = new Set(sharedSourceKeys);
+const taxModes = new Set(['default_table','default_erp','manual']);
+const validTax = value => value === null || typeof value === 'number' && value >= 0 && value <= 100000000 &&
+ Math.abs(value*100 - Math.round(value*100)) < 1e-6;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const valid = (condition, field) => {
  if (!condition) throw new Fault('VALIDATION_FAILED',400,{field});
@@ -21,9 +24,10 @@ export function validateErpAdoption(id,document){
  const row=document.erpAdoption;
  const name=text=>typeof text==='string'&&text===text.trim()&&text.length>0&&text.length<=512&&!excludedComponent({name:text});
  valid(sourceGoodsId(id)&&document.id===id&&Object.keys(document).every(k=>['id','name','erpAdoption'].includes(k))&&name(document.name),'document');
- valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','stockIncomingAvailable','erpCategory','sku','tableTax'].includes(k))&&name(row.name)&&
+ valid(plain(row)&&Object.keys(row).every(k=>['name','erp','stockAvailable','stockIncomingAvailable','erpCategory','sku','tableTax','taxOverride'].includes(k))&&name(row.name)&&
   (row.erp===null||Number.isFinite(row.erp)&&row.erp>=0&&row.erp<=100000000)&&
   (!Object.hasOwn(row,'tableTax')||Number.isFinite(row.tableTax)&&row.tableTax>=0&&row.tableTax<=100000000)&&
+  (!Object.hasOwn(row,'taxOverride')||!Object.hasOwn(row,'tableTax')&&validTax(row.taxOverride))&&
   (row.stockAvailable===null||Number.isFinite(row.stockAvailable)&&Math.abs(row.stockAvailable)<=Number.MAX_SAFE_INTEGER)&&
   (!Object.hasOwn(row,'stockIncomingAvailable')||row.stockIncomingAvailable===null||Number.isFinite(row.stockIncomingAvailable)&&Math.abs(row.stockIncomingAvailable)<=Number.MAX_SAFE_INTEGER)&&
   (!Object.hasOwn(row,'erpCategory')||validErpCategory(row.erpCategory))&&
@@ -36,12 +40,24 @@ async function checkCreatedCategory(db,sourceId,category){
  if(source?.attrs?.erpCategory!==category)throw new Fault('NAS_COST_SYNC_NOT_INSTALLED',503);
 }
 
+// 共用与单店创建都按落库值核验，旧库忽略扩展参数或投影不完整时整笔回滚。
+function checkCreatedTax(value,tax,{manual=false,provisional=false}={}){
+ if(!value||value.tax!==tax||value.nasManualTax!==manual||
+   (provisional?value.nasProvisionalTax!==true:Object.hasOwn(value,'nasProvisionalTax')))
+  throw new Fault('NAS_SOURCE_CREATION_NOT_INSTALLED',503);
+}
+
 export async function adoptErpSource(db,member,shop,id,document){
  try{
   const {rows:[row]}=await db.query('SELECT workbench_sources.adopt_erp($1,$2,$3,$4,$5,$6::jsonb) AS result',
    [shop,member.workspaceId,member.uid,id,document.name,JSON.stringify(document.erpAdoption)]);
   if(!row.result.reused&&Object.hasOwn(document.erpAdoption,'erpCategory')){
    await checkCreatedCategory(db,row.result.sourceId,document.erpAdoption.erpCategory);
+  }
+  if(!row.result.reused&&Object.hasOwn(document.erpAdoption,'taxOverride')){
+   const tax=document.erpAdoption.taxOverride;
+   const {rows:[cost]}=await db.query('SELECT document FROM intel_live.intel_cost_overrides WHERE goodsid=$1',[id]);
+   checkCreatedTax(cost?.document,tax,{manual:tax!==null});
   }
   return row.result;
  }catch(error){
@@ -60,8 +76,7 @@ function validateFields(fields, special, scope) {
    valid(typeof value === 'string' && value === value.trim() && value.length > 0 && value.length <= 512 &&
     !excludedComponent({name:value}),key);
   } else if (key === 'tax') {
-   valid(value === null || typeof value === 'number' && value >= 0 && value <= 100000000 &&
-    Math.abs(value*100 - Math.round(value*100)) < 1e-6,key);
+   valid(validTax(value),key);
   } else if (key === 'addon') {
    valid(plain(value) && Object.keys(value).every(key=>sharedSourceAddonKeys.includes(key)),key);
    try { validateAddon(sourceAddon(Object.fromEntries(Object.entries(value).filter(([,v])=>v!=null)))); }
@@ -80,11 +95,12 @@ function validateFields(fields, special, scope) {
 export function validateSharedSourceEdit(id,document,create) {
  const special=sharedSpecialKey(id);
  valid(sourceGoodsId(id) || special,'document.id');
- valid(document.id===id && Object.keys(document).every(key=>['id','edits','erpName','erpCategory','alias_edits','addon_sync'].includes(key)),'document');
+ valid(document.id===id && Object.keys(document).every(key=>['id','edits','erpName','erpCategory','taxMode','alias_edits','addon_sync'].includes(key)),'document');
  valid(!Object.hasOwn(document,'erpName') || create && !special && typeof document.erpName==='string' &&
   document.erpName.length<=512 && !excludedComponent({erpName:document.erpName}),'document.erpName');
  valid(!Object.hasOwn(document,'erpCategory')||create&&!special&&validErpCategory(document.erpCategory),'document.erpCategory');
- const {edits} = document;
+ const {edits,taxMode} = document;
+ valid(!Object.hasOwn(document,'taxMode')||create&&!special&&taxModes.has(taxMode),'document.taxMode');
  valid(plain(edits) && Object.keys(edits).length>0,'document.edits');
  for (const [scope,change] of Object.entries(edits)) {
   valid(scopes.includes(scope) && plain(change) && Object.keys(change).every(key=>['values','restore'].includes(key)),scope);
@@ -133,13 +149,33 @@ export async function writeSharedSource(db,member,shop,id,expected,document) {
   }
   // 三店建源保留原来的店铺草稿。分类是首次建源的 ERP 观察值，只能从专用字段传入。
   const hasCategory=Object.hasOwn(document,'erpCategory');
-  const edits=hasCategory?{...document.edits,shared:{...document.edits.shared,
-   values:{...document.edits.shared.values,erpCategory:document.erpCategory}}}:document.edits;
+  const defaultMode=Object.hasOwn(document.edits.shared?.values??{},'tax')&&
+   (document.taxMode==='default_table'||document.taxMode==='default_erp');
+  const edits=hasCategory||defaultMode?{...document.edits,shared:{...document.edits.shared,
+   values:{...document.edits.shared.values,...(hasCategory?{erpCategory:document.erpCategory}:{}),
+    ...(defaultMode?{__creationTaxMode:document.taxMode}:{})}}}:document.edits;
   const {rows:[row]} = await db.query(aliasEdit?
    'SELECT workbench_sources.save_aliases($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb) AS version':
    'SELECT workbench_sources.save($1,$2,$3,$4,$5,$6,$7) AS version',
    [shop,member.workspaceId,member.uid,id,expected,JSON.stringify(edits),aliasEdit?JSON.stringify(document.alias_edits):document.erpName??null]);
   if(hasCategory)await checkCreatedCategory(db,'shared-src:'+id,document.erpCategory);
+  if(defaultMode){
+   // 只读取本次商品的三条成本投影，连同请求店的显式覆盖一起在回执前验证。
+   let rows;
+   try{
+    ({rows}=await db.query('SELECT * FROM workbench_sources.created_tax_modes($1,$2,$3,$4)',[shop,member.workspaceId,member.uid,id]));
+   }catch(error){
+    if(error.code==='42883')throw new Fault('NAS_SOURCE_CREATION_NOT_INSTALLED',503);
+    throw error;
+   }
+   for(const target of scopes.slice(1)){
+    const local=edits[target]?.values??{},overridden=Object.hasOwn(local,'tax');
+    const tax=overridden?local.tax:edits.shared.values.tax;
+    checkCreatedTax(rows.find(row=>row.shop_id===target)?.document,tax,{
+     manual:overridden&&tax!==null,provisional:!overridden&&tax!==null&&document.taxMode==='default_erp',
+    });
+   }
+  }
   return row.version;
  } catch (err) {
   if (err.code==='42883'&&Object.hasOwn(document,'alias_edits')) throw new Fault('NAS_GLOBAL_UPGRADE_NOT_INSTALLED',503);

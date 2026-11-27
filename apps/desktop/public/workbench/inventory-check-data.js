@@ -1,5 +1,6 @@
 /** 库存检查及缺货替换规则：从配置实际用量构造报告，再校验替换计划是否仍可应用。 */
 import {categoryFromErp,categoryFromName,observedErpCategory} from './component-category.js';
+import {latestErpName} from './erp-part-description.js';
 import {actualParts} from './actual-parts.js';
 import {inventoryLinks} from './inventory-export.js';
 import {isSpecialComponent} from './special-components.js';
@@ -19,7 +20,7 @@ export function inventoryCategory(part,cost,source){
  const category=observedErpCategory(cost?.erpCategory,source?.erpCategory,part.erpCategory)||categoryFromErp(part.slot);
  if(category)return category;
  // 展示名称可手工改成无型号文案；未识别时再用 ERP 原名和型号判断。
- for(const name of [part.name,cost?.erpName,cost?.name,cost?.erpModel,source?.erpName,part.erpName,part.erpModel,part.originalName]){
+ for(const name of [part.name,latestErpName(cost),cost?.erpModel,source?.erpName,part.erpName,part.erpModel,part.originalName]){
   if(!name)continue;
   const inferred=categoryFromName(name);
   if(inferred)return inferred;

@@ -93,6 +93,16 @@ try{
  assert.equal(await page.locator('.pp-fields th').filter({hasText:'ERP 匹配状态'}).count(),0);
  // 未选择时禁用匹配入口；本机尚未登录时主动展开连接区。
  const toolbar=page.locator('#pp-erp-match');
+ const floating=page.locator('.erp-match-floating');
+ const dismiss=floating.getByRole('button',{name:'关闭匹配提示',exact:true});
+ const dismissal=()=>page.evaluate(()=>JSON.parse(localStorage.getItem('diy-erp-matching-dismissed-v1')));
+ // 将原生异步 close 通知留到回执到达后派发，稳定覆盖任务结束与关闭同时发生的情况。
+ async function delayCloseNotice(){
+  await page.locator('#dialog').evaluate(dialog=>dialog.addEventListener('close',event=>event.stopImmediatePropagation(),{capture:true,once:true}));
+ }
+ async function deliverCloseNotice(){
+  await page.locator('#dialog').evaluate(dialog=>dialog.dispatchEvent(new Event('close')));
+ }
  assert.equal(await toolbar.isDisabled(),true);
  await page.locator('[data-pp-pick="c0"]').check();await toolbar.click();
  await page.getByRole('button',{name:'一键安装组件'}).click();
@@ -157,20 +167,57 @@ try{
  assert.equal(await page.locator('.erp-bom[open]').count(),0);
  await page.locator('.erp-bom summary').first().click();assert.match(await page.locator('.erp-bom[open]').innerText(),/#9001\s*×5/);
  assert.match(await page.locator('.erp-diff').first().innerText(),/0 → 1/);
+ // 普通关闭保留预览提示；点击 × 后，重新加载同一个 worker 任务也保持隐藏。
+ const previewId=(await native({action:'match_status'})).result.job.id;
+ await page.locator('#erp-match-close').click();
+ assert.match(await floating.innerText(),/请核对预览/);
+ assert.equal(await dismiss.innerText(),'×');
+ await dismiss.click();await floating.waitFor({state:'hidden'});
+ assert.deepEqual(await dismissal(),{id:previewId});
+ // 相同勾选也要重新核对已保存的版本，旧快照不能触发执行或解开浮条。
+ await edit(cell('c1','price'),'3100');await page.locator('#pp-save').click();
+ await page.waitForFunction(()=>document.querySelectorAll('[data-pp-dirty]').length===0);
+ await toolbar.click();await page.locator('#erp-match-execute').click();
+ await page.getByText('配置、草稿或店铺附加已变化，请重新预览。',{exact:true}).waitFor();
+ assert.deepEqual(await dismissal(),{id:previewId});assert.equal((await control({})).result.writes.length,0);
+ await page.locator('#erp-match-close').click();
+ await checks('c1').uncheck();await checks('c2').check();await toolbar.click();
+ await page.locator('#erp-match-session[data-connected="true"]').waitFor();
+ assert.equal(await page.locator('#erp-match-execute').isDisabled(),true,'同样的勾选数量不能复用另一组配置的预览');
+ await open();
+ await page.waitForFunction(()=>document.querySelector('.erp-match-floating strong')?.textContent.includes('请核对预览'));
+ assert.equal(await floating.isHidden(),true);
+ await checks('c0').check();await checks('c1').check();await toolbar.click();
  // 第二次预览未获 worker 确认时，上一份回执不能充当本次的执行许可。
  rejectNextPreview=true;await page.locator('#erp-match-preview').click();
  await page.getByText('模拟预览请求失败',{exact:true}).waitFor();
  assert.equal(await page.locator('#erp-match-execute').isDisabled(),true);
+ assert.equal(await floating.isHidden(),true);assert.deepEqual(await dismissal(),{id:previewId});
  await page.locator('#erp-match-preview').click();await page.waitForFunction(()=>!document.querySelector('#erp-match-execute').hidden&&!document.querySelector('#erp-match-execute').disabled);
+ assert.notEqual((await native({action:'match_status'})).result.job.id,previewId);
+ assert.equal(await floating.isVisible(),true);assert.equal(await dismissal(),null);
+ const executeId=(await native({action:'match_status'})).result.job.id;
+ await delayCloseNotice();
+ await page.locator('#erp-match-close').click();await dismiss.click();await toolbar.click();
+ await page.locator('#erp-match-session[data-connected="true"]').waitFor();
+ await deliverCloseNotice();
+ assert.equal(await page.locator('#erp-match-execute').isEnabled(),true,'相同勾选应可继续原任务');
+ page.once('dialog',dialog=>dialog.dismiss());await page.locator('#erp-match-execute').click();
+ assert.deepEqual(await dismissal(),{id:executeId});assert.equal((await control({})).result.writes.length,0);
+ await delayCloseNotice();
  page.once('dialog',dialog=>dialog.accept());await page.locator('#erp-match-execute').click();await page.locator('#erp-match-background').click();
+ assert.equal(await dismiss.isVisible(),true);assert.equal(await dismissal(),null);
  // 后台执行过程中继续改价，卡片和输入焦点不被状态轮询冲掉。
  await cell('c0','price').click();await cell('c0','price').fill('4500');await cell('c0','price').press('Enter');
  assert.equal(find(await snapshot(),'c0').price,4500);assert.match(await page.locator('#pp-erp-match').innerText(),/ERP 匹配中/);
  const busy=await native({action:'sql_cost_file',settings:{path:'invalid'}});assert.equal(busy.error.code,'ERP_OPERATION_BUSY');
  page.once('dialog',dialog=>dialog.dismiss());const closed=await page.evaluate(()=>workbenchBeforeQuit().then(()=>'',error=>error.message));assert.match(closed,/取消关闭/);
  await page.waitForFunction(()=>document.querySelector('.erp-match-floating').textContent.includes('已完成'));
+ await deliverCloseNotice();
+ assert.equal(await dismiss.isVisible(),true);assert.equal(await dismissal(),null);
  assert.equal(find(await snapshot(),'c0').price,4500);
  let job=(await native({action:'match_status'})).result.job;assert.equal(job.finished,2);assert.ok(job.items.every(item=>item.state==='verified'));
+ assert.equal(job.id,executeId);
  // 从回执打开弹窗时，表格可以已经取消勾选，仍保留任务套数和 BOM。
  await checks('c0').uncheck();await checks('c1').uncheck();await page.locator('[data-erp-task]').click();
  await page.locator('#erp-match-session[data-connected="true"]').waitFor();
@@ -204,26 +251,42 @@ try{
  await control({failReads:3});await page.locator('#pp-erp-match').click();await page.locator('#erp-match-preview').click();
  await page.waitForFunction(()=>!document.querySelector('#erp-match-retry').hidden);
  await page.locator('#erp-match-retry').click();await page.waitForFunction(()=>!document.querySelector('#erp-match-execute').hidden&&!document.querySelector('#erp-match-execute').disabled);
- page.once('dialog',dialog=>dialog.accept());await page.locator('#erp-match-execute').click();await page.locator('#erp-match-background').click();
+ page.once('dialog',dialog=>dialog.accept());await page.locator('#erp-match-execute').click();
+ await page.locator('#erp-match-background').waitFor();await delayCloseNotice();await page.locator('#erp-match-close').click();
  await page.waitForFunction(()=>document.querySelector('.erp-match-floating').textContent.includes('已完成'));
- await page.locator('[data-erp-dismiss]').click();await page.locator('.erp-match-floating').waitFor({state:'hidden'});
+ await deliverCloseNotice();assert.equal(await floating.isVisible(),true,'关闭运行中弹窗应保留随后到达的完成回执');
+ await dismiss.click();await floating.waitFor({state:'hidden'});
  assert.equal((await control({})).result.writes.length,18);
  // 重建页面后等待旧回执真正到达，避免仅断言浮条初始化时的隐藏状态。
+ const legacyDismissal={id:(await dismissal()).id,phase:'partial',finished:0};
+ await page.evaluate(value=>localStorage.setItem('diy-erp-matching-dismissed-v1',JSON.stringify(value)),legacyDismissal);
  await page.reload();await page.waitForFunction(()=>window.workbenchReady);
  await page.waitForFunction(()=>document.querySelector('.erp-match-floating strong')?.textContent.includes('已完成'));
  assert.equal(await page.locator('.erp-match-floating').evaluate(el=>el.hidden),true);
+ assert.equal((await dismissal()).id,legacyDismissal.id);
  await page.getByRole('button',{name:'价格',exact:true}).click();await page.locator('#price-profit-title').waitFor();
  // 写入超时后只提供远端只读核验，反复点击不能降级成可重新写入状态。
  await checks('c2').uncheck();await checks('c3').check();await control({failWrite:'save_bom'});
  await page.locator('#pp-erp-match').click();await page.locator('#erp-match-preview').click();
  await page.waitForFunction(()=>!document.querySelector('#erp-match-execute').hidden&&!document.querySelector('#erp-match-execute').disabled);
  page.once('dialog',dialog=>dialog.accept());await page.locator('#erp-match-execute').click();
+ await page.locator('#erp-match-background').click();assert.equal(await dismissal(),null);
+ assert.match(await floating.innerText(),/正在匹配/);
+ await dismiss.click();await floating.waitFor({state:'hidden'});
+ // 轮询推进到待核验也不弹回；仍可从价格表打开弹窗查看原因。
+ await page.waitForFunction(()=>document.querySelector('.erp-match-floating strong')?.textContent.includes('需要只读核验'));
+ assert.equal(await floating.isHidden(),true);await checks('c3').uncheck();await toolbar.click();
  await page.waitForFunction(()=>document.querySelector('#erp-match-message').textContent.includes('未确认'));
- assert.equal(await page.locator('.erp-match-floating').evaluate(el=>el.hidden),false);
- assert.equal(await page.evaluate(()=>localStorage.getItem('diy-erp-matching-dismissed-v1')),null);
  const count=(await control({})).result.writes.length;
+ const reviewId=(await native({action:'match_status'})).result.job.id;
  for(let i=0;i<2;i++){
+  assert.deepEqual(await dismissal(),{id:reviewId});
   await page.locator('#erp-match-recover').click();await page.waitForFunction(()=>!document.querySelector('#erp-match-recover').hidden&&document.querySelector('#erp-match-message').textContent.includes('需要只读核验'));
+  assert.equal(await floating.isVisible(),true);assert.equal(await dismissal(),null);
+  if(i===0){
+   // 待核验阶段手动收起，再通过同任务的主动核验恢复浮条。
+   await page.locator('#erp-match-close').click();await dismiss.click();await floating.waitFor({state:'hidden'});await toolbar.click();
+  }
  }
  assert.equal((await control({})).result.writes.length,count);assert.equal(await page.locator('#erp-match-preview').isDisabled(),true);assert.equal(await page.locator('#erp-match-retry').isVisible(),false);
  const receipts=await fs.readdir(queueRoot);for(const file of receipts.filter(file=>file.endsWith('.json')))assert.ok(!(await fs.readFile(join(queueRoot,file),'utf8')).includes('fixture-only'));

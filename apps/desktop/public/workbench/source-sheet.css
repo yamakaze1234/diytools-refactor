@@ -178,6 +178,9 @@ html.dark .ss-addon-tag.is-note { background:#2b2d32; color:#b4b8c0; border-colo
  width:100%; display:grid; grid-template-columns:auto minmax(0,1fr); align-items:baseline;
  gap:1px 8px; padding:4px 6px; border-left:2px solid var(--ss-override-line); text-align:left;
 }
+/* 共用视图把按店恢复放在该店覆盖摘要旁。 */
+.ss-override-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:4px; align-items:start; }
+.ss-override-row [data-sheet-action="restore-store"] { font-size:11px; }
 .ss-override-card span { grid-column:1/-1; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .ss-override-card strong,.ss-override-tag { color:var(--ss-override-ink); font-size:11px; font-weight:700; }
 html.dark #source-sheet-page :is(.ss-override-card,.ss-grid td.is-override) { border-left:3px solid var(--ss-override-line); }

@@ -65,6 +65,16 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   await api.db.exec('ROLLBACK');
   await assert.rejects(intel.workspaceWrite('costs',{operation_id:categoryId,changes:categoryChanges}),{code:'NAS_COST_SYNC_NOT_INSTALLED'});
   for(let i=0;i<2;i++)await api.db.exec(patch);
+  // 031 能写库存和分类，却不更新 ERP 原名。失败必须撤回三店版本和回执，升级后可复用原编号。
+  const beforeName=await intel.costSyncSnapshot();
+  await assert.rejects(intel.workspaceWrite('costs',{operation_id:categoryId,changes:categoryChanges}),
+   {code:'NAS_COST_SYNC_NOT_INSTALLED',status:503});
+  assert.deepEqual(await intel.costSyncSnapshot(),beforeName);
+  for(const shop of nasShopIds)assert.equal((await api.db.query(`SELECT 1 FROM ${shop}_live.workspace_receipts WHERE operation_id=$1`,[categoryId])).rows.length,0);
+  await api.db.exec(await migration('033-source-default-tax-and-erp-name.sql'));
+  const retried={operation_id:categoryId,changes:categoryChanges};
+  const confirmed=await intel.workspaceWrite('costs',retried);
+  assert.deepEqual(await intel.workspaceWrite('costs',retried),confirmed);
 
   // 三店共用建源保留分店草稿和分类；单店建源将观察同时写入成本和来源。
   const sharedId='9901235';
@@ -152,6 +162,8 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   for(const shop of nasShopIds){
    const {document}=await shopClients[shop].resource('costs','100001');
    const missing=await shopClients[shop].resource('costs','9900059');
+   assert.deepEqual([document.name,document.erpName],['ERP 核对','ERP 核对']);
+   assert.equal(missing.document.erpName,'ERP 配件');
    assert.deepEqual([document.tax,document.erp,document.stockAvailable,document.stockIncomingAvailable,document.nasManualTax===true],
     [shop==='jonsbo'?1030:960,45,-2,13,shop==='jonsbo']);
    assert.deepEqual([missing.document.tax,missing.document.erp,missing.document.stockAvailable,missing.document.erpUnknown],[59,null,0,true]);
@@ -171,10 +183,19 @@ test('三店成本与 ERP 同步、手动价保护及旧报价原子失效',asyn
   for(const shop of nasShopIds)assert.equal(afterIncoming.stores[shop]['100001'].stockIncomingAvailable,-1);
   assert.equal(planSharedCostSync(afterIncoming,[update],'erp','intel').changes.length,0);
 
+  // 即使新版 name 已入库，原名快照遗留旧值也会触发修复，避免同步计划错误跳过。
+  await api.db.query("UPDATE gigabyte_live.intel_cost_overrides SET document=document||$1::jsonb,version=version+1 WHERE goodsid='100001'",[JSON.stringify({erpName:'历史名称'})]);
+  const staleName=await intel.costSyncSnapshot();
+  assert.equal(staleName.stores.gigabyte['100001'].erpName,'历史名称');
+  const repair=planSharedCostSync(staleName,[update],'erp','intel');
+  assert.equal(repair.changes.length,1);
+  await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:repair.changes});
+  assert.equal((await shopClients.gigabyte.resource('costs','100001')).document.erpName,update.name);
+
   // 旧 worker 从未提供大类，首次明确清空即使不改价和库存也要写入；重读后无须再次提交。
   for(const shop of nasShopIds)assert.equal(Object.hasOwn(afterIncoming.stores[shop][update.goodsId],'erpCategory'),false);
   const cleared={...update,erpCategory:null};
-  const firstClear=planSharedCostSync(afterIncoming,[cleared],'erp','intel');
+  const firstClear=planSharedCostSync(await intel.costSyncSnapshot(),[cleared],'erp','intel');
   assert.equal(firstClear.changes.length,1);
   assert.equal(firstClear.changes[0].fields.erpCategory,null);
   await intel.workspaceWrite('costs',{operation_id:randomUUID(),changes:firstClear.changes});

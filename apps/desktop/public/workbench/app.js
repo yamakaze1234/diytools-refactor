@@ -21,7 +21,7 @@ import {createAddonPackDrafts} from './link-addon-drafts.js';
 import {mountAddonBenefits,mountAddonPackEditor,openAddonPackMaintenance} from './link-addon-pack-ui.js';
 import {createNasErpUiAdapter,lookupNasSourceProduct} from './nas-erp-ui-adapter.js';
 import {createNasAutosave} from './nas-autosave.js';
-import {erpCatalogIndex,searchErpParts,splitErpName} from './erp-part-description.js';
+import {erpCatalogIndex,latestErpName,searchErpParts,splitErpName} from './erp-part-description.js';
 import {openSourceSheet} from './source-sheet-ui.js';
 import {localDeletedSources,changeLocalDeletedSources,deletedSourceUses,historyReferencesDeletedSource} from './source-sheet-model.js';
 import {erpCategoryFields,validateSnapshot as validateErpSnapshot} from './erp-sync.js';
@@ -119,8 +119,8 @@ import {doubleMemoryUpgrade,displayUpgrade,memoryUpgradeKey} from './memory-upgr
 import {openActivity} from './activity-ui.js';
 window.workbenchBeforeQuit=async()=>{if(erpMatching&&!await erpMatching.confirmClose())throw Error("已取消关闭，ERP 匹配继续运行。");if(hostTemplateHasDrafts())throw Error('请先保存主机模板或恢复到已保存版本。');if(window.workbenchSourceEditor?.sheet&&window.workbenchSourceEditor.hasPending())throw Error('请先处理输出源工作表的未保存修改。');await flushConfigDrafts();if(nasMain){if(exportJobs)throw Error('请等待图片导出完成再更新或关闭');if(nasBusy)throw Error('请等 NAS 保存或回执查询结束再关闭');if(nasDraftFailure)throw Error(nasErrorText(nasDraftFailure));if(addonPackDrafts?.hasFailure())throw Error('有加购草稿未写入本机，请先保存加购包。');if(window.workbenchSourceEditor?.hasPending())throw Error('请先处理输出源窗口中的未提交修改。');return;}await window.workbenchPauseCloud?.();if(window.workbenchSourceEditor?.hasPending())await window.workbenchSourceEditor.save();try{await save();}catch(error){if(!confirm('当前修改尚未正常保存。是否将草稿保存到本机恢复文件后退出？\n下次可从恢复文件找回修改。'))throw error;const result=await request('/api/recovery-draft',{method:'POST',body:JSON.stringify(await recoverySnapshot())});if(!result.ok)throw Error('恢复草稿保存失败');}};
 import {applySourceSync,SourceChangeSession} from './source-sync-data.js';
-import {followPendingAddonPlan,sourceFollowSummary} from './source-follow.js';
-import {changedAddonSources,editsShopAddons,publishSourceSummary} from './source-diff-alert.js';
+import {followPendingSourcePlan,sourceFollowSummary} from './source-follow.js';
+import {changedSourceText,editedSourceTextFields,publishSourceSummary} from './source-diff-alert.js';
 import {openSavedAddonDecision} from './source-sync-ui.js';
 import {selectableComponents} from './component-policy.js';
 import {openAddonEditor,addonStatusHtml} from './addon-ui.js';
@@ -244,7 +244,7 @@ const currentCatalog=()=>sourcesFor(state,activeShopId);
 let erpCandidateFlight=null,erpCandidateCache=null;
 async function findErpCandidates(query,existing=null){
  // 工作表离线时沿用相同搜索口径，只从本机已经缓存的 ERP 配件读出候选。
- if(!nasMain)return existing?searchErpParts(erpCatalogIndex(state.costSource.map(row=>({...row,name:row.erpName||row.name||''}))),query,existing):[];
+ if(!nasMain)return existing?searchErpParts(erpCatalogIndex(state.costSource.map(row=>({...row,name:latestErpName(row)}))),query,existing):[];
  if(!nasWorkspace.canManage()||!nasWorkspace.canPlan()||!nasWorkspace.hasSharedSources())return [];
  if(!erpCandidateCache||Date.now()>=erpCandidateCache.until){
   erpCandidateFlight??=nasWorkspace.readErp('erp-catalog').then(snapshot=>{
@@ -256,9 +256,12 @@ async function findErpCandidates(query,existing=null){
  return searchErpParts(erpCandidateCache.rows,query,existing??new Set(currentCatalog().map(row=>row.goodsId)));
 }
 async function readSourceSheetTax(goodsId){
- const cached=state.costSource.find(row=>row.goodsId===goodsId)?.tax;
- if(Number.isFinite(cached)&&cached>=0)return cached;
- if(!nasMain||!nasWorkspace.canPlan())return null;
+ // NAS 当前核算价可能是手改或 ERP 暂代价；建源默认值直接向成本表查询。
+ if(!nasMain){
+  const cached=state.costSource.find(row=>row.goodsId===goodsId&&!row.nasManualTax&&!row.nasProvisionalTax)?.tax;
+  return Number.isFinite(cached)&&cached>=0?cached:null;
+ }
+ if(!nasWorkspace.canPlan())return null;
  try{
   const prices=await nasWorkspace.readErp('tax-current',[goodsId]);
   const price=prices.rows.find(row=>row.goods_id===goodsId)?.tax;
@@ -269,12 +272,14 @@ async function readSourceSheetTax(goodsId){
  }
 }
 /** 单店建源沿用正式 adopt_erp 目录事务，收到回执后才刷新表格。 */
-async function adoptSourceSheetErp(item,tax){
+async function adoptSourceSheetErp(item,{tax,taxMode}){
  const {goodsId,name,erp,stockAvailable,stockIncomingAvailable,sku}=item,shop=activeShopId;
  const found=currentCatalog().find(row=>row.goodsId===goodsId&&!row.deletedAt);
  if(found)return found.sourceId;
  const erpAdoption={...erpCategoryFields(item),name:name.trim(),erp:erp??null,stockAvailable:stockAvailable??null,stockIncomingAvailable:stockIncomingAvailable??null,
-  sku:sku??'',...(Number.isFinite(tax)?{tableTax:tax}:{})};
+  sku:sku??'',...(taxMode==='default_table'?{tableTax:tax}:{}),
+  // 在建源事务内同步写本店覆盖，手填或明确清空都不会留下半完成的建源结果。
+  ...(taxMode==='manual'||tax==null?{taxOverride:tax}:{})};
  try{
   const receipt=await nasWorkspace.catalog().save('shared-sources',goodsId,'create',{
    document:{id:goodsId,name:item.displayName?.trim()||splitErpName(name).main||name,erpAdoption},
@@ -2230,26 +2235,35 @@ function sourceSaveWithDecision(api){
  let pendingBaseline=null;
  return async changes=>{
   const sessionChanges=currentSourceChanges();
-  const edited=changes.filter(change=>editsShopAddons(change,shop));
-  const ids=new Set(edited.map(change=>change.row.sourceId));
-  const sharedIds=new Set(edited.flatMap(change=>change.managed?[change.managed.id]:[]));
-  const affected=row=>ids.has(row.sourceId)||sharedIds.has(row.sharedSourceId)||sharedIds.has(row.goodsId);
+  const edited=changes.flatMap(change=>{
+   const fields=editedSourceTextFields(change,shop);
+   return fields.length?[{change,fields}]:[];
+  });
+  const ids=new Map(),sharedIds=new Map();
+  for(const {change,fields} of edited){
+   ids.set(change.row.sourceId,fields);
+   if(change.managed)sharedIds.set(change.managed.id,fields);
+  }
+  const affectedFields=row=>new Set([...(ids.get(row.sourceId)??[]),...(sharedIds.get(row.sharedSourceId||row.goodsId)??[])]);
   // 多条来源逐笔保存时可能中断。重试沿用同一批次最初的有效值。
   const signature=JSON.stringify(edited);
-  if(pendingBaseline?.signature!==signature)pendingBaseline={signature,rows:edited.length?sourceReviewRows().filter(affected):[]};
+  if(pendingBaseline?.signature!==signature)pendingBaseline={signature,rows:edited.length?sourceReviewRows().filter(row=>affectedFields(row).size):[]};
   const before=pendingBaseline.rows;
   const result=await api.applyBatch(changes);
   pendingBaseline=null;
   if(shop!==activeShopId||!api.applySync)return result;
-  for(const id of [...ids])if(result.sourceIds?.[id])ids.add(result.sourceIds[id]);
+  for(const [id,fields] of ids)if(result.sourceIds?.[id])ids.set(result.sourceIds[id],fields);
   try{
-   const changed=edited.length?changedAddonSources(before,sourceReviewRows().filter(affected)):[];
+   const changed=edited.length?changedSourceText(before,sourceReviewRows(),affectedFields):[];
    if(changed.length){
-    const configs=await loadAffectedSourceConfigs(changed,shop);
+    const rows=changed.map(({row})=>row);
+    const configs=await loadAffectedSourceConfigs(rows,shop);
     if(shop!==activeShopId)return result;
-    const plan=followPendingAddonPlan(configs,sourceReviewRows(),shop,{sourceIds:changed.map(row=>row.sourceId)});
+    const plan=followPendingSourcePlan(configs,sourceReviewRows(),shop,{
+     fieldsBySource:new Map(changed.map(({row,fields})=>[row.sourceId,fields])),previousRows:before,
+    });
     if(plan.followConfigCount||plan.manualConfigCount){
-     void openSavedAddonDecision({plan,rows:changed,apply:api.applySync,getConfigs:api.getConfigs,
+     void openSavedAddonDecision({plan,rows,apply:api.applySync,getConfigs:api.getConfigs,errorText:api.errorText,
       prepareExport:prepareSourceExport,download:api.download,message:sourceSyncMessage,
       onUpdatedWithoutExport:records=>sessionChanges.record(records),
       onChanged:()=>refreshSourceAlerts()}).catch(error=>sourceSyncMessage(error.message));
@@ -2326,7 +2340,7 @@ function openSourcesFull(options={}){return openSourceMaintenance({...options,sh
    return tax==null||row.specialComponent?row:{...row,tax};
   });
  },
- getSheetConfigs:()=>ordinaryConfigs(liveConfigs(listConfigs())),openDialog,render:(container,model)=>reactWorkbench.dialog(container,'source-editor',model),renderDetail:(container,model)=>reactWorkbench.dialog(container,'source-editor-detail',model),release:container=>reactWorkbench.release(container),updateLinkCosts:async anchorId=>{await save();checkpoint();const result=updateLinkConfigCosts(ordinaryAvailable(),activeShopId,anchorId,state.costSource||[]);if(result.ids.length){changed(`链接恢复共用核算价：${result.count} 项`,result.ids);renderAll();await save();}return result;},lookupProduct:goodsId=>request('/api/sql-sync/product',{method:'POST',body:JSON.stringify({goodsId})}),flush:save,applyBatch:async changes=>{await save();const result=sourceBatch(state,changes,undefined,{deferUpgrade:true});checkpoint();state=result.next;catalog=sourceCatalog(state.sourceCatalog);changed(`批量维护输出源与加购：${result.count} 条`,result.configIds);renderAll();await save();return result;},download:downloadBlob,applySync:async plan=>{applySourceSync(plan,clone(ordinaryAvailable()),currentCatalog());checkpoint();const ids=applySourceSync(plan,ordinaryAvailable(),currentCatalog());for(const id of ids)displayBaseline.set(id,clone(state.configs.find(c=>c.id===id).parts));changed(`${sourceActionTitle(plan.action)}：${ids.length} 套配置`,ids);renderAll();await save();},validateImage:async c=>{const live=available().find(r=>r.id===c.id);if(!live||JSON.stringify({...c,layout:live.layout})!==JSON.stringify(live))throw Error('配置已变化，请重新预览后导出');},getCosts:()=>state.costSource,getRows:currentCatalog,getAllRows:()=>selectableComponents(state.sourceCatalog,state.costSource),shopId:()=>activeShopId,setDeleted:async(id,deleted)=>{checkpoint();if(!state.sourceCatalog.some(r=>r.sourceId===id)){const preset=currentCatalog().find(r=>r.sourceId===id);if(preset&&isSpecialComponent(preset))state.sourceCatalog.push(clone(preset));}setSourceDeleted(state.sourceCatalog,id,deleted);catalog=sourceCatalog(state.sourceCatalog);changed(deleted?'删除本店输出源':'恢复本店输出源',[]);await save();},saveSkuMode,getConfigs:ordinaryAvailable,currentProductId:()=>current()?.productId,selectedIds:()=>[...selected]});}
+ getSheetConfigs:()=>ordinaryConfigs(liveConfigs(listConfigs())),openDialog,render:(container,model)=>reactWorkbench.dialog(container,'source-editor',model),renderDetail:(container,model)=>reactWorkbench.dialog(container,'source-editor-detail',model),release:container=>reactWorkbench.release(container),updateLinkCosts:async anchorId=>{await save();checkpoint();const result=updateLinkConfigCosts(ordinaryAvailable(),activeShopId,anchorId,state.costSource||[]);if(result.ids.length){changed(`链接恢复共用核算价：${result.count} 项`,result.ids);renderAll();await save();}return result;},lookupProduct:goodsId=>request('/api/sql-sync/product',{method:'POST',body:JSON.stringify({goodsId})}),flush:save,applyBatch:async changes=>{await save();const result=sourceBatch(state,changes,undefined,{deferText:true});checkpoint();state=result.next;catalog=sourceCatalog(state.sourceCatalog);changed(`批量维护输出源与加购：${result.count} 条`,result.configIds);renderAll();await save();return result;},download:downloadBlob,applySync:async plan=>{applySourceSync(plan,clone(ordinaryAvailable()),currentCatalog());checkpoint();const ids=applySourceSync(plan,ordinaryAvailable(),currentCatalog());for(const id of ids)displayBaseline.set(id,clone(state.configs.find(c=>c.id===id).parts));changed(`${sourceActionTitle(plan.action)}：${ids.length} 套配置`,ids);renderAll();await save();},validateImage:async c=>{const live=available().find(r=>r.id===c.id);if(!live||JSON.stringify({...c,layout:live.layout})!==JSON.stringify(live))throw Error('配置已变化，请重新预览后导出');},getCosts:()=>state.costSource,getRows:currentCatalog,getAllRows:()=>selectableComponents(state.sourceCatalog,state.costSource),shopId:()=>activeShopId,setDeleted:async(id,deleted)=>{checkpoint();if(!state.sourceCatalog.some(r=>r.sourceId===id)){const preset=currentCatalog().find(r=>r.sourceId===id);if(preset&&isSpecialComponent(preset))state.sourceCatalog.push(clone(preset));}setSourceDeleted(state.sourceCatalog,id,deleted);catalog=sourceCatalog(state.sourceCatalog);changed(deleted?'删除本店输出源':'恢复本店输出源',[]);await save();},saveSkuMode,getConfigs:ordinaryAvailable,currentProductId:()=>current()?.productId,selectedIds:()=>[...selected]});}
 // 对选定范围批量维护升级描述并预览差异。
 function openUpgradeDescriptionsFull(local=false,field='upgrade'){const scope=local?available:ordinaryAvailable;openUpgradeDescriptionBatch({errorText:error=>nasErrorText(error,listConfigs()),loadExportConfigs:nasMain?loadNasBatchExportConfigs:null,projectExportConfig:config=>withAddonPackText(config,false),render:model=>reactWorkbench.dialog($('#dialog-body'),'batch-description',model),openDialog,esc,save,saveSkuMode,download:downloadBlob,field,openDisplayNames:()=>openUpgradeDescriptions(local,'displayName'),getConfigs:scope,...(local?{productId:currentProduct()?.id,getSelectedIds:()=>chosen().map(c=>c.id)}:{}),apply:async plan=>applyBatchChanges(plan,`${plan.undo?'还原批量':'批量修改'}${field==='displayName'?'配件展示名称':'加购描述'}：${plan.changes.length} 套配置`)});}
 // 预览并应用链接内配件更换，支持导出本次发生变化的配置图片。
@@ -2564,6 +2578,18 @@ async function loadNasCatalog(kind){
  if(!Array.isArray(rows)||new Set(rows.map(row=>row.id)).size!==rows.length||
   rows.some(row=>typeof row.id!=='string'||typeof row.version!=='string'||!row.document))throw Error('NAS 目录返回不完整。');
  applyNasCatalog(kind,rows);return rows;
+}
+/** 用本店刚读到的完整目录版本更新干净配置。草稿和在途保存由控制器保留原基线。 */
+async function refreshSourceSyncDependencies(shop){
+ if(shop!==activeShopId)throw Error('已切换店铺，请重新打开输出源。');
+ const index=await readNasIndex();
+ if(shop!==activeShopId)throw Error('已切换店铺，请重新打开输出源。');
+ const rows=await loadNasCatalog('sources');
+ if(shop!==activeShopId)throw Error('已切换店铺，请重新打开输出源。');
+ return nasWorkspace.acceptObservedDependencies({
+  sources:Object.fromEntries(rows.map(row=>[row.id,row.version])),
+  costs:index.metadata.costVersions??{},
+ },nasStageFailures);
 }
 async function readNasIndex(){
  const index=await lazyWorkspace.refresh();
@@ -3066,9 +3092,10 @@ async function openNasPlanStatus(){
   }catch(error){toast(nasErrorText(error));}};
  }catch(error){toast(nasErrorText(error));}
 }
-async function commitNasConfigs(rows,options={}){
+async function commitNasConfigs(rows,{sourceSync=false,...options}={}){
  if(!rows.length)return null;
- const changes=await nasWorkspace.configurationChanges(rows);
+ const changes=await nasWorkspace.configurationChanges(rows,{sourceSync});
+ if(sourceSync)for(const {id} of rows)if(nasStageFailures.has(id))throw nasStageFailures.get(id);
  return startNasPlan('configurations',changes,options);
 }
 function nasNewDocument(config,order){
@@ -3379,20 +3406,15 @@ async function openSharedSourceSession(shop){
      if(!version)sourceIds[row.sourceId]='shared-src:'+id;
      count++;
     }
-    await readNasIndex();await loadNasCatalog('sources');await reload();
-    // 更新展示层使用的成本，保存原文仍由配置草稿和依赖版本管理。
+    await reload();
+    const clean=await refreshSourceSyncDependencies(shop);
+    // 草稿和在途保存同时保留原依赖、当前显示内容及其投影基线，以免下次编辑覆盖手填值。
     const costs=new Map(state.costSource.map(row=>[row.goodsId,row]));
     const sources=new Map(catalog.map(row=>[row.sourceId,row]));
-    for(const config of state.configs)nasWorkspace.applyPresentation(config,row=>{
+    for(const config of state.configs)if(clean.has(config.id))nasWorkspace.applyPresentation(config,row=>{
      withCurrentSharedSource(row,sources,{deferText:true});visibleNasCosts(row,costs);
     });
-    // 只接续本轮已保存且已重新读到界面的来源/成本版本；有草稿的配置继续保留冲突保护。
-    const entries=new Set(changes.map(change=>change.managed.id));
-    const costIds=new Set(changes.filter(({managed})=>Object.hasOwn(managed.edits.shared?.values||{},'tax')||Object.hasOwn(managed.edits[shop]?.values||{},'tax')||managed.edits[shop]?.restore?.includes('tax')).map(change=>change.managed.id));
-    nasWorkspace.acceptObservedDependencies({
-     sources:Object.fromEntries(catalogRows('sources').filter(row=>entries.has(row.document.sharedSourceId||row.document.goodsId)).map(row=>[row.id,row.version])),
-     costs:Object.fromEntries([...costIds].flatMap(id=>{const version=nasWorkspace.costVersion(id);return version?[[id,version]]:[];})),
-    });
+    rememberDisplayParts([...clean]);
     renderAll();scheduleNasDataTime();
     confirmed.clear();
     return {count,sourceIds,configIds:[],autoChanges:[]};
@@ -3460,7 +3482,8 @@ async function openNasSources({storeOnly=false,focusSourceId=null,quickEdit=fals
     catalogRow('sources',row.sourceId)?.editable??!rows.some(x=>x.id===row.sourceId)),
    openDialog,render:(container,model)=>reactWorkbench.dialog(container,'source-editor',model),
    renderDetail:(container,model)=>reactWorkbench.dialog(container,'source-editor-detail',model),release:container=>reactWorkbench.release(container),
-   flush:async()=>{await save();await loadNasScope(ordinaryAvailable().map(c=>c.id));},getCosts:()=>state.costSource,getRows:sharedSources?.preview?sharedSources.rows:read,getAllRows:sharedSources?.preview?sharedSources.rows:read,shopId:()=>activeShopId,download:downloadBlob,
+   flush:async()=>{await save();await refreshSourceSyncDependencies(shop);await loadNasScope(ordinaryAvailable().map(c=>c.id));},
+   errorText:error=>nasErrorText(error,listConfigs()),getCosts:()=>state.costSource,getRows:sharedSources?.preview?sharedSources.rows:read,getAllRows:sharedSources?.preview?sharedSources.rows:read,shopId:()=>activeShopId,download:downloadBlob,
    getConfigs:ordinaryAvailable,currentProductId:()=>current()?.productId,selectedIds:()=>[...selected],
    updateLinkCosts:sharedSources?.preview?null:async anchorId=>{
     const product=productGroups(ordinaryAvailable()).find(group=>group.configs.some(c=>c.id===anchorId));
@@ -3473,11 +3496,12 @@ async function openNasSources({storeOnly=false,focusSourceId=null,quickEdit=fals
     return result;
    },
    applySync:sharedSources?.preview?null:async plan=>{
-    const targetIds=new Set(plan.changes.map(row=>row.id));await loadNasScope([...targetIds]);
+    const targetIds=new Set(plan.changes.map(row=>row.id));
+    await refreshSourceSyncDependencies(shop);await loadNasScope([...targetIds]);
     const docs=clone(state.configs.filter(row=>targetIds.has(row.id))),byId=new Map(docs.map(c=>[c.id,c]));
     const ids=applySourceSync(plan,docs,sourceReviewRows());
     if(ids.length){
-     const applied=await commitNasConfigs(ids.map(id=>({id,action:'replace',document:byId.get(id)})),{title:sourceActionTitle(plan.action)});
+     const applied=await commitNasConfigs(ids.map(id=>({id,action:'replace',document:byId.get(id)})),{title:sourceActionTitle(plan.action),sourceSync:true});
      if(nasApplied(applied).length!==ids.length)throw Error('配置未全部确认保存，请先核对 NAS 批量操作。');
      await loadNasScope(ids);
     }
@@ -3501,7 +3525,7 @@ async function openNasSources({storeOnly=false,focusSourceId=null,quickEdit=fals
       const scoped={...state,sourceCatalog:read(),configs:state.configs.filter(c=>ids.includes(c.id))};
       const calculated=changes.map(change=>({...change,row:{...change.row,tax:change.row.tax??null},
        before:change.before?{...change.before,tax:change.before.tax??null}:null}));
-      const result=sourceBatch(scoped,calculated,undefined,{deferUpgrade:true}),docs=new Map(result.next.configs.map(c=>[c.id,c]));
+      const result=sourceBatch(scoped,calculated,undefined,{deferText:true}),docs=new Map(result.next.configs.map(c=>[c.id,c]));
       const costs=[...new Map(changes.filter(({before,row})=>/^\d{1,20}$/.test(row.goodsId||'')&&
        Object.hasOwn(row,'tax')&&(before?row.tax!==before.tax:row.tax!=null)).map(({row})=>[row.goodsId,{
         id:row.goodsId,action:'tax_edit',expected_version:nasWorkspace.costVersion(row.goodsId),fields:{tax:row.tax,taxUpdatedAt:new Date().toISOString()}
@@ -4019,7 +4043,7 @@ function bind(){
    const id=String(row.goodsId??''),label=String(name??'').trim();
    if(id&&label&&!matchingPartNames.has(id))matchingPartNames.set(id,label);
   };
-  for(const row of state.costSource??[])remember(row,row.name);
+  for(const row of state.costSource??[])remember(row,latestErpName(row));
   for(const row of catalog??[])remember(row,row.erpName||row.name);
   for(const shop of shops){
    for(const row of shopErpExtras(shop.id,settingsFor(state,shop.id)))remember(row,row.name);
@@ -4034,6 +4058,7 @@ function bind(){
   $('#dialog-title').append(subtitle);
  }
  erpMatching=createErpMatchingUi({request:erpMatchingRequest,openDialog:openMatchingDialog,closeDialog,errorText:error=>nasErrorText(error,listConfigs()),
+  selectedIds:()=>priceProfitView.selectedIds(),
   partName:id=>matchingPartNames.get(id),
   onLabel:(label,disabled)=>{const button=$('#pp-erp-match');button.textContent=label;button.disabled=disabled;},
   snapshots:async selectedIds=>{

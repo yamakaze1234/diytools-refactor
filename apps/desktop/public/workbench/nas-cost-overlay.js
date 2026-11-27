@@ -26,8 +26,10 @@ export function planNasErpRows(rows,before,kind,at){
    const category=erpCategoryFields(row);
    if(!amount(row.erp)||!stock(row.stockAvailable)||!stock(row.stockIncomingAvailable??null)||typeof row.name!=='string'||typeof row.sku!=='string')
     throw Error('ERP 结果缺少完整成本或库存字段。');
+   // 兼容只存 name 的旧行；已存的 ERP 原名与本次观察不一致时也要写回。
+   const staleName=Object.hasOwn(old.document,'erpName')&&old.document.erpName!==row.name;
    if(old.document.nasErpOverride&&row.erp===old.document.erp&&row.stockAvailable===old.document.stockAvailable&&(row.stockIncomingAvailable??null)===(old.document.stockIncomingAvailable??null)&&
-    (row.erpCategory===undefined||old.document.erpCategory===row.erpCategory)&&row.name===old.document.name&&row.sku===old.document.sku)continue;
+    !staleName&&(row.erpCategory===undefined||old.document.erpCategory===row.erpCategory)&&row.name===old.document.name&&row.sku===old.document.sku)continue;
    fields={...category,erp:row.erp,stockAvailable:row.stockAvailable,stockIncomingAvailable:row.stockIncomingAvailable??null,name:row.name,sku:row.sku,stockUpdatedAt:at};
   }else{
    if(!amount(row.tax))throw Error('成本表金额无效。');
@@ -71,7 +73,8 @@ export function planSharedCostSync(snapshot,rows,kind,shop){
    if(erp){
     const categoryChanged=row.erpCategory!==undefined&&before.erpCategory!==row.erpCategory;
     if(categoryChanged||!before.erpOverride||before.erpMissing||before.stockMissing||Boolean(before.erpUnknown)!==(row.erp===null)||(before.erp??null)!==row.erp||
-     (before.stockAvailable??null)!==row.stockAvailable||(before.stockIncomingAvailable??null)!==(row.stockIncomingAvailable??null)||before.name!==row.name||before.sku!==row.sku)
+     (before.stockAvailable??null)!==row.stockAvailable||(before.stockIncomingAvailable??null)!==(row.stockIncomingAvailable??null)||before.name!==row.name||before.sku!==row.sku||
+     Object.hasOwn(before,'erpName')&&before.erpName!==row.name)
      differences.push({area:label,goodsId:id,name:row.name,
       ...(categoryChanged?{categoryBefore:before.erpCategory,categoryAfter:row.erpCategory}:{}),before:before.stockAvailable??null,after:row.stockAvailable,
       incomingBefore:before.stockIncomingAvailable??null,incomingAfter:row.stockIncomingAvailable??null,erpBefore:before.erp??null,erpAfter:row.erp});

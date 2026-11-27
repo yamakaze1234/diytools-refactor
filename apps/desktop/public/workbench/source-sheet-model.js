@@ -4,12 +4,12 @@ import {slots,erpUnitCost} from './core.js';
 import {componentStock} from './inventory-check-data.js';
 import {excludedComponent} from './component-policy.js';
 import {erpCategoryFields} from './erp-sync.js';
-import {splitErpName} from './erp-part-description.js';
+import {latestErpName,splitErpName} from './erp-part-description.js';
 import {validateHardware} from './component-hardware.js';
 import {validateCapacities} from './component-capacity.js';
 import {isSpecialComponent,normalizeSpecialComponent,isSpecialPresetId} from './special-components.js';
 import {sourceFields,withSourceFields,sharedSourceKeys,sourceGoodsId} from './shared-source-fields.js';
-import {fieldState,sharedScopeRow} from './shared-source-editor.js';
+import {fieldState,sharedScopeRow,sourceAliasOverrides} from './shared-source-editor.js';
 import {sameNasDocument as equal} from './nas-main-workspace.js';
 import {addonItems,choiceText,sourceAddonOptions} from './addon-data.js';
 
@@ -130,7 +130,7 @@ export function sheetAddonItems(row,stockIndex){
   const addon={goodsId,text,enabled,unavailable:false};
   if(!goodsId)return addon;
   const target=stockIndex.get(goodsId)?.[0];
-  const targetRawName=target?.erpName||target?.name||'';
+  const targetRawName=latestErpName(target);
   const {main,tags}=splitErpName(targetRawName);
   const unit=target&&erpUnitCost(target);
   const targetStock=componentStock(goodsId,stockIndex);
@@ -200,7 +200,7 @@ export function buildSourceSheet({rows=[],entries=[],costs=[],configs=[],shop='i
  for(const [id,aliases] of groups){
   const base=aliases.find(row=>row.shopId===shop)??aliases[0];
   const cost=stockIndex.get(base.goodsId)?.[0];
-  const erpName=cost?.erpName||cost?.name||base.erpName||base.originalName||base.name;
+  const erpName=latestErpName(cost,base.erpName||base.originalName||base.name);
   if(excludedComponent({erpName}))continue;
   const actualEntry=base.deletedAt!=null?null:managedEntries.get(id);
   const entry=actualEntry??localEntry(id,base,aliases);
@@ -213,7 +213,7 @@ export function buildSourceSheet({rows=[],entries=[],costs=[],configs=[],shop='i
   const unit=erpUnitCost({...base,...cost});
   const category=sourceSheetCategory({...base,erpName},[...referenceSlots],cost);
   result.push({id,base,aliases,entry,managed:!!actualEntry,scopes,shop,category,erpName,
-   stock,unavailable:stock.status==='out'||stopTags({...cost,...base,erpStatus:base.erpStatus??cost?.erpStatus,
+   stock,unavailable:stock.status==='out'||stopTags({...cost,...base,erpName,erpStatus:base.erpStatus??cost?.erpStatus,
     discontinued:base.discontinued||cost?.discontinued,saleStopped:base.saleStopped||cost?.saleStopped}).length>0,
    references:refs.size,erp:unit.fallback?null:unit.cents,stockIndex,cost});
  }
@@ -334,6 +334,9 @@ export function editSourceSheetField(item,draft,scope,field,value,{restore=false
     isSpecialComponent(item.base)&&field!=='name')return draft;
  if(restore&&(scope==='shared'||!canInherit(field,fieldState(item.entry,'shared',field,item.base.sourceId,draft?.edits))))return draft;
  const edits=structuredClone(draft?.edits??{});
+ // 草稿里手填共用初价才开启手改保护，清空后仍可跟随成本表。
+ const taxMode=draft?.created&&field==='tax'&&scope===item.scopes[0]&&!restore?
+  (value==null?undefined:'manual'):draft?.taxMode;
  const change=edits[scope]??={values:{},restore:[]};
  const original=fieldState(item.entry,scope,field,item.base.sourceId,scope==='shared'?{}:{shared:edits.shared});
  const hasOverride=fieldState(item.entry,'shared',field,item.base.sourceId).overrideShops.includes(scope);
@@ -343,7 +346,7 @@ export function editSourceSheetField(item,draft,scope,field,value,{restore=false
   if(hasOverride)change.restore.push(field);
  }else if(!equal(original.value,value)||hasOverride&&scope==='shared')change.values[field]=value;
  for(const [key,next] of Object.entries(edits))if(!Object.keys(next.values).length&&!next.restore.length)delete edits[key];
- return draft?.created||Object.keys(edits).length?{...draft,edits}:undefined;
+ return draft?.created||Object.keys(edits).length?{...draft,edits,...(draft?.created?{taxMode}:{})}:undefined;
 }
 
 /** 只统一用户选中的字段，保留各店的其他独享设置。 */
@@ -356,8 +359,16 @@ export function promoteSourceSheetField(item,draft,field,value){
  return next;
 }
 
+/** 成本表存在有效价格时优先使用，零元也是有效观察值。 */
+export function sourceSheetDefaultTax(tableTax,erp){
+ const valid=value=>Number.isFinite(value)&&value>=0&&value<=100000000;
+ if(valid(tableTax))return {tax:Math.round(tableTax*100)/100,taxMode:'default_table'};
+ if(valid(erp))return {tax:Math.round(erp*100)/100,taxMode:'default_erp'};
+ return {tax:null};
+}
+
 /** ERP 观察留在草稿投影，实际创建按现有跨店接口提交人工字段和 ERP 原名。 */
-export function createSourceSheetDraft(candidate,{shop,shops=[shop],managed=false,tax=null,sourceId=crypto.randomUUID(),special=false}={}){
+export function createSourceSheetDraft(candidate,{shop,shops=[shop],managed=false,tax=null,taxMode,sourceId=crypto.randomUUID(),special=false}={}){
  const goodsId=String(candidate?.goodsId??'');
  // ERP 原名只取查询观察值。手工展示名不会作为 ERP 观察回传。
  // 兼容旧 ERP 搜索结果：它用 name 存原名，并附带单价或库存观察。
@@ -378,7 +389,7 @@ export function createSourceSheetDraft(candidate,{shop,shops=[shop],managed=fals
  item.erpName=erpName;
  item.entry={...item.entry,id:item.id};
  item.managed=managed;
- return {item,draft:{created:true,edits:{}}};
+ return {item,draft:{created:true,edits:{},...(!special&&row.tax!=null&&taxMode?{taxMode}:{})}};
 }
 
 /** 只覆盖实际修改的字段；同店的其他历史别名与特殊成本继续保留。 */
@@ -388,7 +399,7 @@ export function sourceSheetEffective(item,draft,row=item.base){
  const alias=item.entry.stores[row.shopId]?.find(record=>record.sourceId===row.sourceId);
  for(const key of sharedSourceKeys){
   if(Object.hasOwn(store?.values??{},key))fields[key]=store.values[key];
-  else if(store?.restore.includes(key)||Object.hasOwn(edits.shared?.values??{},key)&&!Object.hasOwn(alias?.fields??{},key))
+  else if(store?.restore.includes(key)||Object.hasOwn(edits.shared?.values??{},key)&&!sourceAliasOverrides(item.entry,alias,key,edits))
    fields[key]=fieldState(item.entry,store?.restore.includes(key)?'shared':row.shopId,key,row.sourceId,edits).value;
  }
  return withSourceFields(row,fields);
@@ -400,6 +411,7 @@ export function sourceSheetChanges(item,draft){
  const defaultScope=item.scopes[0];
  const scopeRow=scope=>sharedScopeRow(item.base,item.entry,scope,edits);
  const row=draft.created?scopeRow(item.shop):sourceSheetEffective(item,draft);
+ const initialTaxMode=draft.created&&!isSpecialComponent(row)&&draft.taxMode?{taxMode:draft.taxMode}:{};
  if(draft.created&&!scopeRow(defaultScope).name?.trim())throw Error('请先填写新增配件的展示名称');
  if(item.managed){
   if(draft.created){
@@ -408,11 +420,11 @@ export function sourceSheetChanges(item,draft){
     values[key]!=null&&(key!=='addon'||Object.keys(values[key]).length))];
    edits.shared={values:Object.fromEntries(fields.map(key=>[key,values[key]])),restore:[]};
   }
-  return [{before:draft.created?null:item.base,row,managed:{id:item.id,version:item.entry.version??null,edits,
+  return [{before:draft.created?null:item.base,row,managed:{id:item.id,version:item.entry.version??null,edits,...initialTaxMode,
    ...(draft.created&&row.erpName?{erpName:row.erpName}:{}),
    ...(draft.created&&!isSpecialComponent(row)&&row.erpCategory?.trim()?{erpCategory:row.erpCategory.trim()}:{})}}];
  }
- if(draft.created)return [{before:null,row:{...row,shopId:item.shop}}];
+ if(draft.created)return [{before:null,row:{...row,shopId:item.shop},...initialTaxMode}];
  return item.aliases.flatMap(before=>{
   const after=sourceSheetEffective(item,draft,before);
   return equal(sourceFields(before),sourceFields(after))?[]:[{before,row:after}];

@@ -23,26 +23,31 @@ export function createErpMatchingUi(api){
  const dismissalKey='diy-erp-matching-dismissed-v1';
  const storage=()=>api.storage===undefined?globalThis.localStorage:api.storage;
  try{dismissed=JSON.parse(storage()?.getItem(dismissalKey)??'null');}catch{}
- // 只记住这一次终态回执，新操作即使复用任务编号也应重新显示。
+ // 沿用旧存储键，只按任务编号判断；旧记录中的阶段和进度不会让浮条重新出现。
  function rememberDismissal(value){
   dismissed=value;
   try{if(value)storage()?.setItem(dismissalKey,JSON.stringify(value));else storage()?.removeItem(dismissalKey);}catch{}
  }
- function dismiss(){if(dismissible())rememberDismissal({id:job.id,phase:job.phase,finished:job.finished??0});}
+ function dismiss(){if(job)rememberDismissal({id:job.id});}
 
  const details=new Map(),busy=()=>Boolean(job?.active);
- const dismissible=()=>job&&!busy()&&['done','partial','failed','stopped'].includes(job.phase);
+ const terminalReceipt=()=>job&&!busy()&&['done','partial','failed','stopped'].includes(job.phase);
+ const canRecover=()=>['needs_review','failed','partial','stopped'].includes(job?.phase);
  const floating=document.createElement('aside');
  floating.className='erp-match-floating';floating.hidden=true;floating.setAttribute('aria-label','ERP 后台匹配进度');document.body.append(floating);
  const request=(action,payload={})=>{
-  if(['match_preview','match_execute','match_recover'].includes(action))rememberDismissal(null);
+  // 主动执行或核验会继续同一任务；新预览则等收到新任务编号再显示。
+  if(dismissed&&['match_execute','match_recover'].includes(action)){rememberDismissal(null);update();}
   return api.request({action,payload});
  };
  const partName=id=>api.partName?.(String(id));
  function update(){
-  api.onLabel?.(busy()?`ERP 匹配中 (${job.finished}/${job.total})`:`ERP 勾选匹配 (${selected})`,!busy()&&selected===0);
-  floating.hidden=!job||Boolean(dismissible()&&dismissed&&dismissed.id===job.id&&dismissed.phase===job.phase&&dismissed.finished===(job.finished??0));
-  floating.innerHTML=job?`<strong>${esc(phases[job.phase]??job.phase)} ${esc(job.finished??0)}/${esc(job.total??job.items.length)}</strong><button data-erp-task type="button">查看任务</button>${dismissible()?'<button data-erp-dismiss aria-label="关闭匹配回执" type="button">×</button>':''}`:'';
+  // 已有任务的核验按任务编号进行，取消表格勾选后仍可从工具栏进入。
+  const reviewOnly=selected===0&&canRecover();
+  api.onLabel?.(busy()?`ERP 匹配中 (${job.finished}/${job.total})`:reviewOnly?'查看 ERP 匹配任务':`ERP 勾选匹配 (${selected})`,!busy()&&selected===0&&!reviewOnly);
+  if(job&&dismissed&&job.id!==dismissed.id)rememberDismissal(null);
+  floating.hidden=!job||Boolean(dismissed&&dismissed.id===job.id);
+  floating.innerHTML=job?`<strong>${esc(phases[job.phase]??job.phase)} ${esc(job.finished??0)}/${esc(job.total??job.items.length)}</strong><button data-erp-task type="button">查看任务</button><button data-erp-dismiss aria-label="关闭匹配提示" type="button">×</button>`:'';
   if(panel?.isConnected)renderJob();
  }
  floating.onclick=event=>{
@@ -60,6 +65,8 @@ export function createErpMatchingUi(api){
   finally{if(token===revision&&!disposed&&(busy()||panel?.isConnected))timer=setTimeout(refresh,busy()?600:2500);}
  }
  function renderJob(){
+  // dialog.close() 先隐藏窗口，close 事件稍后送达。期间保留用户关闭时实际看到的回执编号。
+  if(!panel?.closest('dialog[open]'))return;
   const $=selector=>panel.querySelector(selector),counts=actionCounts(job),total=job?.total??job?.items.length??0;
   const actionable=(counts.create??0)+(counts.update??0)+(counts.reuse??0),active=busy()||submitting;
   const blocked=job?.hasConflicts||counts.conflict>0,needsPreview=job?.phase==='preview'&&!previewStamp;
@@ -70,10 +77,12 @@ export function createErpMatchingUi(api){
   $('#erp-match-background').hidden=!busy();
   $('#erp-match-execute').textContent=`确认执行本次快照 (${actionable})`;
   $('#erp-match-execute').disabled=!connected||!available||active||job?.phase!=='preview'||!previewStamp||previewJobId!==job?.id||blocked||actionable===0;
-  $('#erp-match-recover').hidden=!['needs_review','failed','partial','stopped'].includes(job?.phase);
+  $('#erp-match-recover').hidden=!canRecover();
   $('#erp-match-retry').hidden=!['failed','partial','stopped'].includes(job?.phase);
   $('#erp-match-recover').disabled=$('#erp-match-retry').disabled=active||!connected||!available;
-  $('#erp-match-close').textContent=dismissible()?'关闭回执':'关闭';
+  const closeButton=$('#erp-match-close');
+  closeButton.dataset.receiptId=terminalReceipt()?job.id:'';
+  closeButton.textContent=closeButton.dataset.receiptId?'关闭回执':'关闭';
   $('#erp-match-hint').textContent=job?.phase==='preview'?(counts.update?updatePrompt(counts.update):blocked?'请核对异常阻断项后重新预览。':''):'';
   $('#erp-match-message').textContent=panelError||(needsPreview?'请重新只读预览当前配置。':job?.message||phases[job?.phase]||'');
   const filters=['all','create','update','already','conflict',...(counts.reuse||filter==='reuse'?['reuse']:[])];
@@ -122,7 +131,13 @@ export function createErpMatchingUi(api){
   update();void refresh();
  }
  async function open(fresh=true){
-  if(fresh&&!busy()&&job?.phase!=='needs_review'){previewIds=[];previewStamp=null;}
+  if(fresh&&!busy()&&job?.phase!=='needs_review'){
+   // 浮条已收起时，工具栏可以继续本窗口的原预览。换勾选后须重新预览，执行前仍逐项核对冻结快照。
+   const picked=new Set(api.selectedIds());
+   const resume=job?.phase==='preview'&&dismissed?.id===job.id&&previewJobId===job.id&&previewStamp&&
+    picked.size===previewIds.length&&previewIds.every(id=>picked.has(id));
+   if(!resume){previewIds=[];previewStamp=null;}
+  }
   offset=0;filter='all';lastRows=null;panelError='';
   api.openDialog('ERP 勾选匹配',panelHtml);
   const own=panel=document.querySelector('#erp-match-panel'),$=selector=>own.querySelector(selector);
@@ -171,8 +186,19 @@ export function createErpMatchingUi(api){
    const button=event.target.closest('[data-erp-detail]');if(!button)return;
    void safe(async()=>{const id=job.id,result=await request('match_detail',{jobId:id,configId:button.dataset.erpDetail});if(panel===own&&job?.id===id){const item=result.job.items[0];details.set(id+':'+item.configId,item);}})(event);
   };
-  $('#erp-match-close').onclick=$('#erp-match-background').onclick=()=>api.closeDialog();
-  own.closest('dialog').addEventListener('close',()=>{if(panel!==own)return;dismiss();panel=null;update();},{once:true});
+  // 转入后台只关闭弹窗，即使任务恰在此时完成，也保留浮条。
+  let backgrounded=false;
+  $('#erp-match-background').onclick=()=>{backgrounded=true;api.closeDialog();};
+  $('#erp-match-close').onclick=()=>api.closeDialog();
+  const dialog=own.closest('dialog');
+  dialog.addEventListener('close',function onClose(){
+   // 同一个原生弹窗可能已重新打开，此前排队的 close 不应卸载新面板。
+   if(panel===own&&dialog.open&&own.isConnected)return;
+   dialog.removeEventListener('close',onClose);
+   if(panel!==own)return;
+   if(!backgrounded&&job&&$('#erp-match-close').dataset.receiptId===job.id)dismiss();
+   panel=null;update();
+  });
   renderJob();await Promise.all([refreshSession(),refresh()]);
  }
  void refresh();

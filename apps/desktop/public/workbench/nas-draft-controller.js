@@ -355,12 +355,14 @@ export function createNasDraftController({client,storage,draftStorage=null,endpo
  }
  /** 本次来源保存后的已读投影只接续干净配置；草稿和未知请求仍保持原依赖。 */
  function acceptObservedDependencies(versions){
-  if(!record||record.pending||working||!same(record.base,record.document))return false;
-  for(const kind of ['sources','costs'])if(Object.values(versions[kind]||{}).some(value=>typeof value!=='string'||!/^[1-9]\d{0,18}$/.test(value)))throw new NasApiError('INVALID_API_RESPONSE');
-  const next=clone(record);
-  for(const kind of ['sources','costs'])for(const [id,version] of Object.entries(versions[kind]||{}))if(Object.hasOwn(next.dependencies[kind],id))next.dependencies[kind][id]=version;
-  // 这里只接续当前窗口的已读基线，不清理其它窗口可能写入的同配置草稿。
-  record=next;return true;
+  if(!record||record.pending||working||record.base!==record.document&&!same(record.base,record.document))return false;
+  const dependencies=clone(record.dependencies);
+  for(const kind of ['sources','costs']){
+   const observed=versions[kind]??{};
+   for(const id of Object.keys(dependencies[kind]))if(Object.hasOwn(observed,id))dependencies[kind][id]=observed[id];
+  }
+  // 只替换当前窗口的依赖映射，保留配置原文和其他窗口的持久草稿。
+  record={...record,dependencies};return true;
  }
  return {verify,open,resume,create,edit,compare,abandonForRemote,save,receipt,retry,read,drafts,draftsFresh,flush:()=>draftStorage?.flush()??Promise.resolve(),isWorking:()=>working,needsRetry:()=>!!draftStorage?.hasFailure(key),discardArchived,discardLocalDrafts,acceptRenumber,acceptSourceVersions,acceptObservedDependencies};
 }

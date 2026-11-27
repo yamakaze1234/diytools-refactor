@@ -55,7 +55,7 @@ function writeFollow(part,field,value){
  part.sourceFollow[field]={mode:'follow',value,sourceValue:value,...(textOnly?{textOnly:true}:{}),...(structured?{structured:true}:{})};
 }
 /** 比较来源前后值，只更新仍符合跟随条件的配置字段。 */
-export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges=false,deferUpgrade=false}={}){
+export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges=false,deferUpgrade=false,deferText=false}={}){
  const beforeIndex=catalog(beforeRows),afterIndex=catalog(afterRows),configIds=new Set();let count=0;
  const automatic=new Map();
  for(const config of configs){
@@ -66,7 +66,7 @@ export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges
    const previousPart=JSON.stringify(part),tracking=initializePart(config,part,before);
    for(const field of ['name','upgrade']){
     const oldSource=sourceValue(config,before,field,part),target=sourceValue(config,after,field,part),record=tracking[field];
-    if(oldSource!==target&&record.mode==='follow'&&!(deferUpgrade&&field==='upgrade')){
+    if(oldSource!==target&&record.mode==='follow'&&!deferText&&!(deferUpgrade&&field==='upgrade')){
      if(effective(part,field)!==target){
       count++;configIds.add(config.id);
       if(captureChanges){
@@ -77,8 +77,8 @@ export function followSourceChanges(configs,beforeRows,afterRows,{captureChanges
      writeFollow(part,field,target);
     }else observe(record,target);
    }
-   // Keep the search/model name current without changing a manual picture label.
-   if(part.name!==after.name){
+   // 需要决策时连搜索用名称也先保留，避免绕过展示名称的跟随状态。
+   if(!deferText&&part.name!==after.name){
     const label=effective(part,'name');
     if(tracking.name.mode==='manual')part.displayName=label;
     part.name=after.name;configIds.add(config.id);
@@ -106,8 +106,11 @@ function* differences(configs,rows,fields,shopId,options){
    const row=sourceFor(index,config,part);if(!row)continue;
    // 在副本上识别旧数据的跟随状态；只把明确选中的字段写入计划正文。
    const working={...part,sourceFollow:copy(part.sourceFollow)};
+   const previous=options.previousSources?.get(row.sourceId);
+   if(previous)initializePart(config,working,previous);
    const tracking=initializePart(config,working,row);
    for(const field of fields){
+    if(options.fieldsBySource&&!options.fieldsBySource.get(row.sourceId)?.includes(field))continue;
     const key=sourceFollowKey(config.id,part.sourceId,partIndex,part.slot,field);if(keys&&!keys.has(key))continue;
     const target=field==='tax'?row.tax:tracking[field].sourceValue,current=field==='tax'?part.tax:effective(part,field),record=tracking[field];
     if((current??'')===(target??''))continue;
@@ -166,11 +169,15 @@ export function sourceFollowSummary(configs,rows,shopId,{fields=sourceAlertField
 }
 
 /** 保存后的决策窗只处理本店刚变动来源的跟随文案，人工文案仅计数。 */
-export function followPendingAddonPlan(configs,rows,shopId,{sourceIds=[]}={}){
- const plan=sourceFollowPlan(configs,rows,['upgrade'],shopId,{sourceIds,kind:'follow'});
+export function followPendingSourcePlan(configs,rows,shopId,{fieldsBySource,previousRows=[]}){
+ const edited=new Set([...fieldsBySource.values()].flat());
+ const fields=['name','upgrade'].filter(field=>edited.has(field));
+ const options={sourceIds:[...fieldsBySource.keys()],fieldsBySource,previousSources:new Map(previousRows.map(row=>[row.sourceId,row]))};
+ const plan=fields.length?sourceFollowPlan(configs,rows,fields,shopId,{...options,kind:'follow'}):
+  {shopId,fields,action:'update',sources:[],changes:[]};
  const linkKey=c=>c.productId||c.product||c.spu||c.id;
  const manualIds=new Set(),manualLinks=new Set();
- for(const {config} of differences(configs,rows,['upgrade'],shopId,{sourceIds,kind:'manual'})){
+ for(const {config} of differences(configs,rows,fields,shopId,{...options,kind:'manual'})){
   manualIds.add(config.id);manualLinks.add(linkKey(config));
  }
  return {...plan,followConfigCount:plan.changes.length,followLinkCount:new Set(plan.changes.map(c=>linkKey(c.before))).size,

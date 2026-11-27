@@ -14,7 +14,7 @@ const oldText='可咨询客服升级【+99元升级测试配件】',newLabel='�
 const api=await startSourceAcceptance({fixture,root:join(fixture,'addon-nas-uploads'),authenticate:async()=>({uid:fixtureActor,workspaceId:fixtureWorkspace})});
 let browser;
 try{
- for(const file of ['020-workbench-global-tax.sql','021-workbench-alias-addons.sql','027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql','029-manual-tax-protection.sql','030-incoming-stock.sql','031-erp-category.sql']){
+ for(const file of ['020-workbench-global-tax.sql','021-workbench-alias-addons.sql','027-quotation-identity-invalidation.sql','028-cross-shop-cost-sync.sql','029-manual-tax-protection.sql','030-incoming-stock.sql','031-erp-category.sql','033-source-default-tax-and-erp-name.sql']){
   await api.db.exec(await readFile(new URL('../../../services/nas-api/sql/'+file,import.meta.url),'utf8'));
  }
  for(const shop of shops){

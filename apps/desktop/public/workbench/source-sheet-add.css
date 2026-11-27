@@ -34,7 +34,7 @@
 .ss-add-market{margin-top:8px;padding-top:6px;border-top:1px dashed var(--wb-rule);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .ss-add-market small,.ss-add-spec-grid small{display:block;margin-bottom:2px}
 .ss-add-market b{font-size:14px}
-.ss-add-pricing{display:grid;grid-template-columns:minmax(0,1fr) 220px;align-items:end;gap:12px}
+.ss-add-pricing{display:grid;grid-template-columns:minmax(0,1fr) 220px;align-items:start;gap:12px}
 .ss-add-part[data-part-mode=special] .ss-add-pricing{grid-template-columns:1fr}
 .ss-add-part .ss-add-label{height:20px;margin-bottom:4px;color:var(--wb-muted);font-size:11px;font-weight:600;gap:4px;white-space:nowrap}
 .ss-add-category,.ss-add-spec-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:12px}
@@ -79,3 +79,8 @@
 #dialog #dialog-body .ss-add-part [data-reset-name]{font-size:11px!important;text-decoration:underline;min-height:0!important;background:transparent!important;color:var(--wb-muted)!important;border:0!important;padding:0!important}
 #dialog #dialog-body .ss-add-part button[data-mode]{background:transparent!important;color:var(--wb-muted)!important;font-size:12px!important;font-weight:400;min-height:0!important;padding:4px 12px!important;border:0!important;border-radius:1px!important}
 }
+
+/* 价格来源和 ERP 价差并排显示，避免挤占输入项标题。 */
+.ss-add-part .ss-add-tax-status{display:flex;align-items:center;gap:6px;margin-top:4px;color:var(--wb-muted);font-size:11px}
+.ss-add-part [data-reset-tax]{background:none;border:0;color:var(--wb-muted);cursor:pointer}
+.ss-add-part [data-reset-tax]:disabled{opacity:.5;cursor:default}

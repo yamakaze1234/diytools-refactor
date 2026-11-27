@@ -35,7 +35,7 @@ function fixture(){
   const view=visibleNasCosts(result.configs[0],new Map([[id,index.metadata.costSource[0]]]));
   workspace.attach(view);return view;
  }
- return {build,load,writes,changeDuringSave:()=>{advanceOnSave=true;}};
+ return {build,load,writes,client,changeDuringSave:()=>{advanceOnSave=true;}};
 }
 
 test('只打开、展示和暂存干净配置不会制造成本差异或提交请求',async()=>{
@@ -81,4 +81,42 @@ test('成本依赖冲突后用新版本的明确空价重建正文',async()=>{
  assert.equal(retried.document.actualParts[0].erp,null);
  assert.equal(retried.document.actualParts[0].erpUnknown,true);
  assert.notEqual(f.writes[0].operation_id,retried.operation_id);
+});
+
+const observed={sources:{},costs:{'212618':'2'}};
+test('预加载后另一窗口产生的草稿和旧版价格草稿都阻止来源差异替换',async()=>{
+ const f=fixture(),reader=f.build(),writer=f.build(),view=await f.load(reader),other=await f.load(writer);
+ const replacement=[{id:view.id,action:'replace',document:{...view,name:'来源同步'}}];
+ other.name='另一窗口的编辑';const saved=writer.stage(other);
+ assert.deepEqual([...await reader.acceptObservedDependencies(observed)],[]);
+ assert.equal(reader.stage(view).dependencies.costs['212618'],'1');
+ await assert.rejects(reader.configurationChanges(replacement,{sourceSync:true}),{code:'UNSAVED_DRAFT'});
+ assert.deepEqual(writer.stage(other),saved);
+ other.name='已保存';writer.stage(other);
+ const prices=[{id:'c',expected_version:'1',fields:{price:160}}];writer.priceDraft(prices);
+ assert.deepEqual([...await reader.acceptObservedDependencies(observed)],[]);
+ await assert.rejects(reader.configurationChanges(replacement,{sourceSync:true}),{code:'UNSAVED_DRAFT'});
+ assert.deepEqual(writer.priceDraft(),prices);
+ writer.priceDraft([]);
+ assert.deepEqual([...await reader.acceptObservedDependencies(observed)],['c']);
+ assert.equal((await reader.configurationChanges(replacement,{sourceSync:true}))[0].dependencies.costs['212618'],'2');
+ assert.deepEqual(f.writes,[]);
+});
+
+test('刷新等待时产生的草稿及已发送但尚未回执的保存保留原依赖和完整正文',async()=>{
+ const f=fixture(),workspace=f.build(),view=await f.load(workspace);
+ const refreshing=workspace.acceptObservedDependencies(observed);
+ view.parts[0].hardwareOverrides={cpuName:'本机手填'};const staged=workspace.stage(view);
+ assert.deepEqual([...await refreshing],[]);assert.deepEqual(workspace.stage(view),staged);
+ const entered=Promise.withResolvers(),resume=Promise.withResolvers(),realSave=f.client.save;
+ f.client.save=async(...args)=>{entered.resolve();await resume.promise;return realSave(...args);};
+ const saving=workspace.submit(view);await entered.promise;
+ try{
+  const pending=workspace.stage(view);
+  assert.equal(pending.pending.body.dependencies.costs['212618'],'1');
+  assert.deepEqual([...await workspace.acceptObservedDependencies(observed)],[]);
+  assert.deepEqual(workspace.stage(view),pending);
+  await assert.rejects(workspace.configurationChanges([{id:'c',action:'replace',document:view}],{sourceSync:true}),{code:'UNSAVED_DRAFT'});
+ }finally{resume.resolve();await saving;}
+ assert.equal(f.writes.length,1);assert.deepEqual(f.writes[0].document.parts[0].hardwareOverrides,{cpuName:'本机手填'});
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {followPendingAddonPlan,initializeSourceFollow,sourceFollowPlan,sourceFollowSummary,IGNORED_RETENTION_MS} from '../../public/workbench/source-follow.js';
+import {followPendingSourcePlan,initializeSourceFollow,sourceFollowPlan,sourceFollowSummary,IGNORED_RETENTION_MS} from '../../public/workbench/source-follow.js';
 import {applySourceSync,sourceExportEntries,SourceChangeSession} from '../../public/workbench/source-sync-data.js';
 import {sourceBatch} from '../../public/workbench/source-batch.js';
 import {withCurrentSharedSource} from '../../public/workbench/shared-source-fields.js';
@@ -76,7 +76,7 @@ test('保存后计划按店和来源去重计数，混合配置只写跟随行',
  initializeSourceFollow(configs,[source]);
  applySourceSync(review([ignored],changed,{action:'ignore'}),[ignored],[changed]);
  const before=structuredClone(configs),rows=[changed,{...changed,sourceId:'other'}];
- const plan=followPendingAddonPlan(configs,rows,'intel',{sourceIds:['s']});
+ const plan=followPendingSourcePlan(configs,rows,'intel',{fieldsBySource:new Map([['s',['upgrade']]])});
  assert.deepEqual(configs,before);
  assert.deepEqual([plan.followConfigCount,plan.followLinkCount,plan.manualConfigCount,plan.manualLinkCount],[2,1,1,1]);
  assert.deepEqual(plan.changes.map(c=>c.id),['a','b']);
@@ -84,7 +84,7 @@ test('保存后计划按店和来源去重计数，混合配置只写跟随行',
  applySourceSync(plan,configs,rows);
  assert.deepEqual(both.parts[1],before[0].parts[1]);assert.deepEqual(configs.slice(2),before.slice(2));
  assert.equal(both.parts[0].upgrade,'新文案');
- assert.equal(followPendingAddonPlan(configs,rows,'intel',{sourceIds:[]}).changes.length,0);
+ assert.equal(followPendingSourcePlan(configs,rows,'intel',{fieldsBySource:new Map()}).changes.length,0);
 });
 
 test('纯图片导出按图型过滤，不采用差异或改变原配置',()=>{
@@ -134,4 +134,24 @@ test('本次变动按本店配置累计，重复保存去重计数并保留补�
  const entries=sourceExportEntries([a,b,foreign],session.records,'intel');
  assert.deepEqual(entries.map(e=>[e.config.id,e.config.layout]),[['a','long'],['a','square'],['b','long'],['b','square']]);
  assert.equal(new SourceChangeSession('intel').count,0);
+});
+
+test('刚保存的名称使用旧有效名称识别跟随，混合计划保护人工字段与其他来源差异',()=>{
+ const follow=config('follow'),custom=config('custom'),other=config('other');
+ custom.parts[0].displayName='独享展示名';
+ other.parts[0].sourceId='other';
+ initializeSourceFollow([custom],[source]);
+ const next={...changed,name:'新名称'},otherRow={...next,sourceId:'other'};
+ const rows=[next,otherRow],configs=[follow,custom,other];
+ const plan=followPendingSourcePlan(configs,rows,'intel',{
+  fieldsBySource:new Map([['s',['name']],['other',['upgrade']]]),previousRows:[source,{...source,sourceId:'other'}],
+ });
+ assert.deepEqual(plan.fields,['name','upgrade']);
+ assert.deepEqual(plan.changes.map(({id,details})=>[id,details.map(detail=>detail.field)]),[['follow',['name']],['other',['upgrade']]]);
+ assert.equal(plan.manualConfigCount,1);
+ applySourceSync(plan,configs,rows);
+ assert.equal(follow.parts[0].name,'新名称');
+ assert.equal(follow.parts[0].upgrade,source.addonText);
+ assert.equal(custom.parts[0].displayName,'独享展示名');
+ assert.equal(other.parts[0].name,source.name);
 });

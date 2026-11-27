@@ -351,7 +351,19 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
  function editorAddons(id,fallback){
   return visibleNasAddons(editors.get(id)?.effective,fallback);
  }
- async function configurationChanges(rows){
+ // 目录刷新和差异提交都查当前成员的持久记录，另一窗口的草稿可能晚于本窗口打开详情。
+ async function sourceSyncDraftIds(){
+  return new Set([...await lookup.draftsFresh(),...priceDraft()].map(row=>row.id));
+ }
+ async function acceptObservedDependencies(versions,stageFailures){
+  ready();
+  // 一次校验本店的目录快照，再按每套配置实际引用的货号和来源接续版本。
+  for(const kind of ['sources','costs'])if(!Object.values(versions[kind]??{}).every(versionNumber))throw new NasApiError('INVALID_API_RESPONSE');
+  const drafts=await sourceSyncDraftIds(),accepted=new Set();
+  for(const [id,ctrl] of controllers)if(!drafts.has(id)&&!stageFailures?.has(id)&&ctrl.acceptObservedDependencies(versions))accepted.add(id);
+  return accepted;
+ }
+ async function configurationChanges(rows,{sourceSync=false}={}){
   const memo=new Map();
   const resolved=[];
   for(const row of rows){
@@ -381,6 +393,15 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
     [kind,{...prior[kind],...Object.fromEntries(Object.entries(row.dependencyOverrides[kind]).filter(([id])=>Object.hasOwn(prior[kind],id)))}])):prior;
    const dependencies=await nasDependencies(owned,document,known,memo);
    resolved.push({id,action,document,dependencies,...(action==='create'?{}:{expected_version:record.version})});
+  }
+  if(sourceSync){
+   // 读取依赖期间也可能产生新草稿或开始保存；入队前按实际命中的配置再检查一次。
+   const drafts=await sourceSyncDraftIds();
+   for(const {id} of resolved){
+    const ctrl=controllers.get(id),record=ctrl?.read();
+    if(drafts.has(id)||ctrl?.isWorking()||!record||record.pending||!equal(record.base,record.document))
+     throw new NasApiError('UNSAVED_DRAFT',409,{configuration_id:id});
+   }
   }
   return resolved;
  }
@@ -472,7 +493,7 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
   // 角标读取已确认 base，不能把飞行期间的新草稿当作保存回执。
   acceptedDocument:id=>dup(controllers.get(id)?.read()?.base??null),
   acceptSourceVersions:(ids,versions)=>{ready();return each(ids,id=>after(controllers.get(id)?.acceptSourceVersions(versions),ok=>{if(!ok)throw new NasApiError('UNSAVED_DRAFT');}));},
-  acceptObservedDependencies:versions=>{ready();let count=0;for(const ctrl of controllers.values())if(ctrl.acceptObservedDependencies(versions))count++;return count;},
+  acceptObservedDependencies,
   agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],
   shop:()=>shopId,shops:()=>[...availableShops],serverVersion,serverDataTime,serverDisplayScope:()=>JSON.stringify([endpoint,identity]),
   editorAddons,configurationVersion:id=>controllers.get(id)?.read()?.version,
@@ -525,6 +546,7 @@ export const nasErrorText=(error,configs=[])=>{
  PROFIT_RESULT_STALE:'配置、成本或更新的检测结果已变化，请重新检测后重设基准。',
  NAS_PROFIT_NOT_INSTALLED:'服务器尚未启用利润检测历史。',
  NAS_PRICE_HISTORY_NOT_INSTALLED:'服务器尚未启用价格变化记录。',
+ NAS_SOURCE_CREATION_NOT_INSTALLED:'NAS 尚未安装新建配件核算价迁移（033），请在安装后重试。',
  NAS_ERP_ADOPTION_NOT_INSTALLED:'服务器尚未启用从 ERP 新建输出源。',
  ERP_SOURCE_ARCHIVED:'本店同货号的输出源已归档，请先到输出源维护恢复。',
  DEPENDENCY_CONFLICT:'关联配件来源或成本已更新，草稿已保留。',SAVE_STATUS_UNKNOWN:'尚未确认服务器是否保存，请查询提交结果。',

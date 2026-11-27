@@ -37,6 +37,13 @@ const display = (name,value) => {
  return Array.isArray(value)?value.join('、'):(value??'空');
 };
 
+/** 共用改名时，原先与共用名相同的历史别名继续继承，其他别名仍独立。 */
+export function sourceAliasOverrides(entry,alias,field,edits){
+ if(!Object.hasOwn(alias?.fields??{},field))return false;
+ return field!=='name'||!Object.hasOwn(edits.shared?.values??{},'name')||
+  equal(edits.shared.values.name,entry.common.name)||!equal(alias.fields.name,entry.common.name);
+}
+
 /** 同一店多个历史来源会分开保留。选择历史值后，该字段才统一到该店。 */
 export function fieldState(entry,scope,field,preferredId,edits={}) {
  const common = {...entry?.common,...edits.shared?.values};
@@ -46,7 +53,7 @@ export function fieldState(entry,scope,field,preferredId,edits={}) {
   const overrideShops = Object.entries(entry?.stores??{}).filter(([shop,aliases])=>{
    const change=edits[shop];
    if(Object.hasOwn(change?.values??{},field))return true;
-   return !change?.restore.includes(field)&&aliases.some(alias=>Object.hasOwn(alias.fields,field));
+   return !change?.restore.includes(field)&&aliases.some(alias=>sourceAliasOverrides(entry,alias,field,edits));
   }).map(([shop])=>shop);
   return {value:common[field], label:inherited?'共用':'待设共用值', inherited, overrideShops};
  }
@@ -57,8 +64,8 @@ export function fieldState(entry,scope,field,preferredId,edits={}) {
   return {value:change.values[field], label:'单店覆盖', restore:inherited};
  }
  if (change?.restore.includes(field)) return {value:common[field],label:'待恢复共用'};
- const values = unique(ordered.map(alias=>Object.hasOwn(alias.fields,field)?alias.fields[field]:common[field]));
- const override = ordered.some(alias=>Object.hasOwn(alias.fields,field));
+ const values = unique(ordered.map(alias=>sourceAliasOverrides(entry,alias,field,edits)?alias.fields[field]:common[field]));
+ const override = ordered.some(alias=>sourceAliasOverrides(entry,alias,field,edits));
  if (!override) return {value:common[field],label:inherited?'共用':'待设共用值'};
  const legacy = ordered.some(alias=>alias.legacy.includes(field));
  return {value:values[0], label:values.length>1?'多个店铺原值':legacy?'保留店铺原值':'单店覆盖',
