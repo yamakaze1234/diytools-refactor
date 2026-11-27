@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-labelledby="title desc" xml:lang="zh-CN">
+  <title id="title">DIY 配置工作台</title>
+  <desc id="desc">Windows x64，版本 0.2.57。NAS 集中管理配置、成本与库存，桌面完成编辑、排版和导出。</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <path d="M24 0H0V24" fill="none" stroke="#282828" stroke-width="1"/>
+    </pattern>
+    <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <path d="M0 0V7" stroke="#757575" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <path fill="#121212" d="M0 0h1280v340H0z"/>
+  <path fill="url(#grid)" d="M1 4h1278v335H1z"/>
+  <path fill="none" stroke="#5d5d5b" d="M.5 4v335.5h1279V4"/>
+  <path fill="#ff00f0" d="M0 0h426v4H0z"/>
+  <path fill="#fffa00" d="M426 0h428v4H426z"/>
+  <path fill="#00ffa2" d="M854 0h426v4H854z"/>
+
+  <path fill="#fffa00" d="M47 42h60v37L96 90H47z"/>
+  <path fill="#161616" d="M57 53h12c9 0 14 5 14 13s-5 13-14 13H57zm8 6v14h4c4 0 7-2 7-7 0-4-3-7-7-7zm21 5h10v5H86z" fill-rule="evenodd"/>
+  <g fill="#f4f4f2" font-family="Arial, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+    <text x="124" y="72" font-size="15" font-weight="700" letter-spacing="3.5">// CONFIGURATION STUDIO</text>
+    <text x="43" y="169" font-size="68" font-weight="900">DIY 配置工作台</text>
+    <text x="48" y="211" font-size="21" font-weight="600">NAS 集中管理配置、成本与库存，桌面完成编辑、排版和导出。</text>
+    <text x="48" y="242" fill="#b9b9b7" font-size="11.5" font-weight="700" letter-spacing="2.2">BUILD CONFIGURATIONS / PRICING / PRODUCT IMAGERY</text>
+  </g>
+  <path fill="url(#hatch)" d="M47 266h639v7H47z"/>
+  <g font-family="Consolas, Liberation Mono, monospace" font-size="13" font-weight="700">
+    <path fill="#fffa00" d="M47 287h155v18l-8 8H47z"/>
+    <text fill="#161616" x="59" y="305">RELEASE v0.2.57</text>
+    <path fill="#262626" stroke="#5d5d5b" d="M213 287h113v18l-8 8H213zM337 287h205v18l-8 8H337z"/>
+    <text fill="#f4f4f2" x="225" y="305">WINDOWS x64</text>
+    <text fill="#f4f4f2" x="349" y="305">TAURI · REACT · RUST · PG</text>
+  </g>
+
+  <!-- 抽象工作台线框保留商品链接、配置表和海报预览的三栏结构。 -->
+  <path fill="#1a1a1a" d="M791 25h441v286H711z"/>
+  <path fill="none" stroke="#747470" d="M791 25l-80 286m-12 0 80-286"/>
+  <path fill="#fffa00" d="M772 87h4l-16 57h-4z"/>
+  <g transform="translate(802 59)" fill="none">
+    <path fill="#151515" stroke="#979795" d="M0 0h405v192l-18 18H0z"/>
+    <path stroke="#777773" d="M0 27h405M74 27v183m221-183v183"/>
+    <path stroke="#3f3f3d" d="M85 78h199m-199 21h199m-199 21h199m-199 21h199m-199 21h199m-199 21h199m-154-105v105m81-105v105m45-105v105"/>
+    <path fill="#fffa00" d="M12 9h24v9H12zm74 35h67v12H86z"/>
+    <path fill="#9b9b97" d="M47 10h64v6H47zm274 1h19v4h-19zm26 0h19v4h-19zm26 0h20v4h-20z"/>
+    <g stroke="#7e7e7a" stroke-width="2">
+      <path d="M13 47h47M19 62h39M19 76h31M19 103h42M13 126h47m-41 15h34m-34 14h42"/>
+      <path d="M171 50h47m12 0h46M140 89h51m-51 21h42m-42 21h60m-60 21h47m-47 21h58M225 89h16m-16 21h16m-16 21h16m-16 21h16m-16 21h16"/>
+    </g>
+    <path fill="#fffa00" d="M12 86h54v8H12z"/>
+    <path stroke="#8d8d89" d="M307 48h85v133h-85z"/>
+    <path stroke="#e0e0da" stroke-width="1.2" d="m323 74 36-11 17 9v40l-37 10-16-10zm0 0 16 9 37-11m-37 11v39m8-35 22-7v26l-22 7z"/>
+    <path stroke="#70706d" d="M316 137h67m-67 9h58m-58 9h64m-64 9h48"/>
+    <path fill="#fffa00" d="M307 192h73l-7 6h-66z"/>
+  </g>
+  <text x="804" y="294" fill="#b9b9b7" font-family="Consolas, Liberation Mono, monospace" font-size="11" letter-spacing="1.7">LINKS / CONFIGURATION GRID / PREVIEW</text>
+</svg>

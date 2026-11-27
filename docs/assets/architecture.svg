@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="430" viewBox="0 0 1120 430" role="img" aria-labelledby="title desc" xml:lang="zh-CN">
+  <title id="title">DIY 配置工作台系统运行架构</title>
+  <desc id="desc">Windows 工作台经 HTTPS 访问 NAS API。NAS API 访问 PostgreSQL 与原图。ERP 和 Excel 只读组件留在本机。签名更新来自 Gitea 主源和 GitHub 备用镜像。</desc>
+  <defs>
+    <pattern id="grid" width="22" height="22" patternUnits="userSpaceOnUse">
+      <path d="M22 0H0V22" fill="none" stroke="#282828"/>
+    </pattern>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto">
+      <path fill="#fffa00" d="M0 0l7 3.5L0 7z"/>
+    </marker>
+  </defs>
+  <path fill="#121212" d="M0 0h1120v430H0z"/>
+  <path fill="url(#grid)" d="M1 3h1118v426H1z"/>
+  <path fill="#ff00f0" d="M0 0h373v3H0z"/><path fill="#fffa00" d="M373 0h374v3H373z"/><path fill="#00ffa2" d="M747 0h373v3H747z"/>
+  <path fill="none" stroke="#585856" d="M.5 3v426.5h1119V3M22 54h1076"/>
+  <g fill="#f4f4f2" font-family="Arial, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+    <text x="23" y="37" font-size="24" font-weight="800">系统运行架构</text>
+    <text x="1097" y="36" text-anchor="end" fill="#b4b4b2" font-size="13" font-weight="700" letter-spacing="2">// RUNTIME ARCHITECTURE · v0.2.57</text>
+
+    <!-- 三段运行路径和工作台侧的只读、签名更新入口。 -->
+    <g fill="#1b1b1b" stroke="#646461">
+      <path d="M22.5 72.5h489v219h-489zM567.5 72.5h257v219h-257zM880.5 72.5h217v219h-217z"/>
+      <path d="M22.5 326.5h489v81h-489zM567.5 326.5h530v81h-530z"/>
+    </g>
+    <g fill="#fffa00">
+      <path d="M23 73h33v32H23zm545 0h33v32h-33zm313 0h33v32h-33zM568 327h33v30h-33z"/>
+    </g>
+    <g fill="#161616" font-family="Consolas, Liberation Mono, monospace" font-size="15" font-weight="700">
+      <text x="30" y="94">01</text><text x="575" y="94">02</text><text x="888" y="94">03</text><text x="575" y="347">04</text>
+    </g>
+    <g font-size="18" font-weight="800">
+      <text x="66" y="95">WINDOWS 桌面工作台</text><text x="611" y="95">NAS API</text><text x="924" y="95">数据与原图存储</text>
+      <text x="39" y="348">本机可选只读组件</text><text x="611" y="348">双源签名发行与自动更新</text>
+    </g>
+    <g fill="#adadab" font-family="Consolas, Liberation Mono, monospace" font-size="12">
+      <text x="494" y="94" text-anchor="end">apps/desktop</text><text x="808" y="94" text-anchor="end">services/nas-api</text>
+      <text x="494" y="347" text-anchor="end">services/</text><text x="1081" y="347" text-anchor="end">tools/</text>
+    </g>
+    <path stroke="#484846" d="M23 105h488m57 0h256m57 0h216M23 357h488m57 0h529M39 161h457m-457 52h457"/>
+    <g font-size="15" font-weight="700">
+      <text x="39" y="126">React 宿主与业务视图</text>
+      <text x="39" y="179">本机状态与保护</text>
+      <text x="39" y="231">Tauri Rust 原生核心</text>
+      <text x="583" y="133">认证与三店权限边界</text>
+      <text x="583" y="173">事务写入与冲突控制</text>
+      <text x="583" y="213">定时巡检与生命周期清理</text>
+      <text x="896" y="133">PostgreSQL</text>
+      <text x="896" y="214">原图文件仓</text>
+    </g>
+    <g fill="#d0d0cd" font-size="13.5">
+      <text x="39" y="148">连续配置总表 · 价格与利润 · 三店输出源 · 自由编辑与高清导出</text>
+      <text x="39" y="200">IndexedDB 草稿隔离 · 恢复队列 · 三方字段冲突对照</text>
+      <text x="39" y="252">严格 TLS / 自定义 CA · 连接原子落盘 · Windows 凭据管理器加密会话</text>
+      <text x="39" y="274">Ed25519 签名更新器 · 内置 Agent CLI 与 MCP</text>
+      <text x="583" y="152">成员认证 · 运营与销售作用域</text>
+      <text x="583" y="192">依赖版本校验 · 操作回执</text>
+      <text x="583" y="234">回收站配置保留 7 天</text>
+      <text x="583" y="253">无引用的已删店铺来源保留 30 天</text>
+      <text x="583" y="273">永久保留审计记录与原图</text>
+      <text x="896" y="154">API 使用受限角色访问</text>
+      <text x="896" y="174">桌面端不直连数据库</text>
+      <text x="896" y="235">三店共用存储</text>
+      <text x="39" y="378"><tspan font-weight="700">erp-worker</tspan> · ERP SKU / 库存查询</text>
+      <text x="39" y="397"><tspan font-weight="700">cost-reader</tspan> · 内置主机成本 Excel 只读</text>
+      <text x="583" y="378">Gitea 主源 + GitHub 备用镜像 → <tspan font-family="Consolas, monospace">workbench-updates</tspan></text>
+      <text x="583" y="397">Ed25519 验签 · 升级仅替换 EXE，保留本机 data</text>
+    </g>
+    <g fill="none" stroke="#fffa00" stroke-width="1.4" marker-end="url(#arrow)">
+      <path d="M516 181h46"/><path d="M829 181h46"/><path d="M266 321v-25"/><path d="M567 346h-28v-64h-23"/>
+    </g>
+    <text x="539" y="170" text-anchor="middle" fill="#f4f4f2" font-family="Consolas, monospace" font-size="11">HTTPS</text>
+  </g>
+</svg>

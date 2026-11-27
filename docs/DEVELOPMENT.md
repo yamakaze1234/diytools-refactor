@@ -62,7 +62,7 @@ Windows release 构建前执行 `pwsh -File tools/build-cost-reader.ps1`，设�
 
 连续配置表位于 src/legacy/continuous-workbench.tsx，配件领域操作位于 public/workbench/continuous-parts.js。UI 写入仍走工作台原有保存、撤销和冲突检测，不另建业务状态。主题层位于 public/workbench/endfield-workbench.css，界面主题与图片主题分别维护。
 
-启动前端后，设置 REACT_TEST_URL 为其地址，运行 apps/desktop/tests/docs-screenshots.browser.mjs 可重建三张公开界面例图。脚本使用合成数据和替代接口，不访问用户库。连续表、输入、自由编辑和外围弹窗的浏览器检查位于 apps/desktop/tests/*.browser.mjs，依次运行并保留结果。
+启动 Vite 前端后，运行 `node apps/desktop/tests/docs-screenshots.browser.mjs` 可重建四张公开界面例图，统一使用浅色主题。脚本默认连接 `http://127.0.0.1:5230`，可通过 `REACT_TEST_URL` 指定其他本机开发端口，使用无头 Microsoft Edge 和合成 NAS 接口。连续表、输入、自由编辑和外围弹窗的其他浏览器检查位于 `apps/desktop/tests/*.browser.mjs`。
 
 ## 组织默认认证构建
 

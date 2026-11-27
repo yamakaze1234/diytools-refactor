@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="181" height="26" viewBox="0 0 181 26" role="img">
+  <title>PLATFORM | Windows x64</title>
+  <path fill="#161616" stroke="#666664" d="M.5.5h180v18l-7 7H.5z"/>
+  <path fill="#fffa00" d="M1 1h3v24H1z"/>
+  <path stroke="#6e6e6c" d="M79.4 6v14"/>
+  <g font-family="Consolas, Liberation Mono, monospace" font-size="11.5" font-weight="700">
+    <text x="12" y="17" fill="#f4f4f2">PLATFORM</text>
+    <text x="88.4" y="17" fill="#fffa00">Windows x64</text>
+  </g>
+</svg>

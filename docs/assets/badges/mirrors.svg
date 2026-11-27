@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="196" height="26" viewBox="0 0 196 26" role="img">
+  <title>MIRRORS | Gitea · GitHub</title>
+  <path fill="#161616" stroke="#666664" d="M.5.5h195v18l-7 7H.5z"/>
+  <path fill="#87f4cf" d="M1 1h3v24H1z"/>
+  <path stroke="#6e6e6c" d="M72.1 6v14"/>
+  <g font-family="Consolas, Liberation Mono, monospace" font-size="11.5" font-weight="700">
+    <text x="12" y="17" fill="#f4f4f2">MIRRORS</text>
+    <text x="81.1" y="17" fill="#87f4cf">Gitea · GitHub</text>
+  </g>
+</svg>

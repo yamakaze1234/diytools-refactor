@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img">
+  <title>DIY 配置工作台 D- 字标</title>
+  <rect width="512" height="512" fill="#141414"/>
+  <path fill="none" stroke="#5d5d5b" d="M.5 6v505.5h511V6"/>
+  <path fill="#ff00f0" d="M0 0h170v7H0z"/>
+  <path fill="#fffa00" d="M170 0h172v7H170z"/>
+  <path fill="#00ffa2" d="M342 0h170v7H342z"/>
+  <path fill="#fffa00" d="M99 103h314v255l-55 55H99z"/>
+  <path fill="#161616" fill-rule="evenodd" d="M146 182h72c49 0 77 29 77 76s-28 76-77 76h-72zm45 34v84h27c22 0 33-16 33-42s-11-42-33-42zm121 23h55v35h-55z"/>
+</svg>
