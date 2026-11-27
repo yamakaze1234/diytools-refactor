@@ -1,10 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="137" height="26" viewBox="0 0 137 26" role="img">
-  <title>VERSION | 0.2.57</title>
+  <title>VERSION | 0.2.58</title>
   <path fill="#161616" stroke="#666664" d="M.5.5h136v18l-7 7H.5z"/>
   <path fill="#fffa00" d="M1 1h3v24H1z"/>
   <path stroke="#6e6e6c" d="M72.1 6v14"/>
   <g font-family="Consolas, Liberation Mono, monospace" font-size="11.5" font-weight="700">
     <text x="12" y="17" fill="#f4f4f2">VERSION</text>
-    <text x="81.1" y="17" fill="#fffa00">0.2.57</text>
+    <text x="81.1" y="17" fill="#fffa00">0.2.58</text>
   </g>
 </svg>

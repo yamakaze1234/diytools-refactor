@@ -15,6 +15,8 @@ use std::{
 use uuid::Uuid;
 
 const MAX_JOBS: usize = 1000;
+mod inventory;
+pub(crate) mod steps;
 // 批量配置计划包含完整前后快照及导图上下文，32MiB 无法容纳真实批次的完成回执。
 // 仍保留有界容量和全部幂等回执，不以删除旧任务绕过限制。
 const MAX_BYTES: usize = 256 * 1024 * 1024;
@@ -52,9 +54,14 @@ struct Job {
     claim_token: Option<String>,
     #[serde(default)]
     completion_hash: Option<String>,
-    // 已领取的 NAS 保存可能已经在服务端生效，重新领取时先读原回执。
+    // 请求获得提交前放行后可能已经到达 NAS；重试先按原编号查证。
     #[serde(default)]
     nas_may_have_saved: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    steps: Vec<steps::Step>,
+    // 未显式传店铺的导出和刷新也固定到入队时所在的工作台店铺。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    nas_shop: Option<String>,
     // 逐张图进度只驻留内存，不为每张图重写任务日志。
     #[serde(skip)]
     progress: Option<Value>,
@@ -69,6 +76,7 @@ struct Runtime {
     journal: Journal,
     ready: Option<Instant>,
     session_id: Option<String>,
+    active_shop: Option<String>,
     retired_sessions: std::collections::HashSet<String>,
 }
 pub struct AgentJobs {
@@ -110,6 +118,7 @@ impl AgentJobs {
                 }
                 validate(&job.method, &job.params)?;
             }
+            steps::check_journal(&journal)?;
             journal
         } else {
             Journal {
@@ -138,6 +147,7 @@ impl AgentJobs {
                 journal,
                 ready: None,
                 session_id: None,
+                active_shop: None,
                 retired_sessions: std::collections::HashSet::new(),
             }),
         })
@@ -153,7 +163,24 @@ impl AgentJobs {
         Ok(())
     }
     pub fn dispatch(&self, method: &str, params: &Value) -> Result<Value> {
+        self.dispatch_at(method, params, None)
+    }
+    pub fn dispatch_at(&self, method: &str, params: &Value, shop: Option<&str>) -> Result<Value> {
+        if self.store.is_some() && (steps::stepped(method) || steps::preview(method)) {
+            return Err(error(
+                "NAS_MODE_REQUIRED",
+                "草稿与输出源写入需要三店 NAS 工作台",
+            ));
+        }
         validate(method, params)?;
+        if method == "inventory.check" {
+            if self.store.is_some() {
+                return Err(error("NAS_MODE_REQUIRED", "库存巡检需要三店 NAS 工作台"));
+            }
+            if let Some(id) = params["jobId"].as_str() {
+                return self.inventory_page(id, params);
+            }
+        }
         if self.store.is_some() && method == "export.start" && params.get("shopId").is_some() {
             return Err(error("INVALID_PARAMS", "旧版工作台导出不接收 shopId"));
         }
@@ -231,6 +258,13 @@ impl AgentJobs {
         if method == "changes.apply" && !has_saved_receipt {
             find_plan(&runtime.journal, params["planId"].as_str().unwrap(), self.store.is_none() && existing.is_some())?;
         }
+        let initial_steps = if steps::stepped(method) {
+            let recovering = existing.is_some_and(|i| steps::started(&runtime.journal.jobs[i].steps));
+            let plan = steps::frozen(&runtime.journal, method, &params, recovering)?;
+            steps::initial(method, &operation, plan)
+        } else {
+            vec![]
+        };
         if method == "export.start" {
             export_snapshot(&runtime.journal, &params)?;
         }
@@ -260,6 +294,8 @@ impl AgentJobs {
                 claim_token: None,
                 completion_hash: None,
                 nas_may_have_saved: false,
+                steps: initial_steps,
+                nas_shop: shop.map(str::to_owned),
                 progress: None,
             });
             journal.jobs.len() - 1
@@ -280,12 +316,17 @@ impl AgentJobs {
         self.commit(&mut runtime, journal)?;
         Ok(result)
     }
+    #[cfg(any(test, feature = "review-host"))]
     pub fn ready(&self) -> Result<()> {
         self.lock()?.ready = Some(Instant::now());
         Ok(())
     }
     // 首次握手代表新的页面会话；旧任务只标记中断，绝不自动重新执行。
+    #[cfg(any(test, feature = "review-host"))]
     pub fn ready_session(&self, session: &str, connect: bool) -> Result<()> {
+        self.ready_in_shop(session, connect, None)
+    }
+    pub fn ready_in_shop(&self, session: &str, connect: bool, shop: Option<&str>) -> Result<()> {
         let session = canonical_uuid(session)?;
         let mut runtime = self.lock()?;
         if runtime.session_id.as_deref() != Some(session.as_str()) {
@@ -315,12 +356,113 @@ impl AgentJobs {
                 runtime.retired_sessions.insert(old);
             }
         }
+        runtime.active_shop = shop.map(str::to_owned);
         runtime.ready = Some(Instant::now());
         Ok(())
     }
     pub fn verify_claim(&self, session: &str, id: &str, token: &str) -> Result<()> {
         let runtime = self.lock()?;
         verify_claim(&runtime, session, id, token)
+    }
+    /// 目标店和可否仅查原回执取自已冻结计划，调用方不能用新参数改变作用域。
+    pub fn nas_target(&self, method: &str, params: &Value) -> Result<(Option<String>, bool)> {
+        let runtime = self.lock()?;
+        let input_shop = || {
+            params["shopId"]
+                .as_str()
+                .or(params["request"]["shopId"].as_str())
+                .map(str::to_owned)
+        };
+        let operation = params["operationId"]
+            .as_str()
+            .and_then(|v| canonical_uuid(v).ok());
+        let existing = runtime
+            .journal
+            .jobs
+            .iter()
+            .find(|j| j.method == method && Some(&j.operation_id) == operation.as_ref());
+        if steps::stepped(method) {
+            let plan = steps::frozen(&runtime.journal, method, params, true)?;
+            let recover = existing
+                .is_some_and(|j| j.params["planId"] == params["planId"] && steps::started(&j.steps));
+            return Ok((plan["shop"].as_str().map(str::to_owned), recover));
+        }
+        if method == "changes.apply" {
+            let id = params["planId"]
+                .as_str()
+                .ok_or_else(|| error("INVALID_PARAMS", "需要 planId"))?;
+            let plan = find_plan(&runtime.journal, id, true)?;
+            let recovery =
+                existing.is_some_and(|j| j.params["planId"] == id && j.nas_may_have_saved);
+            let target = plan["shop"]
+                .as_str()
+                .ok_or_else(|| error("INVALID_PLAN", "计划缺少目标店铺"))?;
+            return Ok((Some(target.to_owned()), recovery));
+        }
+        if method == "export.start" {
+            if let Some(snapshot) = export_snapshot(&runtime.journal, params)? {
+                return Ok((snapshot["shopId"].as_str().map(str::to_owned), false));
+            }
+        }
+        if matches!(method, "export.start" | "sync.run") {
+            let target = existing
+                .and_then(|job| job.nas_shop.clone())
+                .or_else(input_shop)
+                .or_else(|| runtime.active_shop.clone());
+            return target
+                .map(|shop| (Some(shop), false))
+                .ok_or_else(|| error("UI_UNAVAILABLE", "工作台尚未提供当前店铺，请稍后重试"));
+        }
+        Ok((input_shop(), false))
+    }
+    pub fn nas_status_shop(&self, id: &str) -> Result<Option<String>> {
+        let runtime = self.lock()?;
+        let job = runtime
+            .journal
+            .jobs
+            .iter()
+            .find(|job| job.id == id)
+            .ok_or_else(|| error("JOB_NOT_FOUND", "未找到任务"))?;
+        // 兼容存量日志，找不到原目标时只展示任务元数据。
+        Ok(job.nas_shop.clone().or_else(|| {
+            job.params["shopId"]
+                .as_str()
+                .or(job.params["request"]["shopId"].as_str())
+                .or_else(|| {
+                    job.result
+                        .as_ref()?
+                        .get("snapshot")?
+                        .get("shopId")?
+                        .as_str()
+                })
+                .map(str::to_owned)
+        }))
+    }
+    pub fn claim_context(&self, session: &str, id: &str, token: &str) -> Result<(String, Value)> {
+        let runtime = self.lock()?;
+        verify_claim(&runtime, session, id, token)?;
+        let job = runtime
+            .journal
+            .jobs
+            .iter()
+            .find(|row| row.id == id)
+            .ok_or_else(|| error("JOB_NOT_FOUND", "未找到任务"))?;
+        Ok((job.method.clone(), job.params.clone()))
+    }
+    pub fn mark_nas_submission(&self, session: &str, id: &str, token: &str) -> Result<()> {
+        let mut runtime = self.lock()?;
+        verify_claim(&runtime, session, id, token)?;
+        let mut journal = runtime.journal.clone();
+        let job = journal
+            .jobs
+            .iter_mut()
+            .find(|row| row.id == id && row.method == "changes.apply")
+            .ok_or_else(|| error("INVALID_ACTION", "不是配置提交任务"))?;
+        if job.nas_may_have_saved {
+            return Ok(());
+        }
+        job.nas_may_have_saved = true;
+        self.commit(&mut runtime, journal)
     }
     pub fn progress(&self, id: &str, value: Value) -> Result<()> {
         let p = fields(
@@ -355,11 +497,33 @@ impl AgentJobs {
         job.updated_at = now();
         Ok(())
     }
+    #[cfg(any(test, feature = "review-host"))]
     pub fn claim(&self) -> Result<Option<Value>> {
         self.claim_inner(None)
     }
     pub fn claim_session(&self, session: &str) -> Result<Option<Value>> {
         self.claim_inner(Some(session))
+    }
+    /// 领取后先用正式成员权限复核，撤权任务只留下失败回执，不将正文交给界面。
+    pub fn claim_checked(
+        &self,
+        session: &str,
+        check: impl FnOnce(&Value) -> Result<()>,
+    ) -> Result<Value> {
+        let Some(job) = self.claim_session(session)? else {
+            return Ok(Value::Null);
+        };
+        if let Err(error) = check(&job) {
+            self.complete_session(
+                session,
+                job["id"].as_str().unwrap_or(""),
+                job["claimToken"].as_str().unwrap_or(""),
+                None,
+                Some(json!(error)),
+            )?;
+            return Ok(Value::Null);
+        }
+        Ok(job)
     }
     fn claim_inner(&self, session: Option<&str>) -> Result<Option<Value>> {
         let mut runtime = self.lock()?;
@@ -381,6 +545,14 @@ impl AgentJobs {
         };
         let mut journal = runtime.journal.clone();
         let mut params = journal.jobs[index].params.clone();
+        let method = &journal.jobs[index].method;
+        if steps::stepped(method) {
+            params["plan"] = steps::frozen(&journal, method, &params, true)?.clone();
+            params["stepStates"] = json!(journal.jobs[index].steps);
+        }
+        if matches!(journal.jobs[index].method.as_str(), "export.start" | "sync.run") {
+            if let Some(shop) = &journal.jobs[index].nas_shop {params["shopId"] = json!(shop);}
+        }
         if journal.jobs[index].method == "export.start" {
             if let Some(snapshot) = export_snapshot(&journal, &params)? {
                 params["snapshot"] = snapshot;
@@ -421,7 +593,6 @@ impl AgentJobs {
         let job = &mut journal.jobs[index];
         if self.store.is_none() && job.method == "changes.apply" {
             params["nasRetry"] = json!(job.nas_may_have_saved);
-            job.nas_may_have_saved = true;
         }
         job.status = "running".into();
         job.updated_at = now();
@@ -432,6 +603,7 @@ impl AgentJobs {
         self.commit(&mut runtime, journal)?;
         Ok(Some(result))
     }
+    #[cfg(any(test, feature = "review-host"))]
     pub fn complete(&self, id: &str, result: Option<Value>, failure: Option<Value>) -> Result<()> {
         self.complete_inner(id, result, failure, None)
     }
@@ -506,6 +678,26 @@ impl AgentJobs {
         let mut journal = runtime.journal.clone();
         let job = &mut journal.jobs[index];
         job.completion_hash = Some(completion_hash(&result, &failure));
+        // 界面生成了越界计划或漏记正式回执时应终结任务，否则桥接会永久重传同一份无效结果。
+        if let Some(value) = &result {
+            let checked = if steps::preview(&job.method) {
+                steps::validate_plan(job, &value["plan"])
+            } else if steps::stepped(&job.method) && !steps::confirmed(&job.steps) {
+                Err(error(
+                    "SAVE_UNCONFIRMED",
+                    "尚有未确认的 NAS 步骤，不能标记任务成功",
+                ))
+            } else {
+                Ok(())
+            };
+            if let Err(reason) = checked {
+                job.status = "failed".into();
+                job.error = Some(json!(reason));
+                job.result = None;
+                job.updated_at = now();
+                return self.commit(&mut runtime, journal);
+            }
+        }
         if let Some(value) = result {
             if !value.is_object() {
                 return Err(error("INVALID_RESULT", "result 必须为对象"));
@@ -518,12 +710,15 @@ impl AgentJobs {
                     "apply 成功必须具有 localSave=saved 或 unchanged 保存回执",
                 ));
             }
-            if job.method == "changes.preview" {
+            if job.method == "changes.preview" || steps::preview(&job.method) {
                 let plan = value
                     .get("plan")
                     .filter(|v| v.is_object())
                     .ok_or_else(|| error("INVALID_RESULT", "预览必须返回 plan 对象"))?;
                 job.plan = Some(plan.clone());
+                if steps::preview(&job.method) {
+                    job.plan.as_mut().unwrap()["request"] = job.params["request"].clone();
+                }
                 if let Some(context) = value.get("exportContext") {
                     if !context["configs"].is_array() || context["revision"].as_u64().is_none() {
                         return Err(error("INVALID_RESULT", "预览导出上下文无效"));
@@ -715,7 +910,11 @@ fn find_plan(journal: &Journal, id: &str, allow_expired: bool) -> Result<Value> 
 }
 fn public(job: &Job) -> Value {
     let result = job.result.as_ref().map(|value| {
-        if job.method == "changes.apply" {
+        if job.method == "inventory.check" {
+            inventory::summary(value)
+        } else if steps::stepped(&job.method) {
+            steps::public_result(job, value)
+        } else if job.method == "changes.apply" {
             let mut result = serde_json::Map::new();
             for key in ["localSave", "nasSave", "revision", "uiRefreshed"] {
                 if let Some(value) = value.get(key) {
@@ -746,6 +945,16 @@ fn public(job: &Job) -> Value {
             value.clone()
         }
     });
+    let mut result = result;
+    if steps::stepped(&job.method) {
+        let mut receipt = result.unwrap_or_else(|| json!({}));
+        if let Some(fields) = steps::progress(job).as_object() {
+            for (key, value) in fields {
+                receipt[key] = value.clone();
+            }
+        }
+        result = Some(receipt);
+    }
     json!({"jobId":job.id,"operationId":job.operation_id,"method":job.method,"status":job.status,"createdAt":job.created_at,"updatedAt":job.updated_at,"result":result,"error":job.error,"progress":job.progress})
 }
 fn canonical_uuid(value: &str) -> Result<String> {
@@ -782,6 +991,8 @@ fn text(value: &Value, key: &str) -> Result<()> {
 }
 fn validate(method: &str, params: &Value) -> Result<()> {
     match method {
+        "draft.preview" | "sources.preview" => return steps::validate_request(method, params),
+        "inventory.check" => return inventory::validate_params(params),
         "jobs.status" => {
             let object = fields(params, &["jobId", "operationId"], &[])?;
             if object.len() != 1 {
@@ -868,7 +1079,7 @@ fn validate(method: &str, params: &Value) -> Result<()> {
             let action = &request["action"];
             fields(
                 action,
-                &["type", "value", "sourceId", "quantity"],
+                &["type", "value", "sourceId", "quantity", "displayName"],
                 &["type"],
             )?;
             match action["type"].as_str() {
@@ -887,10 +1098,16 @@ fn validate(method: &str, params: &Value) -> Result<()> {
                 Some("replace") => {
                     fields(
                         action,
-                        &["type", "sourceId", "quantity"],
+                        &["type", "sourceId", "quantity", "displayName"],
                         &["type", "sourceId"],
                     )?;
                     text(action, "sourceId")?;
+                    // 与工作台展示名输入框、预览校验使用相同的 UTF-16 长度口径。
+                    if action.get("displayName").is_some_and(|name| {
+                        !name.as_str().is_some_and(|s| s.encode_utf16().count() <= 200)
+                    }) {
+                        return Err(error("INVALID_PARAMS", "displayName 必须为 200 字以内的字符串"));
+                    }
                     if action.get("quantity").is_some()
                         && !action["quantity"]
                             .as_u64()
@@ -911,7 +1128,7 @@ fn validate(method: &str, params: &Value) -> Result<()> {
                 _ => return Err(error("INVALID_PARAMS", "未知变更类型")),
             }
         }
-        "changes.apply" => {
+        "changes.apply" | "draft.apply" | "sources.apply" => {
             fields(
                 params,
                 &["planId", "operationId"],
@@ -1001,7 +1218,7 @@ fn persist(path: &Path, journal: &Journal) -> Result<()> {
     replace(&temporary, path).map_err(io_error)
 }
 #[cfg(windows)]
-fn replace(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(crate) fn replace(source: &Path, target: &Path) -> std::io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -1017,7 +1234,7 @@ fn replace(source: &Path, target: &Path) -> std::io::Result<()> {
     }
 }
 #[cfg(not(windows))]
-fn replace(source: &Path, target: &Path) -> std::io::Result<()> {
+pub(crate) fn replace(source: &Path, target: &Path) -> std::io::Result<()> {
     fs::rename(source, target)
 }
 

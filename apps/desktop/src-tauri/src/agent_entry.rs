@@ -55,6 +55,22 @@ fn handle(
     }
     let result = if matches!(
         request.method.as_str(),
+        "sources.find"
+            | "sources.get"
+            | "inventory.check"
+            | "activity.list"
+            | "draft.preview"
+            | "draft.apply"
+            | "sources.preview"
+            | "sources.apply"
+    ) || (request.method == "configs.find" && request.params.get("query").is_some())
+    {
+        Err(AgentError::new(
+            "NAS_MODE_REQUIRED",
+            "这项查询需要登录三店 NAS 工作台",
+        ))
+    } else if matches!(
+        request.method.as_str(),
         "changes.preview" | "changes.apply" | "export.start" | "jobs.status" | "sync.run"
     ) {
         jobs.ok_or_else(|| AgentError::new("UI_UNAVAILABLE", "当前宿主没有启用交互任务入口"))

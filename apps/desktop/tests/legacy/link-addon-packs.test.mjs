@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {addonPackInputs,addonPackRows,addonPackValidationIssue,assessAddonPack,validAddonPack} from '../../public/workbench/link-addon-packs.js';
-import {createAddonPackDrafts} from '../../public/workbench/link-addon-drafts.js';
+import {createAddonPackDrafts,describeAddonDrafts,mergeAddonPackDrafts} from '../../public/workbench/link-addon-drafts.js';
+import {createCacheCleanupBridge} from '../../public/workbench/cache-cleanup.js';
 import {removePosterExtra} from '../../public/workbench/config-extras.js';
 import {posterAddonEntries} from '../../public/workbench/poster.js';
 
@@ -12,6 +13,33 @@ const pack={id:'plan',productId:'link',name:'风扇升级',mode:'parts',priceCen
  rules:[{kind:'replace',slot:'风扇',originalGoodsId:'62999',sourceId:'new',targetGoodsId:'375667',qtyMode:'fixed',qty:1}]};
 const inputs=addonPackInputs([{sourceId:'new',goodsId:'375667',name:'连体风扇',tax:80,erp:77}],
  [{goodsId:'62999',tax:20,erp:18}]);
+
+test('草稿覆盖已保存方案，孤儿可从缓存检查中放弃，写盘或移除失败保留明细',async()=>{
+ const items=new Map();let failWrite=false,failDelete=false,located='';
+ const drafts=createAddonPackDrafts({length:0,setItem:(key,value)=>{if(failWrite)throw Error('full');items.set(key,value);},
+  removeItem:key=>{if(failDelete)throw Error('busy');items.delete(key);}},'isolated');
+ drafts.set(pack.id,{pack:{...pack,name:'最新草稿'},base:pack});
+ failWrite=true;
+ drafts.set('orphan',{pack:{...pack,id:'orphan',productId:'archived',mode:'text',name:'  '},base:null});
+ const saved=[pack,{...pack,id:'saved2'}],configs=[{...config,product:'链接'}];
+ assert.deepEqual(mergeAddonPackDrafts(saved,drafts).map(({id,name,unsaved})=>[id,name,!!unsaved]),
+  [['plan','最新草稿',true],['saved2','风扇升级',false],['orphan','  ',true]]);
+ const bridge=createCacheCleanupBridge({flush:async()=>{},inspect:async()=>({
+  drafts:[],addonDrafts:describeAddonDrafts(drafts,configs),blocker:drafts.size?'有草稿':null,
+ }),locateAddonDraft:id=>{if(describeAddonDrafts(drafts,configs).find(row=>row.id===id)?.canLocate)located=id;},
+ discardAddonDrafts:ids=>ids.forEach(id=>drafts.delete(id))});
+ assert.deepEqual((await bridge.status()).addonDrafts,[
+  {id:pack.id,productId:pack.productId,productName:'链接',name:'最新草稿',mode:'parts',canLocate:true,failed:false},
+  {id:'orphan',productId:'archived',productName:'链接已无在用配置',name:'未命名草稿',mode:'text',canLocate:false,failed:true},
+ ]);
+ await bridge.locateAddonDraft(pack.id);await bridge.locateAddonDraft('orphan');assert.equal(located,pack.id);
+ await assert.rejects(bridge.prepare('check'),/有草稿/);
+ failDelete=true;
+ assert.equal((await bridge.discardAddonDrafts(['orphan'])).addonDrafts.length,2);
+ failDelete=false;
+ assert.deepEqual(await bridge.discardAddonDrafts([pack.id,'orphan']),{drafts:[],addonDrafts:[],blocker:null,count:0});
+ assert.equal(items.size,0);
+});
 
 test('加购草稿和编辑基线随重开保留，按 NAS、账号与店铺隔离',()=>{
  const items=new Map(),storage={get length(){return items.size;},key:index=>[...items.keys()][index],

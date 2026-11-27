@@ -96,5 +96,7 @@ export function mountDeletedSources(host,api){
   if(action)void run(action,button.closest('[data-deleted-row]')?.dataset.deletedRow).catch(error=>{status(error.message);api.notify(error.message);});
  };
  return {show(nextCategory){if(category!==nextCategory)selected.clear();category=nextCategory;if(active){render();return;}active=true;void reload();},
+  // 工作表收到外部保存回执时，保留筛选并更新正在查看的已删除列表。
+  async refresh(){if(active)await reload();return !failed;},
   hide(){if(!active)return;active=false;generation++;loading=false;rows=[];selected.clear();query='';sub='all';$('[data-deleted-search]').value='';}};
 }

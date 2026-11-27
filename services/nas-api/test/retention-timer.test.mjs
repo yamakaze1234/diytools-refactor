@@ -39,3 +39,17 @@ test('各店轮巡不重叠，单店失败不影响下一店；停止时等待�
  const stopped=close().then(()=>{finished=true;});await setImmediate();assert.equal(finished,false);
  releaseShutdown();await stopped;assert.equal(finished,true);
 });
+
+test('操作记录巡检独立于回收站；缺迁移跳过，其他失败仍接续下一店',async t=>{
+ t.mock.timers.enable({apis:['setTimeout','setInterval']});
+ const calls=[],logs=[];
+ const stop=startRetention([
+  ['intel',{purgeExpiredRetention:async()=>{calls.push('intel recycle');throw Error('fixture');},
+   purgeExpiredActivity:async workspace=>{calls.push(workspace+' intel activity');return null;}}],
+  ['jonsbo',{purgeExpiredRetention:async()=>calls.push('jonsbo recycle'),
+   purgeExpiredActivity:async workspace=>{calls.push(workspace+' jonsbo activity');throw Error('fixture');}}],
+ ],{workspaceId:'shop-ws',initialDelayMs:0,intervalMs:100},text=>logs.push(text));
+ t.mock.timers.tick(0);await setImmediate();await stop();
+ assert.deepEqual(calls,['intel recycle','shop-ws intel activity','jonsbo recycle','shop-ws jonsbo activity']);
+ assert.deepEqual(logs,['回收站定时清理失败（intel），下次巡检将重试','操作记录定时清理失败（jonsbo），下次巡检将重试']);
+});

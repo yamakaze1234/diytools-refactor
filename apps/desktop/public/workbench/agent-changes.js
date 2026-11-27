@@ -1,5 +1,5 @@
 /** Agent 与界面共享的定点变更计划：纯预览、完整基线核验，不保存或导图。 */
-import {markSourceFieldManual} from './source-follow.js';
+import {markSourceFieldManual,setReplacementDisplayName} from './source-follow.js';
 import {ensureActualParts,syncActualParts} from './actual-parts.js';
 import {replaceSourcePart,preferredSourceRows} from './source.js';
 import {selectableComponents} from './component-policy.js';
@@ -42,12 +42,15 @@ function requestInput(request){
   for(const key of ['expectedGoodsId','expectedSourceId'])if(Object.hasOwn(target,key))text(target[key],key,{empty:true});
  }
  const action=request.action;
- object(action,['type','value','sourceId','quantity'],'操作');
- const allowed={displayName:['type','value'],upgrade:['type','value'],replace:['type','sourceId','quantity'],quantity:['type','quantity']}[action.type];
+ object(action,['type','value','sourceId','quantity','displayName'],'操作');
+ const allowed={displayName:['type','value'],upgrade:['type','value'],replace:['type','sourceId','quantity','displayName'],quantity:['type','quantity']}[action.type];
  if(!allowed||Object.keys(action).some(key=>!allowed.includes(key)))fail('操作类型或字段无效');
  if(action.type==='displayName')text(action.value,'展示名称',{empty:true,max:200});
  if(action.type==='upgrade')text(action.value,'升级描述',{empty:true,max:10000});
- if(action.type==='replace')text(action.sourceId,'sourceId');
+ if(action.type==='replace'){
+  text(action.sourceId,'sourceId');
+  if(Object.hasOwn(action,'displayName'))text(action.displayName,'展示名称',{empty:true,max:200});
+ }
  if(action.type==='quantity'||Object.hasOwn(action,'quantity'))qty(action.quantity);
 }
 function replacement(state,request){
@@ -103,6 +106,10 @@ export function buildAgentPlan(state,request){
    }else part.qty=action.quantity;
   }
   if(action.type==='replace'||action.type==='quantity')syncActualParts(after,before.parts);
+  // 先按真实来源同步实际 BOM，再写展示名，防止手工跟随状态进入实际配件。
+  if(action.type==='replace'&&action.displayName){
+   for(const target of targets)setReplacementDisplayName(after.parts[target.partIndex],action.displayName);
+  }
   if(after.shortNameAuto){
    const name=suggestedName(after,after.nameFormat||'compact');
    if(after.shortName!==name){after.shortName=name;syncPosterShortName(after);}

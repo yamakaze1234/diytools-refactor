@@ -140,6 +140,11 @@ impl CloudRuntime {
         let url = self.nas.as_ref().filter(|_| self.nas_main)?;
         Some((nas_endpoint_id(url, self.nas_deployment.as_deref()), self.transport.nas_actor()?))
     }
+    #[cfg(feature = "agent-tools")]
+    pub(crate) fn nas_agent_name(&self, actor: &(String,String)) -> Option<String> {
+        let member=self.transport.current_member().ok()??;
+        (member["uid"]==actor.1&&member["workspaceId"]==actor.0).then(||member["name"].as_str().map(str::to_owned)).flatten()
+    }
 
     #[cfg(feature = "agent-tools")]
     pub(crate) fn nas_agent_read(
@@ -260,6 +265,7 @@ fn nas_route(base: &reqwest::Url, method: &str, route: &str) -> Option<(reqwest:
         ("GET", ["operations", "workspace-index" | "workspace-catalog"]) |
         ("POST", ["operations", "workspace", "configurations" | "import-preview" | "costs" | "settings" | "quotations" | "source-usage"]) |
         ("GET", ["operations", "workspace", "activity"]) |
+        ("POST", ["operations", "workspace", "activity", "purge"]) |
         ("GET", ["operations", "workspace", "costs", "sync-preview"]) |
         ("POST", ["operations", "workspace", "profit", "start" | "status" | "history" | "reset"]) |
         ("POST", ["operations", "workspace", "price-history", "list" | "detail" | "day" | "handle"]) |
@@ -295,6 +301,8 @@ fn nas_native_routes_only_allow_configured_https_business_methods() {
     assert_eq!(route.1.origin(), base.origin());
     assert!(nas_route(&base, "GET", "/api/v1/operations/workspace/costs/sync-preview?shop_id=intel").is_some());
     assert!(nas_route(&base, "POST", "/api/v1/operations/workspace/costs/sync-preview").is_none());
+    assert!(nas_route(&base, "POST", "/api/v1/operations/workspace/activity/purge?shop_id=jonsbo").is_some());
+    assert!(nas_route(&base, "GET", "/api/v1/operations/workspace/activity/purge").is_none());
     assert!(nas_route(&base, "PUT", "/api/v1/sales/configurations/id").is_none());
     assert!(nas_route(&base, "PUT", "/api/v1/operations/configurations/%2e%2e/me").is_none());
     assert!(nas_route(&base, "POST", "https://outside.example/api/v1/operations/configurations").is_none());

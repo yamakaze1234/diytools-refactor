@@ -27,8 +27,9 @@ export function inventoryShell({esc,shop,product,fromPrice},threshold){
       <input class="wb-input" id="stock-new-query" type="search" placeholder="搜索输出源名、ERP 名或 GoodID" aria-label="搜索替代件"></div><div id="stock-picker"></div></section>
      <section id="stock-name-editor" hidden><label for="stock-display-name"><strong>3. 展示名称（可选）</strong></label><div class="stock-name-controls"><input class="wb-input" id="stock-display-name"><button class="wb-btn" id="stock-default-name">恢复默认名</button></div>
       <small>仅修改海报/配置表展示名，实际 BOM 与成本仍按所选新配件核算。</small></section></div><div id="stock-diff"></div></div>
-   <footer id="stock-task-actions"><strong>保存后可选导出所选链接全部配置：</strong><div class="stock-export">
+   <footer id="stock-task-actions"><strong>保存后可选导出图片：</strong><div class="stock-export">
     <label><input type="checkbox" data-stock-layout="long">配置图</label><label><input type="checkbox" data-stock-layout="square">SKU 图</label>
+    <select class="wb-input" id="stock-export-scope" aria-label="导出范围"><option value="changed">仅本次变动配置</option><option value="all">所选链接全部配置</option></select>
     <select class="wb-input" id="stock-sku-mode" aria-label="SKU 图样式"><option value="padded">详情图补白至 1:1</option><option value="dedicated">缩略图（专用 SKU 排版）</option></select></div>
     <div class="stock-save"><button class="wb-btn" id="stock-preview" disabled>预览全部任务</button><button class="wb-btn wb-btn-primary wb-cut" id="stock-apply" disabled>应用全部并保存</button></div>
     <button class="wb-btn" id="stock-retry" hidden>重试</button><p id="stock-message" role="status" aria-live="polite"></p></footer></aside></div>`;

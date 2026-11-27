@@ -47,6 +47,20 @@ test('只打开、展示和暂存干净配置不会制造成本差异或提交�
  assert.equal(f.writes.length,0);
 });
 
+test('未打开配置的差异徽标按服务端版本识别旧草稿，待确认回执和草稿链接重开后仍能读取',async()=>{
+ const f=fixture(),workspace=f.build(),view=await f.load(workspace);
+ view.product='本机链接名';workspace.stage(view);
+ assert.deepEqual(workspace.sourceDraftStates().get('c'),{pending:false,staleRemote:false});
+ // 请求失去回执后重开工作台，此时没有已加载的配置详情可供比对。
+ f.client.save=async()=>{throw Error('模拟连接中断');};
+ await assert.rejects(workspace.submit(view));
+ const readIndex=f.client.workspaceIndex;
+ f.client.workspaceIndex=async()=>{const head=await readIndex();return {...head,summaries:head.summaries.map(row=>({...row,nasVersion:'2'}))};};
+ const reopened=f.build();await reopened.request('/api/workspace/index');
+ assert.deepEqual(reopened.sourceDraftStates().get('c'),{pending:true,staleRemote:true});
+ assert.equal(reopened.drafts()[0].product,'本机链接名');
+});
+
 for(const opened of [false,true]){
  test('旧草稿重开后'+(opened?'打开再保存':'直接保存')+'校准两个配件清单的 ERP，保留原含税价',async()=>{
   const f=fixture(),first=f.build(),original=await f.load(first);

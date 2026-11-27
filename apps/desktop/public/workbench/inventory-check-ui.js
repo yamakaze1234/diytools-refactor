@@ -78,7 +78,6 @@ export function openInventoryCheck(api){
   single=b.dataset.scopeBtn==='link';resetReport();scan();
  };
  $('#stock-back').onclick=()=>api.back();
- $('#stock-task-actions').onchange=invalidate;
  $('#stock-preview').onclick=()=>{try{
   plan=stockReplacementTasksPlan(getConfigs(),getCosts(),getCatalog(),report,tasks.drafts);
   $('#stock-diff').innerHTML=`<pre>${esc(replacementDiff(plan))}</pre>`;
@@ -88,7 +87,8 @@ export function openInventoryCheck(api){
  async function exportImages(saved){
   if(!saved.layouts.length)return;
   const configs=inventoryLinks(getConfigs(),shop.id).filter(g=>saved.productIds.includes(g.id)).flatMap(g=>g.configs);
-  const entries=sourceImageEntries(configs,null,saved.skuMode).filter(e=>saved.layouts.includes(e.config.layout)),files=[],failures=[];
+  // 先按整条链接编号，再筛选已保存的变动配置；重试沿用同一组参数。
+  const entries=sourceImageEntries(configs,saved.exportScope==='changed'?saved.changedIds:null,saved.skuMode,saved.layouts),files=[],failures=[];
   for(const [i,entry] of entries.entries()){message(`修改已保存，正在生成 ${i+1}/${entries.length}：${entry.config.name}`);try{const result=await renderPoster(entry.config,1400);if(result.overflow)throw Error('内容超出画布，请调整版式');const blob=await new Promise(resolve=>result.canvas.toBlob(resolve,'image/png'));if(!blob)throw Error('图片生成失败');files.push({name:entry.name,bytes:new Uint8Array(await blob.arrayBuffer())});}catch(e){failures.push({name:entry.name,error:e.message});}}
   if(!entries.length)throw Error('当前没有可导出的配置图');
   if(!files.length)throw Error('没有成功生成图片：'+failures.map(f=>f.error).join('；'));
@@ -105,7 +105,8 @@ export function openInventoryCheck(api){
  async function apply(){
   if(busy||!plan)return;
   const approved=plan;
-  const saved={count:plan.changes.length,productIds:plan.productIds,layouts:layouts(),skuMode:$('#stock-sku-mode').value};
+  const saved={count:plan.changes.length,productIds:plan.productIds,changedIds:plan.changes.map(c=>c.id),
+   exportScope:$('#stock-export-scope').value,layouts:layouts(),skuMode:$('#stock-sku-mode').value};
   lock(true);clearRetry();
   try{
    validateStockReplacement(approved,getConfigs(),getCosts(),getCatalog());

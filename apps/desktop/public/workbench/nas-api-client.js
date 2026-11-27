@@ -23,7 +23,7 @@ export const originalVersionRejected=error=>error?.status===409&&error.code==='V
 export const migrationNotInstalled=error=>error?.status===503&&['NAS_GLOBAL_TAX_NOT_INSTALLED','NAS_GLOBAL_UPGRADE_NOT_INSTALLED','NAS_ERP_ADOPTION_NOT_INSTALLED','NAS_COST_SYNC_NOT_INSTALLED','NAS_RETENTION_NOT_INSTALLED','NAS_SOURCE_CREATION_NOT_INSTALLED'].includes(error.code);
 
 /** 每次请求读取当前登录令牌；禁止自动重试，避免未来写请求出现重复提交。 */
-export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,timeoutMs=15000,nativeRequest,shopId='intel'}){
+export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,timeoutMs=15000,nativeRequest,shopId='intel',onSaved}){
  if(!nasShopIds.includes(shopId))throw new NasApiError('INVALID_SHOP');
  const native=typeof nativeRequest==='function';
  let base;
@@ -34,7 +34,7 @@ export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,
   base.pathname=base.pathname.replace(/\/+$/,'')+'/';
  }
  if(!Number.isInteger(timeoutMs)||timeoutMs<1)throw new NasApiError('INVALID_CLIENT_OPTIONS');
- let identityHeader=null;
+ let identityHeader=null,pendingCommits=0;
  const segment=value=>{
   if(typeof value!=='string'||!value||value.length>256||/[\x00-\x1f]/.test(value)||value==='.'||value==='..')throw new NasApiError('INVALID_IDENTIFIER');
   return encodeURIComponent(value);
@@ -53,6 +53,9 @@ export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,
   const options={method,headers,redirect:'error',cache:'no-store'};
   if(data!==undefined){headers['content-type']='application/json';options.body=JSON.stringify(data);}
   const write=method!=='GET';
+  // 有操作编号的写请求才可能产生审计；查询型 POST 不占用保存状态。
+  const commit=write&&typeof (data?.operation_id??data?.operationId)==='string';
+  if(commit)pendingCommits++;
   const controller=new AbortController();
   const timer=setTimeout(()=>controller.abort(),timeoutMs);
   try{
@@ -64,11 +67,18 @@ export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,
     if(write&&!migrationNotInstalled({code,status:response.status})&&(response.status>=500||(response.ok&&body?.ok!==true)))throw new NasApiError('SAVE_STATUS_UNKNOWN',response.status);
     throw new NasApiError(code,response.status,body?.details||null);
    }
+   // 顶栏仅排除当前客户端取得的正式回执，不能把同账号在另一台机器上的操作一并忽略。
+   const receipt=body.data;
+   const confirmedReceipt=method==='GET'&&/^operations\/(?:save-receipts|workspace\/receipts|catalog\/receipts)\//.test(path);
+   if(onSaved&&receipt?.shop_id===shopId&&typeof receipt.operation_id==='string'&&
+     (write&&receipt.operation_id===(data?.operation_id??data?.operationId)||confirmedReceipt&&path.endsWith('/'+receipt.operation_id))){
+    try{onSaved(receipt);}catch{/* 显示层失败不能改变一份已确认回执。 */}
+   }
    return body;
   }catch(error){
    if(error instanceof NasApiError)throw error;
    throw new NasApiError(write?'SAVE_STATUS_UNKNOWN':controller.signal.aborted?'REQUEST_TIMEOUT':'NETWORK_OR_RESPONSE_ERROR');
-  }finally{clearTimeout(timer);}
+  }finally{clearTimeout(timer);if(commit)pendingCommits--;}
  };
  const scope=(role,shop)=>{
   if(!['operations','sales'].includes(role))throw new NasApiError('INVALID_ROLE');
@@ -76,6 +86,7 @@ export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,
   return {path:role+'/configurations',parameters:{shop_id:shop}};
  };
  return {
+  isCommitting:()=>pendingCommits>0,
   bindIdentity(workspace,uid){
    if(!native)return;
    segment(workspace);segment(uid);
@@ -92,8 +103,12 @@ export function createNasApiClient({baseUrl,getToken,fetchImpl=globalThis.fetch,
   async workspaceReceipt(op){return (await request('operations/workspace/receipts/'+segment(op),{shop_id:shopId})).data;},
   async quotation(id){return (await request('operations/workspace/quotations/'+segment(id),{shop_id:shopId})).data;},
   async activity(){return (await request('operations/workspace/activity',{shop_id:shopId})).data;},
-  async activityPage({page,pageSize,from,to}){
-   return (await request('operations/workspace/activity',{shop_id:shopId,page,page_size:pageSize,from:from||undefined,to:to||undefined})).data;
+  async activityPage({page,pageSize,from,to,actor,kind}){
+   return (await request('operations/workspace/activity',{shop_id:shopId,page,page_size:pageSize,
+    from:from||undefined,to:to||undefined,actor:actor||undefined,kind:kind||undefined})).data;
+  },
+  async purgeActivity(body){
+   return (await request('operations/workspace/activity/purge',{shop_id:shopId},'POST',body)).data;
   },
   async profit(action,body){
    if(!['start','status','history','reset'].includes(action))throw new NasApiError('INVALID_ACTION');

@@ -110,10 +110,10 @@ export async function submitNasDraftSet(rows,{submit,isPending,onProgress=()=>{}
  return results;
 }
 
-export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,onDraftStorageError=null,createClient=createNasApiClient,planStorage=nasPlanStorage(),requestedShop=null}){
+export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,onDraftStorageError=null,onSaved,createClient=createNasApiClient,planStorage=nasPlanStorage(),requestedShop=null}){
  let member=null,endpoint=null,catalogScope=null,identity=null,lookup=null,index=null,meta=null,closed=false,begin=null,catalogController=null;
  let queue=null,shopId=null,availableShops=[],capability=null;
- let client=createClient({nativeRequest});
+ let client=createClient({nativeRequest,onSaved});
  let costById=new Map();
  // 保存只校准业务上已有修改的草稿正文。价格与依赖版本配对，旧回执重放不走此路径。
  async function alignDraftCosts(document,versions,readCost){
@@ -158,7 +158,7 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
    // 已撤销的店铺不发送业务请求；切回第一个仍获授权的店铺。
    shopId=availableShops.includes(requestedShop)?requestedShop:availableShops[0];
    capability=nasOperationsCapability(me,shopId);
-   if(shopId!=='intel')client=createClient({nativeRequest,shopId});
+   if(shopId!=='intel')client=createClient({nativeRequest,shopId,onSaved});
    // 保留原英特尔的持久草稿键；新店采用各自键，重叠 ID 不会串店。
    catalogScope=settings.endpoint_id;
    endpoint=settings.endpoint_id+':main'+(shopId==='intel'?'':':'+shopId);
@@ -280,14 +280,14 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
   if(!versionNumber(summary))return details;
   return BigInt(details)>=BigInt(summary)?details:summary;
  }
- async function serverDataTime(){
+ async function serverDataTime({includeActivity=false}={}){
   const activity=await call(()=>client.activity());
   guard('INVALID_API_RESPONSE',Array.isArray(activity));
   // 审计首条覆盖同工作区所有运营的已入库写入；仅在成功确认没有操作时才采用导入时间。
   const firstImport=activity.length===0;
   const updatedAt=nasTimeStamp(firstImport?index?.updatedAt:activity[0]?.created_at);
   guard('INVALID_API_RESPONSE',firstImport||updatedAt!==null);
-  return {updatedAt,firstImport:Boolean(updatedAt&&firstImport)};
+  return {updatedAt,firstImport:Boolean(updatedAt&&firstImport),...(includeActivity?{activity}:{})};
  }
  function conflict(id){
   const row=editors.get(id),rec=controllers.get(id)?.read();
@@ -334,6 +334,15 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
   return dup(rec.document);
  }
  const drafts=()=>lookup?.drafts()||[];
+ function sourceDraftStates(){
+  // 未打开的配置没有编辑器状态，也要用刚刷新的服务端索引比对草稿版本。
+  const versions=new Map(index?.summaries.map(row=>[row.id,row.nasVersion]));
+  return new Map(drafts().map(row=>{
+   const observed=versions.get(row.id);
+   const staleRemote=conflict(row.id)||(versionNumber(row.version)&&versionNumber(observed)&&BigInt(observed)>BigInt(row.version));
+   return [row.id,{pending:row.pending,staleRemote}];
+  }));
+ }
  function discardLocalDrafts(ids){
   ready();
   if(ids.some(id=>controllers.get(id)?.isWorking()))throw new NasApiError('SAVE_IN_PROGRESS');
@@ -487,7 +496,7 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
    return accepted;
   });
  }
- return {initialize,request,refreshDependencies,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,discardLocalDrafts,release,close,documentFor,acceptRenumber,
+ return {initialize,request,refreshDependencies,attach,applyPresentation,stage,pending,pendingState,conflict,submit,submitDraft,compare,useServer,drafts,sourceDraftStates,discardLocalDrafts,release,close,documentFor,acceptRenumber,
   settleDrafts:()=>draftStorage?.settle()??Promise.resolve(),
   flushDrafts:()=>draftStorage?.flush()??Promise.resolve(),hasPendingDraftWrites:()=>!!draftStorage?.hasPendingWrites(),
   // 角标读取已确认 base，不能把飞行期间的新草稿当作保存回执。
@@ -495,13 +504,15 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
   acceptSourceVersions:(ids,versions)=>{ready();return each(ids,id=>after(controllers.get(id)?.acceptSourceVersions(versions),ok=>{if(!ok)throw new NasApiError('UNSAVED_DRAFT');}));},
   acceptObservedDependencies,
   agentAccess,agentIndexes,agentActor:()=>closed||!member?null:[member.workspace_id,member.uid],
-  shop:()=>shopId,shops:()=>[...availableShops],serverVersion,serverDataTime,serverDisplayScope:()=>JSON.stringify([endpoint,identity]),
+  shop:()=>shopId,shops:()=>[...availableShops],serverVersion,serverDataTime,isCommitting:()=>client.isCommitting?.()===true,serverDisplayScope:()=>JSON.stringify([endpoint,identity]),
   editorAddons,configurationVersion:id=>controllers.get(id)?.read()?.version,
   configurationChanges,archived,canMergePriceDraft,discardArchivedDrafts,checkImportImages:images=>call(()=>client.importPreview(images)),
-  async readErp(kind,goodsIds=[],connection){
+  async readErp(kind,goodsIds=[],connection,targetShop=shopId){
    return call(async()=>{
+    // Agent 可针对另一家已授权店铺建源，原生桥按实际目标店与当前账号再验权。
+    if(targetShop!==shopId)await agentAccess(targetShop);
     const r=await nativeRequest('/erp-read',{method:'POST',headers:{'Content-Type':'application/json','x-workbench-nas-owner':encodeURIComponent(identity)},
-     body:JSON.stringify({kind,goodsIds,shopId,...(connection?{connection}:{})})});
+     body:JSON.stringify({kind,goodsIds,shopId:targetShop,...(connection?{connection}:{})})});
     const data=await r.json();if(!r.ok||!data.ok)throw Error(data.error||'ERP 只读查询失败');
     return data;
    });
@@ -511,6 +522,7 @@ export function createNasMainWorkspace({nativeRequest,storage,draftStorage=null,
   supportsAddonPacks:()=>meta?.addonPacksSupported===true,
   priceDraft,
   quotation:id=>call(()=>client.quotation(id)),activity:()=>call(()=>client.activity()),activityPage:query=>call(()=>client.activityPage(query)),
+  memberUid:()=>member?.uid,purgeActivity:body=>call(()=>client.purgeActivity(body)),
   profit:(action,input)=>call(()=>client.profit(action,input)),
   sourceUsage:(sources,goods)=>call(()=>client.sourceUsage(sources,goods)),
   priceHistory:(action,input)=>call(()=>client.priceHistory(action,input)),
@@ -562,6 +574,7 @@ export const nasErrorText=(error,configs=[])=>{
  SHARED_SOURCE_EDITOR_REQUIRED:'请使用新版输出源维护窗口。',
  CATALOG_IN_USE:'资料仍被配置或模板引用，无法删除。',
  NAS_RETENTION_NOT_INSTALLED:'NAS 尚未安装回收站清理迁移（032），请在安装后重试。',
+ NAS_ACTIVITY_NOT_INSTALLED:'NAS 尚未安装操作记录迁移（034），当前仅支持日期筛选和分页。',
  INVALID_CATALOG_STATE:'输出源停用状态已变化，请刷新列表后重试。',
  CATALOG_PENDING_RESOLVED:'原提交已确认，请查看最新资料后再提交这次更改。',
  INVALID_IMAGE:'图片无法解码，或超过支持的尺寸。',

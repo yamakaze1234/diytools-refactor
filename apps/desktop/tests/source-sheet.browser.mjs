@@ -113,7 +113,8 @@ async function checkAddonTags(sheet,dark,scopeCount){
   assert.equal(await part.locator('.ss-addon-erp').textContent(),'测试 CPU');
   assert.equal(await part.locator('.ss-addon-meta').textContent(),'¥12 · 现货 20 · #100001');
   assert.equal(await part.locator('.ss-addon-copy').textContent(),'【+99元升级测试配件】');
-  assert.equal(await part.evaluate(el=>getComputedStyle(el).backgroundColor),dark?'rgb(32, 42, 54)':'rgb(244, 248, 253)');
+  // 深色值与工作表现行的中性灰主题一致，浅色继续使用浅蓝配件底色。
+  assert.equal(await part.evaluate(el=>getComputedStyle(el).backgroundColor),dark?'rgb(34, 34, 34)':'rgb(244, 248, 253)');
   assert.deepEqual(await alert.locator('.ss-addon-tag').allTextContents(),['缺货','不展示']);
   assert.equal(await alert.locator('.ss-addon-erp').textContent(),'验收内存');
   assert.equal(await alert.getAttribute('title'),'ERP ID 9900013 · 停产 验收内存（长规格）');
@@ -685,7 +686,7 @@ try{
  await checkAddonTags(sheet,true,1);
  assert.equal(await sheet.evaluate(el=>getComputedStyle(el).colorScheme),'dark');
  assert.equal(await sheet.evaluate(el=>getComputedStyle(el).getPropertyValue('--ss-focus').trim()),'#fffa00');
- assert.equal(await sheet.locator('th[scope="col"]').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(42, 44, 50)');
+ assert.equal(await sheet.locator('th[scope="col"]').first().evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(38, 38, 38)');
  const darkCard=card(cpu,'intel');
  assert.match(await darkCard.evaluate(el=>getComputedStyle(el).backgroundImage),/linear-gradient/);
  assert.equal(await darkCard.evaluate(el=>getComputedStyle(el).borderLeftWidth),'3px');
@@ -695,11 +696,11 @@ try{
  const storeCell=cpu.locator('.ss-store-cell.is-override');
  await checkAddonTags(sheet,true,3);
  assert.equal(await storeCell.evaluate(el=>getComputedStyle(el).borderLeftWidth),'3px');
- assert.equal(await storeCell.locator('.ss-override-tag').evaluate(el=>getComputedStyle(el).color),'rgb(20, 21, 23)');
+ assert.equal(await storeCell.locator('.ss-override-tag').evaluate(el=>getComputedStyle(el).color),'rgb(22, 22, 22)');
  await button(sheet,'common').click();
  await page.setViewportSize({width:1540,height:940});
- assert.equal(await sheet.locator('#source-sheet-erp').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(44, 45, 50)');
- assert.equal(await sheet.locator('#source-sheet-title').evaluate(el=>getComputedStyle(el).color),'rgb(236, 238, 241)');
+ assert.equal(await sheet.locator('#source-sheet-erp').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(42, 42, 42)');
+ assert.equal(await sheet.locator('#source-sheet-title').evaluate(el=>getComputedStyle(el).color),'rgb(237, 237, 237)');
  assert.equal(await button(sheet,'common').evaluate(el=>getComputedStyle(el).color),'rgb(255, 250, 0)');
  if(process.env.SOURCE_SHEET_CAPTURE)await page.screenshot({path:join(process.env.SOURCE_SHEET_CAPTURE,'source-sheet-dark.png')});
  await theme.click();

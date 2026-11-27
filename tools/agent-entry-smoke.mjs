@@ -57,6 +57,17 @@ try{
   assert.equal(status.data.readOnly,true);
   assert.equal(status.data.unsavedChanges,'unknown');
   report.checks.push('status_saved_snapshot');
+  // 离线宿主保留旧配置查询，新增 NAS 视图和模糊筛选均明确拒绝。
+  for(const args of [
+    ['configs','find','--shop-id','intel','--query','测试'],
+    ['sources','find','--shop-id','intel'],
+    ['sources','get','--shop-id','intel','--source-id','isolated'],
+    ['activity','list','--shop-id','intel'],
+    ['inventory','check','--shop-id','intel'],
+    ['sources','apply','--plan-id','isolated','--operation-id','a1234567-1234-4234-8234-123456789abc'],
+    ['draft','apply','--plan-id','isolated','--operation-id','b1234567-1234-4234-8234-123456789abc'],
+  ]) assert.equal(run(args,1).error.code,'NAS_MODE_REQUIRED');
+  report.checks.push('offline_nas_only_methods_rejected');
   const shops=run(['shops','list']);
   assert(shops.data.shops.some(shop=>shop.id==='intel'));
   report.checks.push('shops_discovery');

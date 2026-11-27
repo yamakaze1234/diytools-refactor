@@ -13,6 +13,20 @@ const identifier=raw=>{
  requireValue(value.length>0&&value.length<=256&&value!=='.'&&value!=='..'&&!/[\x00-\x1f\x7f]/.test(value));
  return value;
 };
+const activityKinds=new Set(['configurations','sources','shared-sources','costs','addons','gallery','templates','settings','quotations','assets']);
+function activityFilters({from=null,to=null,actor=null,kind=null}){
+ const validDate=value=>{
+  if(value===null)return true;
+  if(typeof value!=='string'||!/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value))return false;
+  const stamp=Date.parse(value+'T00:00:00Z');
+  return Number.isFinite(stamp)&&new Date(stamp).toISOString().startsWith(value+'T');
+ };
+ // UID 与认证层使用相同的文本边界，也接受系统清理标识。
+ requireValue(validDate(from)&&validDate(to)&&(!from||!to||from<=to)&&
+  (actor===null||(typeof actor==='string'&&actor.trim()===actor&&actor.length>0&&actor.length<=256&&!/[\x00-\x1f\x7f]/.test(actor)))&&
+  (kind===null||activityKinds.has(kind)));
+ return {from,to,actor,kind};
+}
 async function jsonBody(req,limit=1024*1024){
  requireValue(/^application\/json(?:\s*;|$)/i.test(req.headers['content-type']||''),'INVALID_CONTENT_TYPE',415);
  const parts=[];let size=0,tooLarge=false;
@@ -113,7 +127,7 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
    const catalogRoute=live&&!sales&&/^\/api\/v1\/operations\/catalog\/(sources|addons|gallery|templates|assets|receipts|shared-sources)(?:\/([^/]+)(?:\/(archive|restore|copy|apply|purge))?)?$/.exec(url.pathname);
    const isUpload=catalogRoute?.[1]==='assets'&&!catalogRoute[2]&&method==='POST';
    const activityPage=live&&!sales&&url.pathname==='/api/v1/operations/workspace/activity';
-   const allowed=activityPage?['shop_id','page','page_size','from','to']:catalogRoute?['shop_id',...(isUpload?['operation_id']:[])]:live&&!sales?['shop_id','limit','offset','search','archived']:['shop_id','limit','offset','search'];
+   const allowed=activityPage?['shop_id','page','page_size','from','to','actor','kind']:catalogRoute?['shop_id',...(isUpload?['operation_id']:[])]:live&&!sales?['shop_id','limit','offset','search','archived']:['shop_id','limit','offset','search'];
    for(const key of url.searchParams.keys())requireValue(allowed.includes(key)&&url.searchParams.getAll(key).length===1);
    const workspaceRoute=live&&!sales&&/^\/api\/v1\/operations\/workspace\/(configurations|receipts|import-preview|costs|settings|quotations|activity|profit|source-usage|price-history)(?:\/([^/]+))?$/.exec(url.pathname);
    if(workspaceRoute){
@@ -132,14 +146,24 @@ export function createHandler({authenticate,store:defaultStore,shopStores=null,s
      return send(200,{ok:true,data:await store.workspaceReceipt(member,shop,id)});
     }
     if(kind==='activity'){
+     if(id==='purge'){
+      requireValue(method==='POST','METHOD_NOT_ALLOWED',405);
+      requireValue(store.workspaceWritable,'WRITES_DISABLED',405);
+      const body=await jsonBody(req,8192);
+      requireValue(body&&typeof body==='object'&&!Array.isArray(body)&&
+       Object.keys(body).every(key=>['from','to','actor','kind','dry_run'].includes(key))&&
+       (!Object.hasOwn(body,'dry_run')||typeof body.dry_run==='boolean'));
+      const data=await store.purgeWorkspaceActivity(member,shop,{...activityFilters(body),dryRun:body.dry_run??false});
+      return send(200,{ok:true,data});
+     }
      requireValue(method==='GET'&&!id,'METHOD_NOT_ALLOWED',405);
      if([...url.searchParams.keys()].some(key=>key!=='shop_id')){
       // 旧的无参数读保留数组合同，只有原操作记录界面走真实分页。
       const page=url.searchParams.get('page')??'0',size=url.searchParams.get('page_size')??'30';
-      const from=url.searchParams.get('from')||null,to=url.searchParams.get('to')||null;
-      const validDate=value=>{if(value===null)return true;const stamp=Date.parse(value+'T00:00:00Z');return /^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(stamp)&&new Date(stamp).toISOString().startsWith(value+'T');};
-      requireValue(/^\d{1,7}$/.test(page)&&/^\d{1,3}$/.test(size)&&Number(size)>=1&&Number(size)<=100&&validDate(from)&&validDate(to)&&(!from||!to||from<=to));
-      return send(200,{ok:true,data:await store.workspaceActivityPage(member,{from,to,page:Number(page),size:Number(size)})});
+      const filters=activityFilters({from:url.searchParams.get('from')||null,to:url.searchParams.get('to')||null,
+       actor:url.searchParams.get('actor'),kind:url.searchParams.get('kind')});
+      requireValue(/^\d{1,7}$/.test(page)&&/^\d{1,3}$/.test(size)&&Number(size)>=1&&Number(size)<=100);
+      return send(200,{ok:true,data:await store.workspaceActivityPage(member,{...filters,page:Number(page),size:Number(size)})});
      }
      return send(200,{ok:true,data:await store.workspaceActivity(member,200)});
     }

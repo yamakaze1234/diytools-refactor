@@ -3,6 +3,7 @@ type Invoke = <T = unknown>(command: string, args?: Record<string, unknown>) => 
 type AgentWindow = Window & {
   workbenchReady?: boolean;
   workbenchAgentActor?: () => [string, string] | null;
+  workbenchAgentShop?: () => string;
   workbenchAgentExecute?: (job: any) => Promise<unknown>;
   workbenchAgentNative?: (action: string, payload: unknown) => Promise<any>;
 };
@@ -12,7 +13,15 @@ export function installAgentBridge(target: AgentWindow, invoke: Invoke) {
  let activeClaim: string|null=null;
  let pending: Record<string,unknown>|null=null;
  let retryAfter=0;
- const call=<T=unknown>(action:string,payload:unknown={})=>invoke<T>('agent_ui',{action,payload:{...(activeClaim?{claimToken:activeClaim}:{}),...(payload as Record<string,unknown>),sessionId,actor:target.workbenchAgentActor?.()??null}});
+ const call=async<T=unknown>(action:string,payload:unknown={})=>{
+  try{return await invoke<T>('agent_ui',{action,payload:{...(activeClaim?{claimToken:activeClaim}:{}),...(payload as Record<string,unknown>),sessionId,actor:target.workbenchAgentActor?.()??null,...(target.workbenchAgentShop?{activeShopId:target.workbenchAgentShop()}:{})}});}
+  catch(error){
+   // Tauri 将宿主错误转为字符串，保留错误码用于任务终态回执。
+   const match=/^([A-Z_]+): (.+)$/.exec(String(error));
+   if(match)throw Object.assign(Error(match[2]),{code:match[1]});
+   throw error;
+  }
+ };
  target.workbenchAgentNative=call;
  const pulse=async()=>{
   if(stopped||busy||Date.now()<retryAfter||!target.workbenchReady||!target.workbenchAgentExecute)return;

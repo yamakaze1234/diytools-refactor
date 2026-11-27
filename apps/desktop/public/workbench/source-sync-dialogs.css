@@ -9,11 +9,11 @@
  background:var(--sd-panel);color:var(--sd-ink);font:13px/1.45 'Segoe UI','Microsoft YaHei UI','PingFang SC',sans-serif;
 }
 html.dark .sd-modal {
- color-scheme:dark;--sd-canvas:#1d1e21;--sd-panel:#242529;--sd-control:#2c2d32;--sd-soft:#2e3036;--sd-line:#44464c;--sd-rule:#34363b;
- --sd-ink:#eceef1;--sd-muted:#a9afb8;--sd-focus:#fffa00;--sd-selected:#34311e;--sd-selected-ink:#fffa00;
- --sd-blue-bg:#1c2f3d;--sd-blue-line:#3d6d8f;--sd-blue-ink:#8fd0ff;
+ color-scheme:dark;--sd-canvas:#161616;--sd-panel:#1f1f1f;--sd-control:#2a2a2a;--sd-soft:#2e2e2e;--sd-line:#353535;--sd-rule:#2b2b2b;
+ --sd-ink:#ededed;--sd-muted:#a3a3a3;--sd-focus:#fffa00;--sd-selected:#333018;--sd-selected-ink:#fffa00;
+ --sd-blue-bg:#262626;--sd-blue-line:#3f3f3f;--sd-blue-ink:#ededed;
  --sd-amber-bg:#372d18;--sd-amber-line:#8c6c24;--sd-amber-ink:#f6cc63;
- --sd-grey-bg:#2e3035;--sd-grey-line:#565a63;--sd-grey-ink:#b6bcc6;
+ --sd-grey-bg:#2e2e2e;--sd-grey-line:#3f3f3f;--sd-grey-ink:#a3a3a3;
  --sd-ok-bg:#1e3528;--sd-ok-line:#3d7554;--sd-ok-ink:#9be0b2;--sd-out-bg:#3b2023;--sd-out-ink:#ff9496;
 }
 body :is(#dialog.source-dialog, #dialog, dialog.source-changes-dialog):has(.sd-review),
@@ -23,6 +23,8 @@ body dialog.sd-saved-dialog {
  border:1px solid #d8d8d4!important;border-radius:2px!important;box-shadow:0 20px 50px #0004!important;
  padding:0!important;overflow:hidden!important;
 }
+html.dark body :is(#dialog.source-dialog, #dialog, dialog.source-changes-dialog):has(.sd-review),
+html.dark body dialog.sd-saved-dialog {border-color:#353535!important;}
 /* 两种差异窗口共用内容高度，只给中间列表分配可滚动的剩余空间。 */
 body :is(#dialog.source-dialog, #dialog, dialog.source-changes-dialog):has(.sd-review) {
  height:auto!important;min-height:min(440px,calc(100dvh - 32px))!important;max-height:min(670px,calc(100dvh - 32px))!important;

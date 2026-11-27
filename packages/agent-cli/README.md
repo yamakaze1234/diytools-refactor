@@ -1,6 +1,6 @@
 # DIY Tools Agent CLI
 
-本机 MCP 客户端可使用 `mcp --connection <绝对连接文件路径>`，默认只读，独立启用保存、导出和同步。详见 [MCP 本机接入](../../docs/MCP.md)。普通 CLI 命令和退出码保持兼容。
+本机 MCP 客户端可使用 `mcp --connection <绝对连接文件路径>`，默认只读。加 `--follow-workbench` 可跟随三店 NAS 当前账号的界面权限。保存、导出和同步也可通过旧版独立开关启用。详见 [MCP 本机接入](../../docs/MCP.md)。
 
 通过 `agent-core` 连接指定的本机桌面实例。三店 NAS 工作台可查询 NAS 已保存配置、预览修改、正式保存、导出和刷新。启动后读取程序旁 `agent-connection.json` 的 `cli` 与 `instance`。
 
@@ -69,11 +69,51 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 
 当前 Windows 用户可以连接自己运行的实例。NAS 模式按成员的运营权限列出店铺，读取 NAS 已保存配置。`configs get` 遇到多店重名 ID 时要求 `--shop-id`，`nasVersion` 是单套正式配置版本，`revision` 是查询或导出快照标识。`doctor` 通过 `status` 回读相应实例的能力。
 
-`request --method` 仅开放 `status`、`shops.list`、`configs.find`、`configs.get`、`jobs.status` 只读方法；写入只能使用下方专用命令。实例是否支持某项操作以 `status.capabilities` 为准。
+`request --method` 开放 `status`、`shops.list`、`configs.find`、`configs.get`、`sources.find`、`sources.get`、`inventory.check`、`activity.list`、`jobs.status`。写入使用下方专用命令。实例和店铺的实际能力见 `status.capabilities`、`status.shopCapabilities`。
+
+三店 NAS 查询示例
+
+```powershell
+& $agent --json --instance desktop-12345 configs find --shop-id intel --query '白色'
+& $agent --json --instance desktop-12345 sources find --shop-id intel --category 内存 --min-price 100 --max-price 500 --limit 20
+& $agent --json --instance desktop-12345 sources get --shop-id intel --source-id '来源ID'
+& $agent --json --instance desktop-12345 inventory check --shop-id intel --product-id '链接ID' --threshold 5 --wait-ms 2500
+& $agent --json --instance desktop-12345 inventory check --job-id '巡检任务ID' --limit 20 --offset 20
+& $agent --json --instance desktop-12345 activity list --shop-id intel --from 2026-11-01 --to 2026-11-15 --kind configurations --page 0 --page-size 30
+```
+
+配置和来源列表翻页须带原 `revision`。来源详情也可按 `--goods-id` 查，遇多个候选会返回 `AMBIGUOUS_SOURCE` 和各来源 ID。库存状态筛选、明细及操作日志受库存与操作记录读取权限控制。操作记录筛选在旧版服务上不可用时返回 `UNSUPPORTED_FILTER`。离线 SQLite 宿主保留既有查询，新增 NAS 查询返回 `NAS_MODE_REQUIRED`。
 
 ## 预览、保存、导出与同步
 
-操作 ID 使用标准 UUID。除预览可省略并自动生成外，其他发起任务的命令都必须显式提供 `--operation-id`。同一次操作的重试应保留原 operationId 和原参数，避免重复保存或导出；不同操作使用新 UUID。`requestId` 仅标识一次传输，与业务 operationId 不同。
+### 草稿链接
+
+`draft preview --input 'D:\任务\draft.json'` 以当前店铺的有效来源构造 1–16 套草稿，并检查板型和依赖。正文示例
+
+```json
+{"shopId":"intel","mode":"new_draft_link","productName":"直播用白色整机","configs":[{"name":"配置一","price":6999,"parts":[{"sourceId":"本店来源ID","slot":"显卡","qty":1}]}]}
+```
+
+需要单独指定实际 BOM 时在该配置内传 `actualParts`，结构同 `parts`。确认预览摘要和板型提示后执行 `draft apply --plan-id '返回的planId' --operation-id '保存UUID' --wait-ms 2500`。新链接和配置 ID 由工作台生成，成功回执会给出正式保存版本。按 `configIds` 继续 `configs get`。
+
+### 输出源
+
+`sources preview --input 'D:\任务\source.json'` 支持下列业务正文，`sources apply --plan-id '返回的planId' --operation-id '保存UUID'` 保存对应计划。预览和保存与原有异步任务使用同一组 `--wait-ms` 和 `jobs status` 接口。
+
+```json
+{"shopId":"intel","scope":"shop","action":"edit","sourceId":"本店来源ID","fields":{"name":"新展示型号","tax":1299},"followConfigs":true}
+```
+
+| 操作 | 请求 |
+| --- | --- |
+| 单店编辑、归档或恢复 | `scope: "shop"`，`action: "edit" / "archive" / "restore"`，明确 `sourceId`。编辑可用 `fields` 更改显示名、核算价（元）、结构化加购、硬件或容量覆盖；恢复成本表核算价用 `resumeTax: true`。 |
+| ERP 建源 | `action: "adopt_erp"`，以字符串传 `goodsId`。选择 `shop` 或 `shared`，按所选范围核验 ERP 候选。 |
+| 三店共用维护 | `scope: "shared"`。使用 `edit` 维护共用字段；`restoreFields` 列出当前店要恢复为共用的字段。用 `create_special` 新建无货号、成本为零的特殊配件。 |
+| 关联配置跟随 | `followConfigs: true`，预览核对受影响店铺、链接、配置及保留的人工文案。来源工作表和目标配置中的未保存修改会在提交前提示处理。 |
+
+硬件与容量使用 `fields` 内的扁平键，例如 `"hardwareOverrides.boardType":"MATX"`、`"capacityOverrides.memoryGb":32`。多步保存复用预览时冻结的正文；传输结果未知时先用原保存 UUID 查状态，部分成功时根据正式回执处理剩余步骤并沿用原保存 UUID。
+
+操作 ID 使用标准 UUID。CLI 启动预览、库存检查时可省略 `--operation-id` 并自动生成，其他发起任务的命令须显式提供。同一次操作的重试应保留原 operationId 和原参数，避免重复保存或导出；不同操作使用新 UUID。`requestId` 标识一次传输。
 
 ```powershell
 & $agent --json --instance desktop-12345 changes preview --input 'D:\queries\change.json' --operation-id 'a1234567-1234-4234-8234-123456789abc'
@@ -84,7 +124,7 @@ $agent = 'D:\diytools\packages\agent-cli\target\release\diytools-agent.exe'
 & $agent --json --instance desktop-12345 sync run --operation-id 'd1234567-1234-4234-8234-123456789abc'
 ```
 
-`jobs status` 的 `--job-id` 和 `--operation-id` 必须且只能选一个。发起长任务后，CLI 只等待排队回执，不等待整个导出或同步完成；返回 jobId/status 并不代表业务成功，需继续查询任务，核对最终 status、result 与 error。传输超时后先用原 operationId 查任务状态，不要生成新 ID 盲目重试。
+`jobs status` 的 `--job-id` 和 `--operation-id` 须选一个。发起任务时默认返回排队回执。可加 `--wait-ms` 指定受理后等候时间（整数 0–10000 毫秒），每 150 毫秒轮询原任务，到期返回最近状态与同一任务标识。库存检查在时间允许时直接返回当前结果页，后续页用 `inventory check --job-id`。核对最终 status、result 与 error。传输超时后先用原 operationId 查任务状态。
 
 `change.json` 只描述请求正文，CLI 将其包装为 `changes.preview` 的 `request` 字段：
 

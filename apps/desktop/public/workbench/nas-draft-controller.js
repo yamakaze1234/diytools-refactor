@@ -109,14 +109,17 @@ export function createNasDraftController({client,storage,draftStorage=null,endpo
   }catch(error){throw error instanceof NasApiError?error:new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
  }
  const prefix=()=>'diy-nas-draft:'+owner+':';
+ // 两种存储返回相同的草稿摘要，链接名称采用草稿内的实际文案。
+ function draftSummary(value){
+  if(value?.format!==1||value.id!==value.document?.id||value.document?.shopId!==shopId)return null;
+  return {id:value.id,name:value.document.name,product:value.document.product,version:value.version,pending:!!value.pending};
+ }
  function listEntries(entries,memo){
   const result=[];
   for(const [key,text] of entries){
    let entry=memo?.get(key);
    if(entry?.text!==text){
-    const value=JSON.parse(text);
-    const summary=value?.format===1&&value.id===value.document?.id&&value.document?.shopId===shopId?
-     {id:value.id,name:value.document.name,version:value.version,pending:!!value.pending}:null;
+    const summary=draftSummary(JSON.parse(text));
     entry={text,summary};memo?.set(key,entry);
    }
    if(entry.summary)result.push({...entry.summary});
@@ -137,8 +140,8 @@ export function createNasDraftController({client,storage,draftStorage=null,endpo
    for(let i=0;i<storage.length;i++){
     const name=storage.key(i);
     if(!name?.startsWith(prefix()))continue;
-    const value=JSON.parse(storage.getItem(name));
-    if(value?.format===1&&value.id===value.document?.id&&value.document?.shopId===shopId)result.push({id:value.id,name:value.document.name,version:value.version,pending:!!value.pending});
+    const summary=draftSummary(JSON.parse(storage.getItem(name)));
+    if(summary)result.push(summary);
    }
   }catch{throw new NasApiError('DRAFT_STORAGE_UNAVAILABLE');}
   return result;

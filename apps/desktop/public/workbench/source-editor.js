@@ -68,7 +68,7 @@ export function openSourceEditor(liveApi){
   const modal=document.createElement('dialog');modal.className='source-changes-dialog';modal.setAttribute('aria-label',view==='automatic'?'本次变动':'待确认差异');
   const close=document.createElement('button');close.type='button';close.className='source-changes-close';close.textContent='×';close.setAttribute('aria-label','关闭');
   const host=document.createElement('section');modal.append(close,host);document.body.append(modal);
-  const sync=mountSourceSync(host,{getRows:api.getReviewRows??api.getRows,getConfigs:api.getConfigs,shopId:api.shopId,isEdited:()=>pending.size>0||!!draft&&isEdited(),
+  const sync=mountSourceSync(host,{getRows:api.getReviewRows??api.getRows,getConfigs:api.getConfigs,getDraftStates:api.getDraftStates,shopId:api.shopId,isEdited:()=>pending.size>0||!!draft&&isEdited(),
    flush:api.flush,saveSkuMode:api.saveSkuMode,apply:api.applySync,validateImage:api.validateImage,download:api.download,message,view,deferRefresh:true,
    prepareExport:api.prepareExport,onChanged:()=>api.refreshAlerts?.({complete:true})});
   close.onclick=()=>{if(!sync.isBusy())modal.close();};

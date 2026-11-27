@@ -5,7 +5,7 @@
  color:var(--rb-text);background:var(--rb-panel);font:13px/1.45 "Segoe UI","Microsoft YaHei UI",sans-serif;
 }
 html:is(.dark,[data-workbench-theme=dark]) :is(.rb-config,.rb-confirm) {
- --rb-panel:#242529;--rb-control:#2c2d32;--rb-soft:#2e3036;--rb-line:#44464c;--rb-text:#eceef1;--rb-muted:#a9afb8;
+ --rb-panel:#1f1f1f;--rb-control:#262626;--rb-soft:#2e2e2e;--rb-line:#353535;--rb-text:#ededed;--rb-muted:#a3a3a3;
  --rb-red-bg:#3b2023;--rb-red-line:#8c3d42;--rb-red:#ff9496;--rb-warn-bg:#372d18;--rb-warn-line:#8c6c24;--rb-warn:#f6cc63;
 }
 body #dialog:has(.rb-config){width:min(920px,calc(100vw - 32px))!important;height:auto!important;max-height:calc(100dvh - 32px)!important;padding:0!important;border-radius:3px}

@@ -119,6 +119,176 @@ fn help_remains_readable_and_successful() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
 }
 
+#[cfg(windows)]
+#[test]
+fn nas_queries_preserve_filters_and_wait_returns_latest_receipt() {
+    use diytools_agent_core::{transport, Response};
+    use serde_json::json;
+    use std::{sync::Arc, time::Duration};
+    let instance = format!("cli-nas-{}", std::process::id());
+    let operation = "a1234567-1234-4234-8234-123456789abc";
+    let _server = transport::serve(
+        &instance,
+        Arc::new(move |request| {
+            let data = match request.method.as_str() {
+                "jobs.status" => {
+                    // 模拟单次状态查询慢于剩余窗口，工作台已受理的任务需继续保留。
+                    std::thread::sleep(Duration::from_millis(800));
+                    json!({"jobId":"slow","operationId":operation,"status":"succeeded"})
+                }
+                "inventory.check" if request.params.get("jobId").is_none() => {
+                    json!({"jobId":"slow","operationId":operation,"status":"queued"})
+                }
+                _ => json!({"method":request.method,"params":request.params}),
+            };
+            Response::success(&request, data)
+        }),
+    )
+    .unwrap();
+    let invoke = |args: &[&str]| {
+        let mut all = vec!["--json", "--instance", &instance];
+        all.extend_from_slice(args);
+        let output = run(&all);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
+        envelope["data"].clone()
+    };
+    for (args, expected) in [
+        (
+            vec![
+                "configs",
+                "find",
+                "--shop-id",
+                "intel",
+                "--query",
+                "整机",
+                "--sku",
+                "0001",
+            ],
+            json!({"shopId":"intel","query":"整机","sku":"0001","limit":20,"offset":0}),
+        ),
+        (
+            vec![
+                "sources",
+                "find",
+                "--shop",
+                "intel",
+                "--min-price",
+                "1.5",
+                "--category",
+                "其他配件",
+                "--offset",
+                "3",
+                "--revision",
+                "4",
+            ],
+            json!({"shopId":"intel","minPrice":1.5,"category":"其他配件","offset":3,"limit":20,"includeDeleted":false,"revision":4}),
+        ),
+        (
+            vec![
+                "sources",
+                "get",
+                "--shop",
+                "intel",
+                "--goods-id",
+                "0001",
+                "--include-deleted",
+            ],
+            json!({"shopId":"intel","goodsId":"0001","includeDeleted":true}),
+        ),
+        (
+            vec![
+                "activity",
+                "list",
+                "--shop",
+                "intel",
+                "--from",
+                "2026-01-01",
+                "--kind",
+                "settings",
+                "--actor",
+                "成员",
+            ],
+            json!({"shopId":"intel","from":"2026-01-01","kind":"settings","actor":"成员","page":0,"pageSize":30}),
+        ),
+        (
+            vec![
+                "inventory",
+                "check",
+                "--job-id",
+                "snapshot",
+                "--offset",
+                "20",
+                "--limit",
+                "2",
+            ],
+            json!({"jobId":"snapshot","offset":20,"limit":2}),
+        ),
+    ] {
+        assert_eq!(invoke(&args)["params"], expected);
+    }
+    let data = invoke(&[
+        "inventory",
+        "check",
+        "--shop",
+        "intel",
+        "--operation-id",
+        operation,
+        "--wait-ms",
+        "250",
+    ]);
+    assert_eq!(
+        data,
+        json!({"jobId":"slow","operationId":operation,"status":"queued"})
+    );
+}
+
+#[test]
+fn invalid_query_and_short_wait_arguments_fail_before_connecting() {
+    for args in [
+        vec!["sources", "get", "--shop", "intel"],
+        vec![
+            "sources",
+            "get",
+            "--shop",
+            "intel",
+            "--source-id",
+            "x",
+            "--goods-id",
+            "y",
+        ],
+        vec!["sources", "find", "--shop", "intel", "--offset", "3"],
+        vec![
+            "sources",
+            "find",
+            "--shop",
+            "intel",
+            "--min-price",
+            "5",
+            "--max-price",
+            "4",
+        ],
+        vec!["inventory", "check", "--job-id", "x", "--threshold", "3"],
+        vec![
+            "inventory",
+            "check",
+            "--shop",
+            "intel",
+            "--wait-ms",
+            "10001",
+        ],
+        vec!["status", "--wait-ms", "1000"],
+    ] {
+        let mut all = vec!["--json", "--instance", "desktop-123"];
+        all.extend(args);
+        assert_eq!(error_code(&run(&all)), "INVALID_ARGUMENT");
+    }
+}
+
 #[test]
 fn jobs_require_exactly_one_identifier_and_write_commands_require_valid_uuid() {
     let id = "a1234567-1234-4234-8234-123456789abc";
@@ -147,6 +317,10 @@ fn jobs_require_exactly_one_identifier_and_write_commands_require_valid_uuid() {
         vec!["sync", "run"],
         vec!["sync", "run", "--operation-id", "bad"],
         vec!["request", "--method", "changes.apply"],
+        vec!["request", "--method", "draft.preview"],
+        vec!["request", "--method", "draft.apply"],
+        vec!["request", "--method", "sources.preview"],
+        vec!["request", "--method", "sources.apply"],
         vec!["request", "--method", "export.start"],
         vec!["request", "--method", "sync.run"],
     ] {
@@ -177,6 +351,28 @@ fn real_pipe_accepts_jobs_without_waiting_and_preserves_operation_identity() {
             "changes.apply",
         ),
         (vec!["sync", "run", "--operation-id", operation], "sync.run"),
+        (
+            vec![
+                "draft",
+                "apply",
+                "--plan-id",
+                "draft-plan",
+                "--operation-id",
+                operation,
+            ],
+            "draft.apply",
+        ),
+        (
+            vec![
+                "sources",
+                "apply",
+                "--plan-id",
+                "source-plan",
+                "--operation-id",
+                operation,
+            ],
+            "sources.apply",
+        ),
         (
             vec!["jobs", "status", "--operation-id", operation],
             "jobs.status",
@@ -216,7 +412,7 @@ fn file_requests_wrap_preview_and_merge_export_without_raw_write_escape() {
     let path = fixture_path();
     std::fs::write(
         &path,
-        r#"{"shopId":"intel","targets":[],"action":{"type":"quantity","quantity":2}}"#,
+        r#"{"shopId":"intel","targets":[{"configId":"sample","partIndex":0}],"action":{"type":"replace","sourceId":"src","quantity":2,"displayName":"直播专属型号"}}"#,
     )
     .unwrap();
     let output = run(&[
@@ -232,6 +428,10 @@ fn file_requests_wrap_preview_and_merge_export_without_raw_write_escape() {
     let envelope: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(envelope["data"]["method"], "changes.preview");
     assert_eq!(envelope["data"]["received"]["request"]["shopId"], "intel");
+    assert_eq!(
+        envelope["data"]["received"]["request"]["action"]["displayName"],
+        "直播专属型号"
+    );
     assert!(uuid::Uuid::parse_str(
         envelope["data"]["received"]["operationId"]
             .as_str()

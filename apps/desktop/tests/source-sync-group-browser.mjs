@@ -49,6 +49,7 @@ try{
  const read=async()=>{const response=await fetch('/api/source-sync-fixture');state=await response.json();};await read();
  function openDialog(title,markup){renderer.release(body);body.innerHTML=markup;document.querySelector('#dialog-title').textContent=title;if(!dialog.open)dialog.showModal();}
  const api={openDialog,shopId:()=> 'intel',getRows:()=>state.rows,getAllRows:()=>state.rows,getCosts:()=>[],getConfigs:()=>state.configs,
+  getDraftStates:()=>new Map(Object.entries(state.drafts||{})),
   flush:read,download:()=>{throw Error('本用例未请求导出');},lookupProduct:async()=>{throw Error('禁止真实 ERP');},setDeleted:async()=>{throw Error('未请求删除');},applyBatch:async()=>{throw Error('未请求改源');},
   updateLinkCosts:async()=>{throw Error('未请求改成本');},validateImage:async()=>{},
   render:(container,model)=>renderer.dialog(container,'source-editor',model),renderDetail:(container,model)=>renderer.dialog(container,'source-editor-detail',model),release:container=>renderer.release(container),
@@ -79,7 +80,11 @@ try{
  };
  const applied=async n=>{await page.waitForFunction(n=>window.fixture.snapshot().applied.length===n,n);await review().locator('#source-apply').waitFor();};
 
- await open(first);await includeTax();
+ await open({...first,drafts:{a:{staleRemote:true},b:{pending:true,staleRemote:true}}});await includeTax();
+ // 同一配置的名称、核算价及加购可各有差异，但一份本机草稿只计一次。
+ assert.match(await review().locator('[data-diff-summary]').innerText(),/其中 2 条来自本机未保存草稿/);
+ assert.deepEqual(new Set(await review().locator('[data-source-draft]').allTextContents()),new Set(['本机待确认回执','本机旧草稿 · 服务器已更新']));
+ await link('p1');assert.match(await review().locator('[data-diff-summary]').innerText(),/其中 1 条来自本机未保存草稿/);await link('');
  assert.equal(await review().locator('[data-source-select]:checked').count(),0,'默认不勾选字段');
  assert.equal(await review().locator('#source-apply').isDisabled(),true,'未选择字段不能保存');
  assert.equal(await review().locator('[data-review-link]').inputValue(),'');
@@ -107,7 +112,8 @@ try{
  result=await snapshot();for(let i=0;i<2;i++){assert.deepEqual(result.configs[i].actualParts,first.configs[i].actualParts);assert.deepEqual(result.configs[i].addons,first.configs[i].addons);}
  checks.push('默认零选择','链接筛选保留隐藏选择','所选字段保存和恢复follow','保持可见手动文案并忽略本次源版本','核算价不能忽略','并发配置/来源改动拒绝且无部分保存','实际BOM和人工加购保留');
 
- await open(categories);await includeTax();await link('p1');
+ await open({...categories,drafts:{a:{pending:false,staleRemote:false}}});await includeTax();await link('p1');
+ assert.deepEqual(new Set(await review().locator('[data-source-draft]').allTextContents()),new Set(['本机未保存草稿']));
  assert.deepEqual(await review().locator('[data-review-slot] option').allTextContents(),['全部配件','CPU','散热','内存','扩展配件']);
  await category('CPU');assert.equal(await review().locator('[data-source-select]').count(),4);assert.match(await review().locator('[data-source-description-group]').first().textContent(),/2 套配置/);
  for(const group of await review().locator('[data-source-select-group]').all())await group.check();await category('内存');assert.equal(await review().locator('[data-source-select]:checked').count(),0);

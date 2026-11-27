@@ -8,6 +8,7 @@ import {shopSettingsHtml,bindShopSettings} from './shop-settings-ui.js';
 import {mountPriceProfit,pricingRuleFields,readPricingRuleFields} from './price-profit-ui.js';
 import {installNasWorkspace} from './nas-workspace-ui.js';
 import {createNasMainWorkspace,nasMainMode,nasErrorText,nasTimeStamp,projectNasEdits,sameNasDocument,submitNasDraftSet,visibleNasAddons} from './nas-main-workspace.js';
+import {createNasUpdateHint,watchNasUpdates} from './nas-update-hint.js';
 import {applyNasRenumber} from './nas-renumber-receipt.js';
 import {nasConfigConflictHtml} from './nas-conflict-view.js';
 import {buildNasOperationPlan,acknowledgeNasPriceDraft} from './nas-operation-plan.js';
@@ -17,7 +18,7 @@ import {withCurrentSharedSource} from './shared-source-fields.js';
 import {visibleNasCosts} from './nas-cost-overlay.js';
 import {posterExtraRows,posterAddonCopyRows,editPosterExtra,addPosterExtra,removePosterAddonCopy,removePosterExtra,setPosterExtraVisible} from './config-extras.js';
 import {addonPackInputs,addonPackRows} from './link-addon-packs.js';
-import {createAddonPackDrafts} from './link-addon-drafts.js';
+import {createAddonPackDrafts,describeAddonDrafts,mergeAddonPackDrafts} from './link-addon-drafts.js';
 import {mountAddonBenefits,mountAddonPackEditor,openAddonPackMaintenance} from './link-addon-pack-ui.js';
 import {createNasErpUiAdapter,lookupNasSourceProduct} from './nas-erp-ui-adapter.js';
 import {createNasAutosave} from './nas-autosave.js';
@@ -28,7 +29,10 @@ import {erpCategoryFields,validateSnapshot as validateErpSnapshot} from './erp-s
 import {createNasDraftStorage} from './nas-draft-storage.js';
 const nasMain=nasMainMode(location.search);
 const configDraftStorage=globalThis.indexedDB?createNasDraftStorage({legacyStorage:localStorage}):null;
+const nasUpdateHint=nasMain?createNasUpdateHint():null;
+let stopNasUpdateWatch=null,nasPollDue=false;
 const nasWorkspace=nasMain?createNasMainWorkspace({nativeRequest:(path,options)=>fetch('/api/native-nas'+path,options),storage:localStorage,
+ onSaved:receipt=>{nasUpdateHint.saved(receipt);scheduleNasDataTime();},
  draftStorage:configDraftStorage,onDraftStorageError:reportDraftWrite,requestedShop:new URLSearchParams(location.search).get('nas_shop')}):null;
 async function flushConfigDrafts(){
  try{if(nasWorkspace)await nasWorkspace.flushDrafts();else await configDraftStorage?.flush();}
@@ -49,6 +53,7 @@ let continuousWorkbench=null;
 import {saveConflictHtml} from './save-conflict-view.js';
 import {createAgentWorkflow} from './agent-workflow.js';
 import {createNasAgentWorkflow} from './nas-agent-workflow.js';
+import {lockAgentEditor} from './agent-editor-lock.js';
 import {openWpsExport} from './wps-export.js';
 // 批量图片任务在弹窗之外保留进度与失败项。
 import {startImageExportTask} from './image-export-tasks.js';
@@ -200,12 +205,18 @@ const cacheCleanup=createCacheCleanupBridge({
  inspect:async()=>{
   let blocker=exportJobs?'请等待图片导出完成。':hostTemplateHasDrafts()?'请先保存主机模板或恢复到已保存版本。':window.workbenchSourceEditor?.hasPending()?'请先处理输出源窗口中的未提交修改。':null;
   if(nasMain){
-   const drafts=nasWorkspace.drafts(),ids=new Set(drafts.map(row=>row.id));
-   for(const id of nasStageFailures.keys())if(!ids.has(id))drafts.push({id,name:state.configs.find(c=>c.id===id)?.name});
+   const byId=new Map(nasWorkspace.drafts().map(row=>[row.id,row]));
+   // 写盘失败和旧版价格草稿可能与配置草稿重叠，每套配置只列一次。
+   for(const id of [...nasStageFailures.keys(),...nasWorkspace.priceDraft().map(row=>row.id)])if(!byId.has(id))byId.set(id,{id});
+   const summaries=new Map(lazyWorkspace.index().summaries.map(row=>[row.id,row]));
+   const drafts=[...byId.values()].map(row=>{
+    const summary=summaries.get(row.id);
+    return {...row,product:row.product||summary?.product,name:row.name||summary?.name,pending:!!row.pending};
+   });
    if(nasBusy||drafts.some(row=>row.pending)||nasWorkspace.catalog().pending().length||await nasWorkspace.queue().read())blocker='请先处理正在保存或待确认的提交回执，再清理缓存。';
-   if(currentAddonDrafts().size||addonPackDrafts?.hasFailure())blocker='存在未保存的加购包草稿，请先保存加购包或恢复已保存版本，再清理缓存。';
-   for(const row of nasWorkspace.priceDraft())if(!ids.has(row.id))drafts.push({id:row.id,name:state.configs.find(c=>c.id===row.id)?.name});
-   return {drafts,blocker};
+   const addonDrafts=describeAddonDrafts(currentAddonDrafts(),ordinaryAvailable());
+   if(addonDrafts.length&&!blocker)blocker='请先保存或放弃加购包草稿，再清理缓存。';
+   return {drafts,blocker,addonDrafts};
   }
   if(savePromise||batchPromise||batchPending||ordinaryPending||conflict)blocker='请先处理正在保存或待确认的提交，再清理缓存。';
   return {drafts:dirty?[{id:'local',name:'本地配置修改'}]:[],blocker};
@@ -217,10 +228,19 @@ const cacheCleanup=createCacheCleanupBridge({
   // 已明确确认放弃，只回到本窗口的已确认基线，不清除其它账号、店铺的草稿。
   state=cloneEditorState(acceptedState);dirty=false;history=[];redoHistory=[];
  },
+ locateAddonDraft:async id=>{
+  const row=currentAddonDrafts().get(id);
+  if(row){
+   try{await locateAddonPack(row.pack);}catch(error){toast(nasErrorText(error));}
+  }
+ },
+ discardAddonDrafts,
  clearDerived:()=>{clearImageCache();globalThis.workbenchPriceProfitView?.clearCaches?.();imageRecords.clear();previewResult=null;},
  reload:()=>{window.workbenchReady=false;location.reload();},
 });
 window.workbenchCacheStatus=()=>cacheCleanup.status();
+window.workbenchLocateAddonDraft=id=>cacheCleanup.locateAddonDraft(id);
+window.workbenchDiscardAddonDrafts=ids=>cacheCleanup.discardAddonDrafts(ids);
 window.workbenchPrepareCacheCleanup=choice=>cacheCleanup.prepare(choice);
 window.workbenchReloadAfterCache=()=>cacheCleanup.reload();
 const listConfigs=()=>{
@@ -1576,7 +1596,19 @@ function renderEditor(){
  }
 }
 // 复用业务对话框容器，替换内容后由调用方绑定本次操作。
-function openDialog(title,html){window.workbenchSourceEditor?.detachForDialog?.();$('#dialog').classList.remove('price-changes-dialog','template-editor-dialog','global-batch-dialog','profit-check-dialog','template-dialog','link-parts-dialog','source-dialog','source-quick-dialog','cost-dialog','overview-dialog','inventory-dialog','case-gallery-dialog');$('#dialog-title').textContent=title;$('#dialog-body').querySelectorAll('.product-search').forEach(destroyProductSearch);reactWorkbench.release($('#dialog-body'));$('#dialog-body').innerHTML=html;if(title==='配置总览')$('#dialog').classList.add('overview-dialog');$('#dialog').scrollTop=0;$('#dialog-body').scrollTop=0;if(!$('#dialog').open)$('#dialog').showModal();}
+function openDialog(title,html,{headerHtml=''}={}){
+ window.workbenchSourceEditor?.detachForDialog?.();
+ const dialog=$('#dialog'),heading=$('#dialog-title'),body=$('#dialog-body');
+ dialog.classList.remove('price-changes-dialog','template-editor-dialog','global-batch-dialog','profit-check-dialog','template-dialog','link-parts-dialog','source-dialog','source-quick-dialog','cost-dialog','overview-dialog','inventory-dialog','case-gallery-dialog','activity-dialog');
+ heading.parentElement.querySelector('.activity-header')?.remove();
+ heading.textContent=title;
+ if(headerHtml)heading.insertAdjacentHTML('afterend',headerHtml);
+ body.querySelectorAll('.product-search').forEach(destroyProductSearch);
+ reactWorkbench.release(body);body.innerHTML=html;
+ if(title==='配置总览')dialog.classList.add('overview-dialog');
+ if(title==='操作记录'&&headerHtml)dialog.classList.add('activity-dialog');
+ dialog.scrollTop=0;body.scrollTop=0;if(!dialog.open)dialog.showModal();
+}
 // 关闭当前业务弹窗，保留工作台和草稿状态。
 function closeDialog(){$('#dialog').close();}
 // NAS 试验入口只在原生明确配置后显示；不替换本机保存、同步或其他店铺入口。
@@ -2281,6 +2313,7 @@ function sourceSyncMessage(text){
 }
 async function openSourceMaintenance(options){
  const api={...options,applyBatch:sourceSaveWithDecision(options),getReviewRows:sourceReviewRows,
+  getDraftStates:nasWorkspace?.sourceDraftStates,
   refreshAlerts:refreshSourceAlerts,prepareExport:prepareSourceExport};
  if(!leaveInventoryPage())return;
  if(api.quickEdit)return openSourceEditor(api);
@@ -2800,7 +2833,7 @@ function bindNasErp(){
   erpStatus:()=>({lastSuccess:{stockUpdatedAt:lastNasErp()}})});
 }
 function openNasErp(){nasErpUi?.setup();}
-function openNasCosts(){
+function openNasCosts(goodsId){
  const shop=activeShopId;
  const versions=new Map([...snapshotNasCosts()].map(([id,row])=>[id,row.version]));
  let workbookPrices=new Map();
@@ -2826,7 +2859,7 @@ function openNasCosts(){
   for(const row of confirmed)versions.set(row.id,row.version);
   if(confirmed.length!==changes.length)throw Error(`已确认 ${confirmed.length} / ${changes.length} 条，请在 NAS 批量操作中查看余下项目。`);
  }
- openCostEditor({nas:true,openDialog,lastErp:lastNasErp,
+ openCostEditor({nas:true,openDialog,lastErp:lastNasErp,focusGoodsId:typeof goodsId==='string'?goodsId:null,
   // 重读成本表只更新预览，已手改的行继续显示服务端价。
   getRows:()=>selectableComponents(state.costSource).map(row=>row.nasManualTax!==true&&workbookPrices.has(row.goodsId)?{...row,tax:workbookPrices.get(row.goodsId)}:row),
   reloadCosts:async()=>{
@@ -2847,7 +2880,9 @@ function openNasCosts(){
   }});
 }
 function openNasActivity(){
- openActivity({openDialog,esc,toast,loadNasPage:query=>nasWorkspace.activityPage(query),locate:async target=>{
+ openActivity({openDialog,esc,toast,shop:currentShop(),ownUid:nasWorkspace.memberUid(),errorText:nasErrorText,
+  loadNasPage:query=>nasWorkspace.activityPage(query),
+  purgeNas:nasWorkspace.canPlan()?body=>nasWorkspace.purgeActivity(body):null,locate:async target=>{
   closeDialog();
   if(target.type==='configuration'||target.type==='quotation'){
    const row=available().find(c=>c.id===target.id);if(!row)return toast('当前列表找不到这套配置，可打开回收站核对。');
@@ -2859,7 +2894,9 @@ function openNasActivity(){
   if(target.type==='source'){
    await openNasSources({focusSourceId:target.id});
   }else if(target.type==='component'){
-   openNasCosts();const input=$('#cost-source-search');if(input){input.value=target.goodsId;input.dispatchEvent(new Event('input'));}
+   openNasCosts(target.goodsId);
+  }else if(target.type==='price-changes'){
+   await showPriceChanges();
   }else if(target.type==='gallery'){
    await openNasGallery();const row=catalogRow('gallery',target.id)?.document,input=$('#gallery-search');
    if(input&&row){input.value=row.name;input.dispatchEvent(new Event('input'));[...$$('[data-gallery-open]')].find(b=>b.dataset.galleryOpen===target.id)?.click();}
@@ -2876,6 +2913,33 @@ async function saveNasSettings(fields,expected=nasWorkspace.settingsVersion()){
 let addonPackDrafts;
 function currentAddonDrafts(){
  return addonPackDrafts??=createAddonPackDrafts(localStorage,nasWorkspace.serverDisplayScope());
+}
+function refreshAddonDrafts(){
+ syncNasControls();continuousWorkbench?.draw();schedulePreview();
+}
+function discardAddonDrafts(ids){
+ if(!nasMain||nasBusy)throw Error('请等待工作台保存结束后再放弃草稿。');
+ const drafts=currentAddonDrafts();
+ // 重置正在显示的编辑对象，防止它继续写回已经放弃的值。
+ let failed=false;
+ for(const id of ids){
+  if(!drafts.has(id))continue;
+  if(!drafts.delete(id)){failed=true;continue;}
+  for(const [key,selected] of selectedAddonPacks)
+   if(selected===id&&!savedAddonPacks(activeShopId).some(pack=>pack.id===id))selectedAddonPacks.delete(key);
+ }
+ if(tab==='addon-packs')renderAddonPage(current());
+ refreshAddonDrafts();
+ if(failed)throw Error('部分草稿无法从本机移除，请重试。');
+}
+async function locateAddonPack(pack){
+ const target=ordinaryAvailable().find(config=>config.productId===pack.productId),shop=activeShopId;
+ if(!target)return toast('链接已无在用配置');
+ closeDialog();
+ if(current()?.productId!==pack.productId)await activate(target.id);
+ if(shop===activeShopId&&current()?.productId===pack.productId){
+  selectedAddonPacks.set(pack.productId,pack.id);switchTab('addon-packs');
+ }
 }
 const selectedAddonPacks=new Map();
 let addonPageGeneration=0,unmountAddonPage;
@@ -2972,24 +3036,20 @@ async function renderAddonPage(config){
      throw Error('这份加购包已被更新。可放弃本机草稿并载入已保存版本。');
     await saveNasSettings({addonPackChange:change},metadata.settingsVersion);
    },
-   refresh:()=>{continuousWorkbench?.draw();schedulePreview();},errorText:nasErrorText});
+   refresh:refreshAddonDrafts,errorText:nasErrorText});
  }catch(error){if(generation===addonPageGeneration)host.innerHTML=`<p class="pack-empty" role="status">${esc(nasErrorText(error))}</p>`;}
 }
 async function openAddonPackOverview(){
- const shop=activeShopId,packs=savedAddonPacks(shop),ids=new Set(packs.map(pack=>pack.productId));
+ const shop=activeShopId,packs=()=>mergeAddonPackDrafts(savedAddonPacks(shop),currentAddonDrafts());
+ const ids=new Set(packs().map(pack=>pack.productId));
  try{
   const configs=ordinaryAvailable().filter(config=>ids.has(config.productId));
   await loadNasScope(configs.map(config=>config.id));
   if(shop!==activeShopId)return;
   openAddonPackMaintenance({openDialog,esc,packs,inputs:currentAddonInputs(),
    configs:state.configs.filter(config=>config.shopId===shop&&!config.deletedAt&&ids.has(config.productId)),
-   edit:async pack=>{
-    const target=ordinaryAvailable().find(config=>config.productId===pack.productId);
-    if(!target)return;
-    selectedAddonPacks.set(pack.productId,pack.id);closeDialog();
-    if(current()?.productId!==pack.productId)await activate(target.id);
-    if(current()?.productId===pack.productId)switchTab('addon-packs');
-   }});
+   edit:pack=>locateAddonPack(pack).catch(error=>toast(nasErrorText(error))),
+   discard:id=>{try{discardAddonDrafts([id]);}catch(error){toast(nasErrorText(error));}}});
  }catch(error){toast(nasErrorText(error));}
 }
 async function openNasQuotation(id=active){
@@ -3631,6 +3691,20 @@ function drawNasServerStatus(){
   if(time.dateTime!==nasDataTime.updatedAt)time.dateTime=nasDataTime.updatedAt;
  }else{setText('#nas-data-time','暂无');if(time.hasAttribute('datetime'))time.removeAttribute('datetime');}
  setText('#nas-data-time-state',nasDataTime.state==='failed'?'（未刷新）':nasDataTime.state==='checking'?'（读取中）':'');
+ const update=nasUpdateHint.time(),button=$('#workspace-sync'),badge=top.querySelector('#nas-update-hint');
+ if(!badge)return;
+ const hasDraft=dirty||Boolean(addonPackDrafts?.size||hostTemplateHasDrafts()||window.workbenchSourceEditor?.hasPending());
+ const style=update?(hasDraft?'draft':'available'):'';
+ if(button.dataset.update!==style){
+  button.dataset.update=style;
+  button.textContent=update?'刷新工作台 · 有更新':'刷新工作台';
+  button.title=update?(hasDraft?'刷新会保留已存到本机的草稿，建议先保存到服务端。':'服务端有新操作，点击刷新工作台。'):'重新载入当前工作台';
+ }
+ badge.hidden=!update;
+ if(update){
+  const fields=Object.fromEntries(nasDateDisplay.formatToParts(new Date(update)).map(part=>[part.type,part.value]));
+  setText('#nas-update-hint',`服务端有更新 ${fields.hour}:${fields.minute}`);
+ }
 }
 function restoreNasDataTime(){
  // 仅记同端点、同账号确认过的服务端时间，让刷新失败时还能呈现上一条可靠值。
@@ -3640,26 +3714,44 @@ function restoreNasDataTime(){
   if(updatedAt)nasDataTime={updatedAt,firstImport:prior.firstImport===true,state:'checking'};
  }catch{}
 }
-async function refreshNasDataTime(){
+async function refreshNasDataTime(poll=false){
+ if(!stopNasUpdateWatch)return;
+ nasPollDue||=poll;
  clearTimeout(nasDataTimeTimer);
  const generation=++nasDataTimeGeneration;
- nasDataTime={...nasDataTime,state:'checking'};drawNasServerStatus();
+ const waitForReceipt=()=>{
+  if(!nasPollDue||!nasWorkspace.isCommitting())return false;
+  nasDataTimeTimer=setTimeout(()=>void refreshNasDataTime(true),1000);return true;
+ };
+ if(waitForReceipt())return;
+ if(!poll){nasDataTime={...nasDataTime,state:'checking'};drawNasServerStatus();}
  try{
-  const value=await nasWorkspace.serverDataTime();
+  const value=await nasWorkspace.serverDataTime({includeActivity:true});
   if(generation!==nasDataTimeGeneration)return;
-  nasDataTime={...value,state:'confirmed'};
-  try{sessionStorage.setItem(nasServerDisplayKey(),JSON.stringify(value));}catch{}
+  // 审计可能先于本机保存回执到达；等这次提交返回后再判断是谁的改动。
+  if(waitForReceipt())return;
+  nasUpdateHint.observe(value,nasPollDue);
+  nasPollDue=false;
+  nasDataTime={updatedAt:value.updatedAt,firstImport:value.firstImport,state:'confirmed'};
+  try{sessionStorage.setItem(nasServerDisplayKey(),JSON.stringify(nasDataTime));}catch{}
  }catch{
   if(generation!==nasDataTimeGeneration)return;
+  nasPollDue=false;
+  if(poll)return;
   nasDataTime={...nasDataTime,state:'failed'};
  }
  drawNasServerStatus();
 }
 function scheduleNasDataTime(){
+ if(!stopNasUpdateWatch)return;
  // 连续目录保存或图片加登记时合并只读查询，不让旧的飞行响应覆盖新确认。
  ++nasDataTimeGeneration;clearTimeout(nasDataTimeTimer);
  nasDataTime={...nasDataTime,state:'checking'};drawNasServerStatus();
  nasDataTimeTimer=setTimeout(()=>void refreshNasDataTime(),400);
+}
+function stopNasUpdateChecks(){
+ stopNasUpdateWatch?.();stopNasUpdateWatch=null;
+ ++nasDataTimeGeneration;clearTimeout(nasDataTimeTimer);
 }
 function syncNasControls(){
  if(!nasMain||!state)return;
@@ -3678,7 +3770,11 @@ function syncNasControls(){
  $('#workspace-sync').disabled=nasBusy||!!nasDraftFailure||!!draftReadError;
  $('#operator-open').disabled=nasBusy||!!nasDraftFailure||!!draftReadError;
  dirty=Boolean(nasDraftFailure||draftReadError||drafts.length||oldPrices);
- $('#workspace-sync-status').textContent=[drafts.length&&'本机留有 '+drafts.length+' 份配置草稿',oldPrices&&oldPrices+' 份旧版价格草稿'].filter(Boolean).join(' · ')||currentShop().shortName+' · NAS';
+ const addonCount=currentAddonDrafts().size;
+ const syncStatus=$('#workspace-sync-status');
+ syncStatus.textContent=[addonCount&&'本机留有 '+addonCount+' 份加购包草稿',drafts.length&&'本机留有 '+drafts.length+' 份配置草稿',
+  oldPrices&&oldPrices+' 份旧版价格草稿'].filter(Boolean).join(' · ')||currentShop().shortName+' · NAS';
+ syncStatus.title=syncStatus.textContent;syncStatus.toggleAttribute('data-addon-drafts',addonCount>0);
  const receiptButton=$('#nas-catalog-receipts');if(receiptButton)receiptButton.hidden=!nasWorkspace.catalog().pending().length;
  if(nasBusy)$('#save-status').textContent='正在处理 NAS 请求…';
  else if(nasDraftFailure||draftReadError)$('#save-status').textContent=nasErrorText(nasDraftFailure||draftReadError);
@@ -3908,7 +4004,7 @@ function bindNasMain(){
   // 重建编辑器以隔开同 ID 的配置、选中项、撤销记录、成本缓存和图片预览。
   // 草稿和未知回执已按店存到本机；切店不调用保存和重试。
   try{await flushConfigDrafts();}catch(error){toast(error.message);return;}
-  nasAutosave?.dispose();nasWorkspace.close();reactWorkbench?.dispose?.();
+  stopNasUpdateChecks();nasAutosave?.dispose();nasWorkspace.close();reactWorkbench?.dispose?.();
   const nextUrl=new URL(location.href);nextUrl.searchParams.set('nas_shop',next);location.replace(nextUrl.href);
  };
  $('#asset-file').onchange=null;$('#backup-file').onchange=null;
@@ -3927,12 +4023,19 @@ function bindNasMain(){
  $('#save').onclick=saveAllNasConfigurations;
  const retrySave=document.createElement('button');retrySave.type='button';retrySave.id='nas-retry-save';
  retrySave.textContent='重试原提交';retrySave.hidden=true;retrySave.onclick=()=>retryNasConfiguration(current()?.id);$('#save').before(retrySave);
- $('#workspace-sync').textContent='刷新配置';
- $('#workspace-sync').onclick=async()=>{if(hostTemplateHasDrafts())return toast('请先保存主机模板或恢复到已保存版本。');if(addonPackDrafts?.hasFailure())return toast('有加购草稿未写入本机，请先保存加购包。');try{await flushConfigDrafts();if(!nasBusy&&!nasDraftFailure)location.reload();}catch(error){toast(error.message);}};
+ $('#workspace-sync').textContent='刷新工作台';
+ $('#workspace-sync').onclick=async()=>{
+  if(hostTemplateHasDrafts())return toast('请先保存主机模板或恢复到已保存版本。');
+  if(window.workbenchSourceEditor?.hasPending())return toast('请先保存或放弃输出源的待保存修改。');
+  if(addonPackDrafts?.hasFailure())return toast('有加购草稿未写入本机，请先保存加购包。');
+  try{await flushConfigDrafts();if(!nasBusy&&!nasDraftFailure)location.reload();}catch(error){toast(error.message);}
+ };
  const serverStatus=document.createElement('div');serverStatus.id='nas-server-status';
  serverStatus.setAttribute('role','status');serverStatus.title='工作区时间取自服务端操作记录，以北京时间显示。';
- serverStatus.innerHTML='<small id="nas-server-version"></small><small><span id="nas-data-time-label"></span><time id="nas-data-time"></time><span id="nas-data-time-state"></span></small>';
+ serverStatus.innerHTML='<small id="nas-server-version"></small><small><span id="nas-data-time-label"></span><time id="nas-data-time"></time><span id="nas-data-time-state"></span><span id="nas-update-hint" hidden></span></small>';
  $('.workspace-sync-controls').after(serverStatus);
+ stopNasUpdateWatch=watchNasUpdates(()=>refreshNasDataTime(true));
+ window.addEventListener('pagehide',event=>{if(!event.persisted)stopNasUpdateChecks();});
  restoreNasDataTime();void refreshNasDataTime();
  const receipts=document.createElement('button');receipts.type='button';receipts.id='nas-catalog-receipts';receipts.textContent='查询目录回执';
  receipts.hidden=true;receipts.onclick=showNasCatalogReceipts;$('#save').before(receipts);
@@ -3948,7 +4051,7 @@ function bindNasMain(){
    const result=await fetch('/api/native-nas-identity/logout',{method:'POST',body:'{}'});
    if(!result.ok)throw Error('账号未退出，请重试');
    const logout=await result.json();
-   nasAutosave?.dispose();nasWorkspace.close();
+   stopNasUpdateChecks();nasAutosave?.dispose();nasWorkspace.close();
    window.parent.postMessage({type:'workbench-signed-out',nasLogoutUnconfirmed:logout.nas_session_revoked===false},location.origin);
   }catch(error){toast(nasErrorText(error));}
  };
@@ -4303,24 +4406,25 @@ continuousWorkbench=reactWorkbench.continuousAvailable?createContinuousWorkbench
 try{const [index,base,memberSession]=await Promise.all([lazyWorkspace.refresh(),request('/catalog.json'),request('/api/session')]);session=memberSession;operator=localStorage.getItem('diy-operator')||session.defaultOperator;baseCatalog=base;const initialState=await prepareWorkspaceState({...index.metadata,configs:[],revision:index.revision,updatedAt:index.updatedAt},baseCatalog);state=markPartialWorkspace(initialState.state);acceptedState=cloneEditorState(state);catalog=initialState.catalog;const remembered=nasMain?nasWorkspace.shop():localStorage.getItem('diy-active-shop');activeShopId=shops.some(shop=>shop.id===remembered)?remembered:'intel';active=null;selected.clear();productGroups(available()).forEach(p=>collapsedProducts.add(p.id));bind();if(nasMain)bindNasMain();renderAll();window.workbenchReady=true;installColorPicker({current,checkpoint:()=>checkpointConfig()});if(!nasMain)workspaceSyncUi=await bindWorkspaceSync({renderPanel:model=>reactWorkbench.dialog($('#dialog-body'),'workspace-sync',model),getState:()=>state,flush:save,openDialog,esc,toast,onMember:member=>{if(member){operator=member.name;$('#operator-open').textContent='成员：'+operator;$('#operator-open').disabled=false;$('#operator-open').title='账号管理：切换账号或退出登录';}else {$('#operator-open').textContent='请登录';$('#operator-open').disabled=false;}},receive:async()=>{if(!fullWorkspace)return refreshCompactWorkspace();if(dirty||savePromise||hasDraftDialog()||document.activeElement?.matches('input,textarea,select'))return false;const counter=changeCounter;const next=await request('/api/state?logs=none');if(counter!==changeCounter||dirty||savePromise)return false;if(next.revision===state.revision)return;const prepared=await prepareWorkspaceState(next,baseCatalog);if(counter!==changeCounter||dirty||savePromise||hasDraftDialog()||document.activeElement?.matches('input,textarea,select'))return false;state=prepared.state;acceptedState=next;catalog=prepared.catalog;if(!current())active=ordinaryConfigs(available())[0]?.id||null;selected=new Set([...selected].filter(id=>available().some(c=>c.id===id)));history=[];redoHistory=[];imageRecords.clear();syncHistoryButtons();renderAll();}});if(nasMain)syncNasControls();else $('#save-status').textContent=state.updatedAt?'已载入本地保存':'已载入本机配置';pollDerivedStatus().catch(()=>{});}catch(e){$('#save-status').textContent=e.status===404?'需要重启工作台服务':'载入失败';if(e.status===404)$('#config-heading').textContent='请重启工作台以完成更新';$('#editor').innerHTML=`<p class="error">${esc(e.status===404?'工作台已更新，请双击 prototype 文件夹中的「重启原型.cmd」，然后刷新页面。':e.message)}</p>`;}
 
 // Agent 与人工操作共用同一编辑器；有未保存输入时拒绝任务，不代替用户保存草稿。
-function lockAgentEditor(blockSync){
- const roots=[document.documentElement,window.parent.document.documentElement],previous=roots.map(root=>root.inert);
- roots.forEach(root=>root.inert=true);window.workbenchAgentBusy=blockSync;
- return()=>{roots.forEach((root,i)=>root.inert=previous[i]);window.workbenchAgentBusy=false;};
-}
-if(nasMain)window.workbenchAgentActor=nasWorkspace.agentActor;
+if(nasMain){window.workbenchAgentActor=nasWorkspace.agentActor;window.workbenchAgentShop=nasWorkspace.shop;}
 window.workbenchAgentExecute=nasMain?createNasAgentWorkflow({
  access:nasWorkspace.agentAccess,indexes:nasWorkspace.agentIndexes,activeShop:()=>activeShopId,
- blocked:()=>!window.workbenchReady||nasBusy||!!nasDraftFailure||detailLoads.size>0||exportJobs>0||hasDraftDialog()||
-  !!window.workbenchSourceEditor?.hasPending()||Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending),
+ // 来源写入在各新步骤前核对未保存资料，恢复任务可先读取已发出步骤的正式回执。
+ sourceHasPending:()=>Boolean(window.workbenchSourceEditor?.hasPending()),
+ readErp:(kind,ids,shop)=>nasWorkspace.readErp(kind,ids,undefined,shop),
+ blocked:method=>!window.workbenchReady||nasBusy||!!nasDraftFailure||detailLoads.size>0||exportJobs>0||
+  (hasDraftDialog()&&!(method==='sources.apply'&&window.workbenchSourceEditor?.sheet))||
+  (method!=='sources.apply'&&!!window.workbenchSourceEditor?.hasPending())||Boolean(window.parent.workbenchClosePending||window.parent.workbenchUpdatePending),
  lock:()=>{
   const release=lockAgentEditor(true);nasBusy=true;syncNasControls();
   return()=>{nasBusy=false;release();syncNasControls();};
  },
- refresh:async(shop,receipt)=>{
+ refresh:async(shop,receipt,{sources=false}={})=>{
   if(shop!==activeShopId)return false;
   // 重载已确认配置；全店刷新时保留正在编辑的本机草稿。
   await acceptNasPlan(receipt?{kind:'configurations',batches:[{status:'done',result:receipt}]}:{kind:'costs',batches:[]});
+  const sheet=window.workbenchSourceEditor;
+  if(sources&&sheet?.sheet)return sheet.refreshSaved();
   return true;
  },
  present:(rows,metadata,shop)=>{

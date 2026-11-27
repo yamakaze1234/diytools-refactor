@@ -62,7 +62,11 @@ try{
   mcpRequest=(method,params)=>new Promise((resolve,reject)=>{const id=++counter,timer=setTimeout(()=>{requests.delete(id);reject(Error(`MCP timeout: ${method}`));},15000);requests.set(id,{resolve,reject,timer});mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
   const initialized=await mcpRequest('initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'isolated-workbench-test',version:'1'}});
   assert.equal(initialized.protocolVersion,'2025-11-25');mcp.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
-  const tools=await mcpRequest('tools/list',{});assert.equal(tools.tools.length,exportCheck?8:7);report.transport='mcp-stdio-to-windows-pipe';
+  const tools=await mcpRequest('tools/list',{}),names=tools.tools.map(tool=>tool.name);
+  // 只读目录可随版本扩展，离线回归核对当前启动参数真正允许的写操作。
+  for(const name of ['workbench_status','workbench_changes_preview','workbench_changes_apply'])assert.ok(names.includes(name));
+  assert.equal(names.includes('workbench_export_start'),exportCheck);assert.equal(names.includes('workbench_sync_run'),false);
+  report.transport='mcp-stdio-to-windows-pipe';
  }
  const cli=async args=>{
   if(useMcp){

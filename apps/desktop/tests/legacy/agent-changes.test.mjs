@@ -47,6 +47,26 @@ test('替换复用来源、成本与加购描述选择，更新 BOM 并解除旧
  assert.equal(after.parts[0].sourceFollow.name.mode,'follow');
 });
 
+test('换件自定义展示名只覆盖展示行，原来源名称或空白保留自动跟随',()=>{
+ const state=fixture(),sourceName=state.sourceCatalog[0].name;
+ const planFor=displayName=>buildAgentPlan(state,request({type:'replace',sourceId:'new',displayName}));
+ for(const value of [' 专属型号 ','😀'.repeat(100)]){
+  const plan=planFor(value),{parts,actualParts}=plan.changes[0].after;
+  assert.equal(parts[0].displayName,value.trim());
+  assert.deepEqual(parts[0].sourceFollow.name,{mode:'manual',value:value.trim(),sourceValue:sourceName});
+  assert.equal(actualParts[0].name,sourceName);
+  assert.equal(actualParts[0].sourceFollow.name.mode,'follow');
+  assert.equal(actualParts[0].displayName,undefined);
+  assert.equal(validateAgentPlan(state,plan),true);
+ }
+ for(const value of ['', '  ',` ${sourceName} `]){
+  const part=planFor(value).changes[0].after.parts[0];
+  assert.equal(part.displayName,undefined);
+  assert.equal(part.sourceFollow.name.mode,'follow');
+ }
+ for(const invalid of [null,1,'😀'.repeat(101)])assert.throws(()=>planFor(invalid),/展示名称/);
+});
+
 test('多个定点同配置合并一条变化，不扩大到相同配件的其他位置',()=>{
  const state=fixture(),req=request({type:'quantity',quantity:4});req.targets.push({...target,partIndex:1});
  const plan=buildAgentPlan(state,req);assert.equal(plan.changes.length,1);assert.equal(plan.summary.targetCount,2);

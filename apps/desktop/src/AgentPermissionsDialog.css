@@ -1,0 +1,64 @@
+/* 桌面宿主与工作台共用主题变量，权限窗口仅固定信号黄和接入配置的深底。 */
+.agent-permission-dialog {
+  width:min(700px,calc(100vw - 32px)); max-height:calc(100dvh - 40px); margin:auto; padding:0;
+  border:1px solid var(--ef-rule,#bababa); border-radius:0; box-shadow:none;
+  background:var(--ef-panel,#fff); color:var(--ef-ink,#171717); font:13px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;
+}
+.agent-permission-dialog[open] { display:flex; flex-direction:column; overflow:hidden; }
+.agent-permission-dialog::backdrop { background:rgb(0 0 0 / 56%); }
+.agent-permission-dialog header,.agent-permission-dialog footer { display:flex; align-items:center; gap:10px; padding:12px 18px; flex:none; }
+.agent-permission-dialog header { justify-content:space-between; border-bottom:1px solid var(--ef-rule,#bbb); }
+.agent-permission-dialog h2 { display:flex; align-items:center; gap:10px; margin:0; font-size:17px; color:inherit; }
+.agent-permission-dialog h3 { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:6px; margin:0; padding-bottom:6px; border-bottom:1px solid currentColor; font-size:13px; color:inherit; }
+.agent-permission-dialog h3 small { font-size:11px; font-weight:400; color:var(--ef-ink-2,#595959); }
+.agent-permission-dialog .ap-status { font-weight:600; line-height:1.6; font-size:11px; padding:2px 7px; background:var(--ef-ink,#161616); color:var(--ef-panel,#fff); }
+.agent-permission-dialog .ap-status[data-active=true] { background:#fffa00; color:#161616; }
+.agent-permission-dialog .ap-status[data-disabled=true] { background:transparent; color:var(--ef-danger,#b3261e); border:1px solid currentColor; }
+.agent-permission-dialog button { padding:5px 11px; min-height:28px; font-weight:600; line-height:1.4; font-family:inherit; font-size:12px;
+  border:1px solid var(--ef-rule,#aaa); border-radius:0; box-shadow:none;
+  clip-path:polygon(0 0,100% 0,100% calc(100% - 4px),calc(100% - 4px) 100%,0 100%); }
+.agent-permission-dialog button:enabled:hover,.agent-permission-dialog .ap-done,.agent-permission-dialog .ap-presets button[aria-pressed=true] {
+  --ap-button-bg:#fffa00; --ap-button-ink:#161616;
+}
+/* 与工作台通用按钮处于同一层，在弹窗内固定控件颜色与切换方式。 */
+@layer endfield-theme {
+  dialog.agent-permission-dialog button {
+    background-color:var(--ap-button-bg,var(--ef-paper,#efefec)) !important;
+    color:var(--ap-button-ink,var(--ef-ink,#171717)) !important;
+    border-color:var(--ef-rule,#aaa) !important; transition:none !important;
+  }
+}
+.agent-permission-dialog button:disabled,.agent-permission-dialog input[type=checkbox]:disabled { opacity:.6; cursor:not-allowed; }
+.agent-permission-dialog button:focus-visible,.agent-permission-dialog summary:focus-visible,.agent-permission-dialog input:focus-visible { outline:2px solid currentColor; outline-offset:-2px; }
+.agent-permission-dialog .ap-body { padding:16px 18px; display:grid; gap:15px; overflow-y:auto; min-height:0; }
+.agent-permission-dialog .ap-master { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:12px; border:1px solid var(--ef-rule,#bbb); border-left:3px solid var(--ef-trace,#161616); padding:12px 14px; background:var(--ef-paper,#f3f3f0); }
+.agent-permission-dialog .ap-master label,.agent-permission-dialog .ap-presets { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.agent-permission-dialog .ap-master label { font-weight:700; }
+.agent-permission-dialog .ap-identity,.agent-permission-dialog .ap-presets { font-size:12px; margin-top:8px; }
+.agent-permission-dialog .ap-list,.agent-permission-dialog .ap-fold { border:1px solid var(--ef-rule,#bbb); }
+.agent-permission-dialog .ap-row { display:flex; align-items:flex-start; gap:12px; padding:10px 12px; cursor:pointer; }
+.agent-permission-dialog .ap-row:hover { background:var(--ef-paper,#f4f4f2); }
+.agent-permission-dialog .ap-content { flex:1; min-width:0; }
+.agent-permission-dialog .ap-row-title { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:8px; }
+.agent-permission-dialog .ap-row+.ap-row { border-top:1px solid var(--ef-rule,#bbb); }
+.agent-permission-dialog .ap-row small { display:block; color:var(--ef-ink-2,#595959); font-size:12px; }
+.agent-permission-dialog .ap-row em { margin-left:auto; line-height:1.5; font-size:11px; font-style:normal; border:1px solid var(--ef-rule,#bbb); padding:0 5px; white-space:nowrap; }
+.agent-permission-dialog .ap-row[data-child=true] { padding-left:36px; background:var(--ef-paper,#f3f3f0); }
+.agent-permission-dialog .ap-row[data-write=true] { border-inline-start:3px solid var(--ef-trace,#968e00); padding-inline-start:9px; }
+.agent-permission-dialog .ap-row[data-write=true][data-child=true] { padding-inline-start:33px; }
+.agent-permission-dialog .ap-row[data-locked=true] { color:var(--ef-ink-2,#595959); cursor:default; }
+.agent-permission-dialog input[type=checkbox] { appearance:none; display:inline-grid; place-content:center; flex:0 0 16px; width:16px; height:16px; margin:2px 0 0;
+  border:1px solid currentColor; background:var(--ef-panel,#fff); color:var(--ef-ink,#171717); border-radius:0; }
+.agent-permission-dialog input[type=checkbox]:checked { background:#fffa00; color:#161616; }
+.agent-permission-dialog input:checked::after { content:''; width:5px; height:9px; border:solid #161616; border-width:0 2px 2px 0; transform:translateY(-1px) rotate(45deg); }
+.agent-permission-dialog .ap-fold { padding:0; background:var(--ef-paper,#f4f4f2); }
+.agent-permission-dialog .ap-fold summary { font-weight:600; cursor:pointer; padding:9px 12px; }
+.agent-permission-dialog .ap-fold>div { border-top:1px solid var(--ef-rule,#bbb); padding:10px 12px; overflow-wrap:anywhere; background:var(--ef-panel,#fff); }
+.agent-permission-dialog .ap-capabilities { display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin:10px 0 0; font-size:11px; }
+.agent-permission-dialog .ap-capabilities code { border:1px solid var(--ef-rule,#bbb); padding:1px 6px; background:var(--ef-paper,#eee); font:11px/1.5 Consolas,monospace; }
+.agent-permission-dialog .ap-capabilities code[data-write=true] { background:#fffa00; color:#161616; border-color:#161616; font-weight:600; }
+.agent-permission-dialog pre { background:#161616; color:#ededed; white-space:pre-wrap; overflow-wrap:anywhere; padding:10px; margin:0 0 8px; }
+.agent-permission-dialog .ap-footnote,.agent-permission-dialog footer small { font-size:12px; color:var(--ef-ink-2,#595959); margin:0; }
+.agent-permission-dialog .ap-footnote { padding-left:10px; border-left:2px solid var(--ef-rule,#bbb); }
+.agent-permission-dialog footer { border-top:1px solid var(--ef-rule,#bbb); background:var(--ef-paper,#f4f4f2); }
+.agent-permission-dialog footer small { margin-left:auto; }

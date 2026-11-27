@@ -1,6 +1,41 @@
 use super::*;
 
 #[test]
+fn nas_inventory_pages_survive_restart_and_do_not_expose_items_in_status() {
+    let (folder, _, offline) = fixture();
+    let input = json!({"shopId":"intel","operationId":operation(),"limit":1});
+    assert_eq!(offline.dispatch("inventory.check", &input).unwrap_err().code, "NAS_MODE_REQUIRED");
+    let directory = folder.join("member-a");
+    let jobs = AgentJobs::open_nas(&directory).unwrap();
+    jobs.ready().unwrap();
+    let record = jobs.dispatch("inventory.check", &input).unwrap();
+    let id = record["jobId"].as_str().unwrap();
+    assert_eq!(jobs.inventory_shop(id).unwrap(), "intel");
+    assert_eq!(jobs.claim().unwrap().unwrap()["id"], id);
+    // 同一次巡检的汇总和切片保存在原任务内，重开工作台也不能重新取数。
+    let snapshot = json!({"shopId":"intel","checkedAt":"2026-01-01T00:00:00Z","counts":{"out":2},
+        "threshold":5,"linkCount":2,"configCount":3,"total":2,"items":[{"goodsId":"11"},{"goodsId":"22"}]});
+    jobs.complete(id, Some(snapshot), None).unwrap();
+    let reloaded = AgentJobs::open_nas(&directory).unwrap();
+    let status = reloaded.dispatch("jobs.status", &json!({"jobId":id})).unwrap();
+    assert_eq!(status["result"]["configCount"], 3);
+    assert!(status["result"].get("items").is_none());
+    let first = reloaded.dispatch("inventory.check", &json!({"jobId":id})).unwrap();
+    let second = reloaded.dispatch("inventory.check", &json!({"jobId":id,"offset":1})).unwrap();
+    assert_eq!(first["result"]["items"], json!([{"goodsId":"11"}]));
+    assert_eq!(first["result"]["nextOffset"], 1);
+    assert_eq!(second["result"]["items"], json!([{"goodsId":"22"}]));
+    assert!(second["result"]["nextOffset"].is_null());
+    assert_eq!(first["result"]["checkedAt"],second["result"]["checkedAt"]);
+    let isolated = AgentJobs::open_nas(&folder.join("member-b")).unwrap();
+    assert_eq!(isolated.inventory_shop(id).unwrap_err().code, "JOB_NOT_FOUND");
+    for bad in [json!({"jobId":id,"limit":0}), json!({"jobId":id,"shopId":"intel"}),
+        json!({"shopId":"intel","operationId":operation(),"threshold":-1})] {
+        assert_eq!(reloaded.dispatch("inventory.check", &bad).unwrap_err().code, "INVALID_PARAMS");
+    }
+}
+
+#[test]
 fn config_fields_protocol_validates_prices_skus_and_guards() {
     let valid = json!({"operationId":operation(),"request":{"shopId":"intel","action":{"type":"configFields"},"targets":[{"configId":"c1","expected":{"spu":"123","shortName":"配置1","price":100,"skuId":""},"changes":{"price":99.99,"skuId":"90071992547409931234"}}]}});
     assert!(validate("changes.preview", &valid).is_ok());
@@ -634,6 +669,19 @@ fn action_contract_allows_blank_upgrade_and_optional_replace_quantity() {
     assert!(validate("changes.preview", &params).is_ok());
     params["request"]["action"]["quantity"] = json!(0);
     assert!(validate("changes.preview", &params).is_err());
+}
+#[test]
+fn replace_display_name_matches_workbench_limit() {
+    let mut params = preview(&operation());
+    params["request"]["action"] = json!({"type":"replace","sourceId":"source"});
+    for name in [json!(""), json!("手工型号"), json!("😀".repeat(100))] {
+        params["request"]["action"]["displayName"] = name;
+        assert!(validate("changes.preview", &params).is_ok());
+    }
+    for invalid in [Value::Null, json!(1), json!("😀".repeat(101))] {
+        params["request"]["action"]["displayName"] = invalid;
+        assert!(validate("changes.preview", &params).is_err());
+    }
 }
 #[test]
 fn concurrent_duplicate_submit_and_claim_only_execute_one_job() {

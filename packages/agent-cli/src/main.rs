@@ -1,17 +1,17 @@
 use clap::{error::ErrorKind, Args, Parser, Subcommand};
-use diytools_agent_core::{
-    transport, AgentError, Request, Response, MAX_FRAME_BYTES, PROTOCOL_VERSION,
-};
+use diytools_agent_core::{AgentError, Request, Response, MAX_FRAME_BYTES, PROTOCOL_VERSION};
 use serde_json::{json, Map, Value};
 use std::{fs::File, io::Read, path::PathBuf, process::ExitCode};
 
 mod mcp;
+mod queries;
+mod wait;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "diytools-agent",
     version,
-    about = "DIY 配置工作台本机只读 Agent CLI"
+    about = "DIY 配置工作台本机 Agent CLI"
 )]
 struct Cli {
     /// 输出稳定 JSON envelope，适合脚本调用
@@ -20,6 +20,9 @@ struct Cli {
     /// 桌面实例标识，例如 desktop-12345；必须显式指定
     #[arg(long, global = true)]
     instance: Option<String>,
+    /// 入队后最多等待的毫秒数；到期保留原任务编号
+    #[arg(long, global = true, value_parser = clap::value_parser!(u64).range(0..=10000))]
+    wait_ms: Option<u64>,
     #[command(subcommand)]
     command: Command,
 }
@@ -40,9 +43,29 @@ enum Command {
         #[command(subcommand)]
         command: ConfigsCommand,
     },
+    /// 按店铺查询输出源、预览维护计划和保存
+    Sources {
+        #[command(subcommand)]
+        command: queries::Sources,
+    },
+    /// 基于已保存的实际 BOM 计算库存
+    Inventory {
+        #[command(subcommand)]
+        command: queries::Inventory,
+    },
+    /// 分页查询服务端操作记录
+    Activity {
+        #[command(subcommand)]
+        command: queries::Activity,
+    },
     Changes {
         #[command(subcommand)]
-        command: ChangesCommand,
+        command: PlanCommand,
+    },
+    /// 预览并新建三店 NAS 草稿链接
+    Draft {
+        #[command(subcommand)]
+        command: PlanCommand,
     },
     Export {
         #[arg(long)]
@@ -60,7 +83,7 @@ enum Command {
     },
     /// 发起只读协议请求，input 必须是 JSON 对象文件
     Request {
-        #[arg(long, value_parser = ["status", "shops.list", "configs.find", "configs.get", "jobs.status"])]
+        #[arg(long, value_parser = ["status", "shops.list", "configs.find", "configs.get", "sources.find", "sources.get", "inventory.check", "activity.list", "jobs.status"])]
         method: String,
         #[arg(long)]
         input: Option<PathBuf>,
@@ -77,7 +100,7 @@ fn operation_id(value: &str) -> Result<String, String> {
 }
 
 #[derive(Debug, Subcommand)]
-enum ChangesCommand {
+pub enum PlanCommand {
     Preview {
         #[arg(long)]
         input: PathBuf,
@@ -90,6 +113,28 @@ enum ChangesCommand {
         #[arg(long, value_parser = operation_id)]
         operation_id: String,
     },
+}
+
+impl PlanCommand {
+    // 预览只收业务正文，保存只收已冻结的 planId。协议方法由子命令决定。
+    fn request(&self, preview: &str, apply: &str) -> Result<Request, AgentError> {
+        Ok(match self {
+            Self::Preview {
+                input,
+                operation_id,
+            } => request(
+                preview,
+                json!({
+                    "request":input_object(input)?,
+                    "operationId":operation_id.clone().unwrap_or_else(||uuid::Uuid::new_v4().to_string())
+                }),
+            ),
+            Self::Apply {
+                plan_id,
+                operation_id,
+            } => request(apply, json!({"planId":plan_id,"operationId":operation_id})),
+        })
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -129,6 +174,9 @@ enum ConfigsCommand {
 
 #[derive(Debug, Args)]
 struct FindArgs {
+    /// 在链接名称、配置名称和维护表简称中查找
+    #[arg(long)]
+    query: Option<String>,
     #[arg(long)]
     shop_id: Option<String>,
     #[arg(long)]
@@ -179,26 +227,8 @@ fn input_object(path: &PathBuf) -> Result<Value, AgentError> {
 fn command_request(command: &Command) -> Result<Request, AgentError> {
     match command {
         Command::Mcp(_) => Err(AgentError::new("INVALID_ARGUMENT", "MCP 使用独立会话入口")),
-        Command::Changes {
-            command:
-                ChangesCommand::Preview {
-                    input,
-                    operation_id,
-                },
-        } => Ok(request(
-            "changes.preview",
-            json!({"request":input_object(input)?,"operationId":operation_id.clone().unwrap_or_else(||uuid::Uuid::new_v4().to_string())}),
-        )),
-        Command::Changes {
-            command:
-                ChangesCommand::Apply {
-                    plan_id,
-                    operation_id,
-                },
-        } => Ok(request(
-            "changes.apply",
-            json!({"planId":plan_id,"operationId":operation_id}),
-        )),
+        Command::Changes { command } => command.request("changes.preview", "changes.apply"),
+        Command::Draft { command } => command.request("draft.preview", "draft.apply"),
         Command::Export {
             input,
             operation_id: operation,
@@ -238,6 +268,9 @@ fn command_request(command: &Command) -> Result<Request, AgentError> {
         } => Ok(request("sync.run", json!({"operationId":operation_id}))),
         Command::Status | Command::Doctor => Ok(request("status", json!({}))),
         Command::Shops { .. } => Ok(request("shops.list", json!({}))),
+        Command::Sources { command } => command.request(),
+        Command::Inventory { command } => command.request(),
+        Command::Activity { command } => command.request(),
         Command::Configs {
             command: ConfigsCommand::Get { config_id, shop_id },
         } => {
@@ -259,6 +292,7 @@ fn command_request(command: &Command) -> Result<Request, AgentError> {
             let mut params = Map::new();
             for (key, value) in [
                 ("shopId", &args.shop_id),
+                ("query", &args.query),
                 ("goodsId", &args.goods_id),
                 ("sku", &args.sku),
                 ("spu", &args.spu),
@@ -272,14 +306,14 @@ fn command_request(command: &Command) -> Result<Request, AgentError> {
             if let Some(revision) = args.revision {
                 params.insert("revision".into(), json!(revision));
             }
-            Ok(request("configs.find", Value::Object(params)))
+            queries::checked("configs.find", Value::Object(params))
         }
         Command::Request { method, input } => {
             let params = match input {
                 Some(path) => input_object(path)?,
                 None => json!({}),
             };
-            Ok(request(method, params))
+            queries::checked(method, params)
         }
     }
 }
@@ -294,7 +328,9 @@ fn print_response(response: &Response, json_mode: bool, doctor: bool) {
         return;
     }
     if doctor {
-        println!("本机实例连接正常。读取范围和权限见 status。长任务排队后请通过 jobs status 查询终态。");
+        println!(
+            "本机实例连接正常。读取范围和权限见 status。长任务排队后请通过 jobs status 查询终态。"
+        );
     }
     println!(
         "{}",
@@ -323,11 +359,15 @@ fn main() -> ExitCode {
             return fail(
                 &request("cli", json!({})),
                 AgentError::new("INVALID_ARGUMENT", error.to_string()),
-            )
+            );
         }
     };
     // MCP 的 stdout 只能包含 JSON-RPC；连接错误在工具结果中返回。
     if let Command::Mcp(options) = &cli.command {
+        if cli.wait_ms.is_some() {
+            eprintln!("MCP 请在具体工具的参数中提供 waitMs");
+            return ExitCode::from(2);
+        }
         return mcp::run(options, cli.instance.as_deref());
     }
     let diagnostic_request = request("cli", json!({}));
@@ -344,7 +384,7 @@ fn main() -> ExitCode {
                     "INSTANCE_REQUIRED",
                     "必须通过 --instance desktop-PID 指定已启用 Agent 入口的桌面实例",
                 ),
-            )
+            );
         }
     };
     let request = match command_request(&cli.command) {
@@ -352,7 +392,13 @@ fn main() -> ExitCode {
         Err(error) => return fail(&diagnostic_request, error),
     };
     let doctor = matches!(cli.command, Command::Doctor);
-    let mut response = match transport::call(instance, &request) {
+    if cli.wait_ms.is_some() && !wait::supported(&request.method) {
+        return fail(
+            &request,
+            AgentError::new("INVALID_ARGUMENT", "只有异步任务支持 --wait-ms"),
+        );
+    }
+    let mut response = match wait::call(instance, &request, cli.wait_ms.unwrap_or(0)) {
         Ok(response) => response,
         Err(error) => return fail(&request, error),
     };
@@ -368,12 +414,15 @@ fn main() -> ExitCode {
                 .as_array()
                 .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(method)))
         };
-        let nas = response.data.as_ref().is_some_and(|status| status["snapshot"] == "nasSaved");
+        let nas = response
+            .data
+            .as_ref()
+            .is_some_and(|status| status["snapshot"] == "nasSaved");
         response.data = Some(json!({
             "status": response.data,
             "authorization": if nas { "currentWindowsUserAndWorkbenchLogin" } else { "currentWindowsUser" },
             "dataScope": "savedSnapshotOnly",
-            "writesSupported": supports("changes.apply"),
+            "writesSupported": supports("changes.apply") || supports("draft.apply") || supports("sources.apply"),
             "syncSupported": supports("sync.run"),
             "capabilities": capabilities
         }));

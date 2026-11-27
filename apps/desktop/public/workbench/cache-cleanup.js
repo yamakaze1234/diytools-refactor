@@ -3,10 +3,15 @@ export function createCacheCleanupBridge(api){
  async function inspect(){
   await api.flush();
   const result=await api.inspect();
-  return {...result,count:result.drafts.length};
+  return {...result,addonDrafts:result.addonDrafts??[],count:result.drafts.length};
  }
  return {
   status:inspect,
+  locateAddonDraft:id=>api.locateAddonDraft(id),
+  async discardAddonDrafts(ids){
+   await api.discardAddonDrafts(ids);
+   return inspect();
+  },
   async prepare(choice){
    if(!['check','save','discard'].includes(choice))throw Error('无效的草稿处理方式。');
    let status=await inspect();

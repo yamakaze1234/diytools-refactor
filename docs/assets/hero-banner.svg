@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="340" viewBox="0 0 1280 340" role="img" aria-labelledby="title desc" xml:lang="zh-CN">
   <title id="title">DIY 配置工作台</title>
-  <desc id="desc">Windows x64，版本 0.2.57。NAS 集中管理配置、成本与库存，桌面完成编辑、排版和导出。</desc>
+  <desc id="desc">Windows x64，版本 0.2.58。NAS 集中管理配置、成本与库存，桌面完成编辑、排版和导出。</desc>
   <defs>
     <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
       <path d="M24 0H0V24" fill="none" stroke="#282828" stroke-width="1"/>
@@ -27,7 +27,7 @@
   <path fill="url(#hatch)" d="M47 266h639v7H47z"/>
   <g font-family="Consolas, Liberation Mono, monospace" font-size="13" font-weight="700">
     <path fill="#fffa00" d="M47 287h155v18l-8 8H47z"/>
-    <text fill="#161616" x="59" y="305">RELEASE v0.2.57</text>
+    <text fill="#161616" x="59" y="305">RELEASE v0.2.58</text>
     <path fill="#262626" stroke="#5d5d5b" d="M213 287h113v18l-8 8H213zM337 287h205v18l-8 8H337z"/>
     <text fill="#f4f4f2" x="225" y="305">WINDOWS x64</text>
     <text fill="#f4f4f2" x="349" y="305">TAURI · REACT · RUST · PG</text>

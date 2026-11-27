@@ -42,7 +42,7 @@ export function buildNasProfitReport({shopId,configIds,configs,settings,linkConf
  for(const id of configIds){
   const c=byId.get(id),rawParts=c.actualParts??c.parts;
   if(!Array.isArray(rawParts)||rawParts.some(part=>!part||typeof part!=='object'||Array.isArray(part)))
-   throw Error('实际成本配件格式无效，请刷新配置再试。');
+   throw Error('实际成本配件格式无效，请刷新工作台再试。');
   const parts=rawParts.flatMap(raw=>{
    const part=normalizeSpecialComponent(raw);
    const goodsId=identity(part.goodsId),name=text(part.name),slot=text(part.slot);

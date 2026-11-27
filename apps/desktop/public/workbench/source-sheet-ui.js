@@ -892,7 +892,7 @@ const row=views.get(item.id),addons=panel==='addons';
  function review(view){
   const host=childDialog(view==='automatic'?'本次变动':'待确认差异');
   let firstRead=true;
-  sync=mountSourceSync(host,{getRows:api.getReviewRows??sheetRows,getConfigs:api.getConfigs,shopId:api.shopId,isEdited:hasPending,
+  sync=mountSourceSync(host,{getRows:api.getReviewRows??sheetRows,getConfigs:api.getConfigs,getDraftStates:api.getDraftStates,shopId:api.shopId,isEdited:hasPending,
    flush:async()=>{await api.flush();if(firstRead){await api.refreshAlerts?.();firstRead=false;}},
    saveSkuMode:api.saveSkuMode,apply:api.applySync,validateImage:api.validateImage,download:api.download,
    prepareExport:api.prepareExport,onChanged:api.refreshAlerts,errorText:api.errorText,message,view,deferRefresh:true});
@@ -919,7 +919,18 @@ const row=views.get(item.id),addons=panel==='addons';
   if(globalThis.workbenchSourceEditor===editor)delete globalThis.workbenchSourceEditor;
   api.onClose?.();
  }
- const editor={sheet:true,hasPending,save,leave,locate,dispose,restore:()=>{root.hidden=false;workspace.classList.add('source-sheet-active');},
+ // Agent 已确认保存后重读共用目录、当前列表和打开的抽屉。读回期间产生的人工修改优先保留。
+ async function refreshSaved(){
+  if(disposed||hasPending())return false;
+  await api.sharedSources?.refresh?.();
+  if(disposed||hasPending())return false;
+  const open=drawer&&!drawerHost.hidden?{id:drawer.id,kind:drawer.kind,scope:drawer.scope}:null;
+  if(editing)finishEditing(editing.field);
+  clearDrawer();readRows();refreshTable();
+  if(open)showDrawer(itemById(open.id),open.kind,open.scope);
+  return filter==='deleted'?deleted.refresh():true;
+ }
+ const editor={sheet:true,hasPending,save,leave,locate,dispose,refreshSaved,restore:()=>{root.hidden=false;workspace.classList.add('source-sheet-active');},
   // 通用弹窗打开和回收时，只释放弹窗内节点。工作表与抽屉始终独立。
   detachForDialog(){}};
  globalThis.workbenchSourceEditor=editor;

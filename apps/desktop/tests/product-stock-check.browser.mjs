@@ -113,7 +113,7 @@ try{
  assert.equal(await page.locator('[data-stock-locate]').count(),0);
  await page.locator('[data-stock-toggle="1001"]').click();
  const inventory=page.locator('#inventory-check-page');
- for(const [theme,canvas] of [['dark','rgb(29, 30, 33)'],['light','rgb(244, 244, 241)']]){
+ for(const [theme,canvas] of [['dark','rgb(22, 22, 22)'],['light','rgb(244, 244, 241)']]){
   // 独立工作台页面接收与宿主主题按钮相同的主题事件。
   await page.evaluate(theme=>window.dispatchEvent(new CustomEvent('workbench-ui-theme-change',{detail:theme})),theme);
   assert.equal(await inventory.evaluate(el=>getComputedStyle(el).backgroundColor),canvas);

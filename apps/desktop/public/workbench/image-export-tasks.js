@@ -132,18 +132,22 @@ export function startImageExportTask({entries,name,title='批量图片导出',wi
 /** 使用独立的非模态侧面板，关闭或替换业务弹窗不会卸载任务。 */
 function ensureTaskCenter(){
  if(typeof document==='undefined'||document.querySelector('#image-task-center-toggle'))return;
- const toggle=document.createElement('button');toggle.id='image-task-center-toggle';toggle.style.cssText='position:fixed;right:18px;bottom:88px;z-index:10020;padding:10px 16px;background:#1769aa;color:white;border-radius:8px';
- const panel=document.createElement('section');panel.id='image-task-center';panel.hidden=true;panel.setAttribute('aria-label','后台图片任务');panel.style.cssText='position:fixed;right:18px;bottom:134px;width:min(440px,90vw);max-height:min(65vh,calc(100vh - 180px));overflow:auto;z-index:10020;background:white;color:#172b4d;padding:18px;border:1px solid #ccd7e3;border-radius:10px;box-shadow:0 8px 32px #0003';
- toggle.onclick=()=>{panel.hidden=!panel.hidden;};document.body.append(toggle,panel);
+ const toggle=document.createElement('button');toggle.id='image-task-center-toggle';toggle.style.cssText='position:fixed;right:18px;bottom:88px;z-index:10020;padding:10px 16px;border-radius:8px';
+ const panel=document.createElement('section');panel.id='image-task-center';panel.setAttribute('aria-label','后台图片任务');panel.style.cssText='position:fixed;right:18px;bottom:134px;width:min(440px,90vw);max-height:min(65vh,calc(100vh - 180px));overflow:auto;z-index:10020;padding:18px;border-radius:10px;box-shadow:0 8px 32px #0003';
+ const hidden=(node,value)=>{node.hidden=value;node.style.display=value?'none':'';};
+ toggle.onclick=()=>hidden(panel,!panel.hidden);hidden(panel,true);document.body.append(toggle,panel);
  const draw=()=>{
-  const all=imageExportTasks();toggle.textContent=`图片任务 ${all.filter(task=>task.busy).length} 进行中 / ${all.length}`;
-  panel.replaceChildren();const heading=document.createElement('strong');heading.textContent='后台图片任务';const close=document.createElement('button');close.textContent='收起';close.onclick=()=>panel.hidden=true;
+  const all=imageExportTasks(),needsAttention=all.some(task=>task.busy||task.phase!=='completed');
+  // 已完成记录仍可由调用方读取；任务中心只在还有任务需要关注时显示。
+  hidden(toggle,!needsAttention);
+  if(!needsAttention){hidden(panel,true);toggle.textContent='';panel.replaceChildren();return;}
+  toggle.textContent=`图片任务 ${all.filter(task=>task.busy).length} 进行中 / ${all.length}`;
+  panel.replaceChildren();const heading=document.createElement('strong');heading.textContent='后台图片任务';const close=document.createElement('button');close.textContent='收起';close.onclick=()=>hidden(panel,true);
   const clear=document.createElement('button');clear.textContent='一键清空记录';clear.disabled=!all.some(task=>!task.busy);clear.title='清空未运行的任务记录，正在执行的任务保留';
   clear.onclick=()=>{for(const task of imageExportTasks())if(!task.busy)tasks.delete(task.id);emit();};
   panel.append(heading,close,clear);
-  if(!all.length){const empty=document.createElement('p');empty.textContent='暂无图片任务记录';panel.append(empty);}
   for(const task of all.slice().reverse()){
-   const section=document.createElement('div');section.style.cssText='border-top:1px solid #e2e8f0;margin-top:12px;padding-top:12px';
+   const section=document.createElement('div');
    const title=document.createElement('strong');title.textContent=task.title;const message=document.createElement('p');message.textContent=task.message;
    const progress=document.createElement('p');progress.textContent=`共 ${task.items.length} 张 · 已交付 ${task.items.filter(delivered).length} · 待保存 ${task.items.filter(item=>item.state==='generated').length} · 失败 ${task.items.filter(item=>item.state==='failed').length}`;
    section.append(title,message,progress);

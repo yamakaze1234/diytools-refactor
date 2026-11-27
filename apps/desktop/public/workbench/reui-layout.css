@@ -92,11 +92,11 @@ body.continuous-mode :is(#continuous-workbench,[data-pp-card]) { flex: 1; min-he
 /* 全局主题在具名层内重置按钮，提醒态需与既有交互规则同层。 */
 @layer workbench-interaction {
  /* 深色角标沿用差异窗口的中性灰与待确认红色，悬停按钮时保留角标前景。 */
- html.dark .ss-header [data-diff-badge].badge-unk { border-color:#565a63!important; background:#2e3035!important; color:#b6bcc6!important; }
+ html.dark .ss-header [data-diff-badge].badge-unk { border-color:#3f3f3f!important; background:#2e2e2e!important; color:#a3a3a3!important; }
  html.dark .rail-source-alert [data-source-menu-badge] { border-color:#8c3d42!important; background:#3b2023!important; color:#ff9496!important; }
  #source-sheet-page .ss-header [data-sheet-action=differences].has-source-diffs { box-shadow:0 0 0 2px #fffa00,0 0 0 3px #161616 !important; clip-path:none !important; }
  html[data-workbench-design] #rail-tool-panel>button:has(.rail-source-alert) { background:#fff7cf !important; color:#5d4b03 !important; }
- html.dark[data-workbench-design] #rail-tool-panel>button:has(.rail-source-alert) { background:#34311e !important; color:#fffa00 !important; }
+ html.dark[data-workbench-design] #rail-tool-panel>button:has(.rail-source-alert) { background:#333018 !important; color:#fffa00 !important; }
 }
 .ss-header [data-diff-badge].badge-out { color:var(--ss-low-ink); background:var(--ss-low-bg); border-color:var(--ss-low-border); }
 body .sidebar .shop { padding-bottom: 0; margin-bottom: 10px; }
@@ -443,7 +443,7 @@ html[data-workbench-design] .sidebar #template-section-toggle.list-zone-heading 
 .host-template-inline { width:100%; min-width:75px; }
 .host-template-scroll tr.is-picked { background: #e0edd7; }
 .host-template-scroll tr.is-picked > th { background: #216b46; color: white; }
-html.dark .host-template-scroll tr.is-picked { background: #263f31; }
+html.dark .host-template-scroll tr.is-picked { background: #333018; }
 /* 主机模板按附件显示为平铺卡片，下方一行五个操作。 */
 .sidebar .template-library-section { border:0; border-radius:0; margin:0 0 6px; }
 .sidebar .template-library-content { background:var(--ef-panel,#fff); border:1px solid var(--ef-rule,#d9d9d4); border-top:0; padding:0; }
@@ -649,12 +649,6 @@ html.ui-font-system :is(#continuous-workbench,[data-pp-card]) :is(.ov-number,.ov
  :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:focus-visible { outline:2px solid #b89b20!important; outline-offset:2px!important; }
 
  /* 深色使用暗底与浅色状态字，避免加购条、卡片和输入框出现大块亮白。 */
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon { background:#35351f!important; color:#f1e9b1!important; box-shadow:inset 0 0 0 1px #5f5b36!important; }
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon:hover { background:#414128!important; }
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-bracket { color:#d1c875!important; }
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button { border-color:#68643b!important; background:#2b302b!important; color:#f5e8a9!important; }
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:hover { background:#454b2f!important; }
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply .ov-addon-apply-all { background:#46401c!important; border-color:#8a7b31!important; color:#ffe997!important; }
  html.dark #dialog.source-dialog :is(.addon-choice,.addon-card) { background:var(--ef-chip)!important; border-color:var(--ef-rule)!important; color:var(--ef-ink)!important; }
  html.dark #dialog.source-dialog :is(input,textarea,select) { background:var(--ef-panel)!important; color:var(--ef-ink)!important; border-color:var(--ef-rule)!important; color-scheme:dark!important; }
  html.dark #dialog.source-dialog :is(input,textarea,select):focus-visible { outline:2px solid var(--ef-signal)!important; outline-offset:2px!important; }
@@ -691,9 +685,9 @@ html.ui-font-system :is(#continuous-workbench,[data-pp-card]) :is(.ov-number,.ov
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon:hover{background:#393939!important;}
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-bracket{color:var(--ef-ink-2)!important;}
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button{background:var(--ef-chip)!important;color:var(--ef-ink)!important;border-color:#555!important;}
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply .ov-addon-apply-all{background:var(--ef-chip)!important;color:var(--ef-signal)!important;border-color:#68643b!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply .ov-addon-apply-all{background:var(--ef-chip)!important;color:var(--ef-signal)!important;border-color:#3f3f3f!important;}
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-addon-apply button:hover{background:var(--ef-signal)!important;color:var(--ef-on-signal)!important;}
- html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-ov-selected]{background:#3a3a24!important;color:var(--ef-ink)!important;}
+ html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-ov-selected]{background:#333018!important;color:var(--ef-ink)!important;}
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-anchor]{background:var(--ef-panel)!important;}
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-t]{--sel-t:inset 0 2px 0 var(--ef-signal);}
  html.dark :is(#continuous-workbench,[data-pp-card]) .ov-table [data-sel-b]{--sel-b:inset 0 -2px 0 var(--ef-signal);}
@@ -978,6 +972,71 @@ html.dark :is(.pack-sheet,.pack-reuse-fields){
  .pack-copy-fields,.pack-benefit-row,.pack-config-copy-row{grid-template-columns:minmax(0,1fr)}
 }
 .cost-source-table .cost-manual-row>td{background:#fff3ab}
-html.dark .cost-source-table .cost-manual-row>td{background:#5c4a13}
+html.dark .cost-source-table .cost-manual-row>td{background:#333018}
+
+/* 操作记录固定列宽；窄窗口允许列表横向滚动，动作以整枚标签为单位换行。 */
+html body #dialog.activity-dialog {
+ --activity-panel:#fff;--activity-soft:#f2f2f2;--activity-control:#f7f7f7;--activity-line:#d8d8d8;
+ --activity-ink:#202020;--activity-muted:#5d5d5d;--activity-focus:#786f00;--activity-selected:#fff7cf;
+ width:min(1080px,calc(100vw - 32px))!important; max-width:calc(100vw - 32px)!important;
+ min-width:0!important; height:auto!important; max-height:calc(100dvh - 32px)!important;
+ padding:0!important; overflow:hidden;
+ font:13px/1.45 "Segoe UI","Microsoft YaHei UI","PingFang SC",sans-serif;
+}
+html.dark body #dialog.activity-dialog {
+ --activity-panel:#1f1f1f;--activity-soft:#262626;--activity-control:#2e2e2e;--activity-line:#353535;
+ --activity-ink:#ededed;--activity-muted:#a3a3a3;--activity-focus:#fffa00;--activity-selected:#333018;
+}
+@layer endfield-theme {
+ html body #dialog.activity-dialog {
+  background:var(--activity-panel)!important;color:var(--activity-ink)!important;border-color:var(--activity-line)!important;
+ }
+ html body #dialog.activity-dialog :is(button:not(.close),select,input) {
+  background:var(--activity-control)!important;color:var(--activity-ink)!important;border-color:var(--activity-line)!important;
+ }
+ html body #dialog.activity-dialog :is(button[aria-pressed=true],#activity-cleanup-confirm) {
+  background:var(--activity-selected)!important;border-color:var(--activity-focus)!important;
+ }
+ html body #dialog.activity-dialog :is(button,select,input):focus-visible {outline:2px solid var(--activity-focus)!important;outline-offset:-2px;}
+ html body #dialog.activity-dialog button:not(.close):hover:enabled {border-color:var(--activity-focus)!important;}
+}
+#dialog.activity-dialog[open] {display:flex;flex-direction:column}
+#dialog.activity-dialog>form {flex:none;margin:0;padding:0}
+body #dialog.activity-dialog .dialog-title {display:flex;justify-content:initial;align-items:center;gap:12px;min-height:54px;margin:0;padding:10px 16px;border-bottom:1px solid var(--activity-line)!important}
+#dialog.activity-dialog .dialog-title h2 {white-space:nowrap;color:var(--activity-ink)!important}
+body #dialog.activity-dialog #dialog-body {display:flex;flex-direction:column;gap:10px;min-height:0;padding:0 16px 14px;overflow:auto;margin:0}
+#dialog.activity-dialog [hidden] {display:none!important}
+.activity-header,.activity-filters,.activity-shortcuts,.activity-operators,#activity-cleanup {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.activity-header {flex:1;min-width:0}
+.activity-header #activity-cleanup-open {margin-left:auto}
+.activity-shop,.activity-action strong {border:1px solid var(--activity-line);border-radius:3px;background:var(--activity-soft);padding:2px 6px;white-space:nowrap}
+.activity-rule {margin:0;padding:9px 0;border-bottom:1px solid var(--activity-line);color:var(--activity-muted)}
+#activity-count,.activity-pagination span,.activity-summary small,.activity-locate small {color:var(--activity-muted)}
+.activity-operators {max-height:112px;overflow:auto;padding:2px 0}
+.activity-filters label,#activity-cleanup label {display:flex;align-items:center;gap:5px;white-space:nowrap;color:var(--activity-muted)}
+html body #dialog.activity-dialog :is(button:not(.close),select,input) {border:1px solid var(--activity-line);border-radius:4px!important;min-height:28px;padding:3px 8px!important;font:inherit;white-space:nowrap}
+html body #dialog.activity-dialog .activity-operators button {border-radius:999px!important}
+#activity-cleanup {padding:9px;border:1px solid var(--activity-line);background:var(--activity-soft)}
+#activity-cleanup p {flex:1 0 100%;margin:0;color:var(--activity-ink)}
+.activity-scroll {overflow:auto;min-height:65px;max-height:55dvh;border-block:1px solid var(--activity-line)}
+.activity-day {position:sticky;top:0;z-index:1;margin:0;padding:6px 8px;background:var(--activity-soft);color:var(--activity-ink);font-size:12px;font-variant-numeric:tabular-nums}
+.activity-row {display:grid;grid-template-columns:72px minmax(108px,13%) minmax(204px,22%) minmax(0,1fr) 116px;gap:8px;align-items:center;min-width:615px;padding:7px 8px;border-bottom:1px solid var(--activity-line)}
+.activity-row time {white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--activity-muted)}
+.activity-person {min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left}
+.activity-action {display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.activity-action span {white-space:nowrap;color:var(--activity-muted)}
+.activity-summary {min-width:0;overflow-wrap:anywhere}
+.activity-summary small {display:block}
+.activity-locate {text-align:right;white-space:nowrap}
+.activity-pagination {justify-content:flex-end;margin:0}
+.activity-empty {padding:12px 8px;color:var(--activity-muted)}
+
+/* 图片任务中心是非模态面板，使用当前工作台的主题色。 */
+#image-task-center-toggle {background:#1769aa;color:white}
+#image-task-center {background:#fff;color:#172b4d;border:1px solid #ccd7e3}
+#image-task-center>div {border-top:1px solid #e2e8f0;margin-top:12px;padding-top:12px}
+html.dark #image-task-center-toggle {background:#2e2e2e!important;color:#ededed!important;border-color:#3f3f3f!important}
+html.dark #image-task-center {background:#1f1f1f;color:#ededed;border-color:#353535}
+html.dark #image-task-center>div {border-color:#2b2b2b}
 .cost-row-actions{display:flex;flex-wrap:wrap;gap:4px}
 .cost-row-actions button{white-space:nowrap}

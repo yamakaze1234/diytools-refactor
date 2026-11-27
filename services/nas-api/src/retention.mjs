@@ -28,6 +28,10 @@ export function startRetention(stores,{initialDelayMs,intervalMs,workspaceId},lo
     if(stopped)break;
     try{await store.purgeExpiredRetention(workspaceId);}
     catch{log(`回收站定时清理失败（${shop}），下次巡检将重试`);}
+    if(stopped)break;
+    // 各清理使用独立事务，旧库或单项失败不会影响另一项巡检。
+    try{await store.purgeExpiredActivity?.(workspaceId);}
+    catch{log(`操作记录定时清理失败（${shop}），下次巡检将重试`);}
    }
   })().finally(()=>{pending=null;});
  };

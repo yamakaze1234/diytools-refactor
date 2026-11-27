@@ -18,6 +18,21 @@ state.sourceCatalog=[{shopId:'intel',sourceId:'s-cpu',goodsId:'1001',name:'验�
 state.sourceCatalog.push({shopId:'intel',sourceId:'new-cpu',goodsId:'2001',name:'替换CPU',erp:900,tax:950},{shopId:'intel',sourceId:'new-memory',goodsId:'2002',name:'替换内存',erp:330,tax:350});
 state.costSource=state.sourceCatalog.map(p=>({...p,stockAvailable:p.goodsId.startsWith('2')?100:0}));
 for(const c of state.configs){Object.assign(c.parts[0],state.sourceCatalog[0]);Object.assign(c.actualParts[0],state.sourceCatalog[0]);Object.assign(c.parts[3],state.sourceCatalog[1]);Object.assign(c.actualParts[3],state.sourceCatalog[1]);c.actualParts[3].qty=2;c.parts[0].upgrade='旧CPU文案';c.parts[3].upgrade='旧内存文案';}
+// 同一链接的第一个编号不参与第一轮替换，用于核对只导变动配置时的真实文件名。
+const otherCpu={...state.sourceCatalog[0],name:'配置零独立处理器',goodsId:'1003',sourceId:'zero-cpu'};
+state.sourceCatalog.push(otherCpu);state.costSource.push({...otherCpu,stockAvailable:0});
+const unchanged={...structuredClone(state.configs[0]),id:'c4',name:'配置0'};
+for(const parts of [unchanged.parts,unchanged.actualParts]){Object.assign(parts[0],otherCpu);Object.assign(parts[3],state.sourceCatalog[3]);}
+state.configs.push(unchanged);
+async function exportedPngs(zip){
+ const bytes=await fs.readFile(await zip.path()),files=[];
+ for(let offset=0;bytes.readUInt32LE(offset)===0x04034b50;){
+  const nameSize=bytes.readUInt16LE(offset+26),name=bytes.toString('utf8',offset+30,offset+30+nameSize);
+  if(name.endsWith('.png'))files.push(name.split('/').at(-1));
+  offset+=30+nameSize+bytes.readUInt16LE(offset+28)+bytes.readUInt32LE(offset+18);
+ }
+ return files;
+}
 let failStockSave=false;
 const errors=[],requests=[],browser=await chromium.launch({channel:'msedge',headless:true});
 try{
@@ -89,12 +104,19 @@ try{
  await page.locator('[data-stock-task="0"]').click();assert.match(await page.locator('#stock-picker label.selected').innerText(),/替换CPU/);assert.equal(await page.locator('[data-stock-link]').isChecked(),true);assert.equal(await page.locator('#stock-display-name').inputValue(),'海报处理器');
  await page.locator('[data-stock-task="1"]').click();await page.locator('#stock-preview').click();assert.match(await page.locator('#stock-message').innerText(),/2 条任务，将修改 1 个链接、2 套配置/);
  assert.match(await page.locator('#stock-diff').innerText(),/展示配件 · CPU/);assert.match(await page.locator('#stock-diff').innerText(),/实际配置 · 内存/);
- for(const width of [1300,760]){await page.setViewportSize({width,height:1000});for(const id of ['stock-task-tabs','stock-task-actions']){await page.locator('#'+id).scrollIntoViewIfNeeded();const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width+1);}}
+ assert.equal(await page.locator('#stock-export-scope').inputValue(),'changed');
+ const preview=await page.locator('#stock-diff').innerText();
+ await page.locator('#stock-export-scope').selectOption('all');
+ await page.locator('#stock-sku-mode').selectOption('dedicated');
+ await page.locator('[data-stock-layout="square"]').check();
+ assert.equal(await page.locator('#stock-diff').innerText(),preview);
+ assert.equal(await page.locator('#stock-apply').isEnabled(),true);
+ await page.locator('#stock-export-scope').selectOption('changed');
+ await page.locator('#stock-sku-mode').selectOption('padded');
+ for(const width of [1300,760]){await page.setViewportSize({width,height:1000});for(const id of ['stock-task-tabs','stock-task-actions']){await page.locator('#'+id).scrollIntoViewIfNeeded();const box=await page.locator('#'+id).boundingBox();assert.ok(box.x>=0&&box.x+box.width<=width+1);assert.equal(await page.locator('#'+id).evaluate(node=>node.scrollWidth-node.clientWidth),0);}}
  if(process.env.BATCH_TASK_SCREENSHOT){await page.setViewportSize({width:1300,height:1000});await page.locator('#stock-task-tabs').scrollIntoViewIfNeeded();await page.locator('#inventory-check-page').screenshot({path:process.env.BATCH_TASK_SCREENSHOT});}
  assert.match(await page.locator('#stock-diff').innerText(),/海报处理器（实际：替换CPU）/);
 // 首次导图让 Canvas 编码失败，恢复真实编码后只重试 ZIP，确认配置只提交一次。
- await page.locator('[data-stock-layout="square"]').check();
- await page.locator('#stock-preview').click();
  await page.evaluate(()=>{
   window.originalStockEncoder=HTMLCanvasElement.prototype.toBlob;
   HTMLCanvasElement.prototype.toBlob=function(done){done(null);};
@@ -105,17 +127,29 @@ try{
  await page.getByText(/修改已保存.*图片生成失败/).waitFor();
  await page.locator('#stock-retry:visible').waitFor();
  assert.match(await page.locator('#stock-message').innerText(),/修改已保存.*图片生成失败/);
+ await page.locator('#stock-export-scope').selectOption('all');
  await page.evaluate(()=>{HTMLCanvasElement.prototype.toBlob=window.originalStockEncoder;});
  const [zip]=await Promise.all([page.waitForEvent('download'),page.locator('#stock-retry').click()]);
  assert.match(zip.suggestedFilename(),/库存替换配置图.*\.zip$/);
  assert.equal(await zip.failure(),null);
+ assert.deepEqual(await exportedPngs(zip),['2_配置1.png','3_配置2.png']);
  await page.waitForFunction(()=>document.querySelector('#stock-message').textContent.includes('导出 2/2'));
 
  assert.equal(savedCount()-stockCount,2);
  const attempts=requests.filter(r=>r.path==='/api/configs/batch').slice(-2);
  assert.ok(attempts[0].operationId);assert.equal(attempts[0].operationId,attempts[1].operationId);
- for(const c of state.configs.slice(0,2)){assert.equal(c.parts[0].goodsId,'2001');assert.equal(c.actualParts[0].goodsId,'2001');assert.equal(c.parts[3].goodsId,'2002');assert.equal(c.actualParts[3].goodsId,'2002');assert.equal(c.actualParts[3].qty,2);assert.equal(c.parts[3].qty,1);}
- for(const c of state.configs.slice(0,2)){assert.equal(c.parts[0].displayName,'海报处理器');assert.equal(c.actualParts[0].displayName,undefined);}
- assert.deepEqual(state.configs.slice(2),baseline.slice(2));assert.equal(await page.locator('[data-stock-task]').count(),0);
+ for(const id of ['c0','c1']){
+  const c=state.configs.find(row=>row.id===id);
+  assert.equal(c.parts[0].goodsId,'2001');assert.equal(c.actualParts[0].goodsId,'2001');assert.equal(c.parts[3].goodsId,'2002');assert.equal(c.actualParts[3].goodsId,'2002');assert.equal(c.actualParts[3].qty,2);assert.equal(c.parts[3].qty,1);
+  assert.equal(c.parts[0].displayName,'海报处理器');assert.equal(c.actualParts[0].displayName,undefined);
+ }
+ for(const id of ['c2','c3','c4'])assert.deepEqual(state.configs.find(c=>c.id===id),baseline.find(c=>c.id===id));
+ assert.equal(await page.locator('[data-stock-task]').count(),0);
+ await choose('stock','配置零独立处理器','2001');
+ await page.locator('#stock-preview').click();
+ assert.match(await page.locator('#stock-message').innerText(),/1 个链接、1 套配置/);
+ const [allZip]=await Promise.all([page.waitForEvent('download'),page.locator('#stock-apply').click()]);
+ assert.equal(await allZip.failure(),null);
+ assert.deepEqual(await exportedPngs(allZip),['1_配置0.png','2_配置1.png','3_配置2.png']);
  assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'passed',checks:['global draft switch and independent link selection','global two replacements in one save','global undo','global conflicting tasks and delete','preview invalidation','stock draft switch','stock replaces display and actual in one save','stock current link scope','candidate filters and display alias','ZIP retry without a second save','1300/760px layout','completed queue reset','no page errors']}));
 }finally{await browser.close();}

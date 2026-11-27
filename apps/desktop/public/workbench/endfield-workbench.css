@@ -246,6 +246,13 @@
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) .brand { color: #ededed !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) button { background: #353535 !important; color: #ededed !important; }
   html[data-workbench-design] .topbar #save { background: #ededed !important; color: #161616 !important; }
+  /* 服务端变更只提示手动刷新，已有草稿时降低亮度，保留保存按钮的主次。 */
+  html[data-workbench-design] .topbar #workspace-sync[data-update=available] { background:#fffa00!important; color:#161616!important; font-weight:700; }
+  html[data-workbench-design] .topbar #workspace-sync[data-update=draft] { background:#2b2a14!important; color:#fffa00!important; border:1px solid #fffa00!important; font-weight:600; }
+  html[data-workbench-design] .topbar #workspace-sync:is([data-update=available],[data-update=draft])::before { content:''; display:inline-block; position:static; width:6px; height:6px; margin-inline-end:6px; vertical-align:middle; background:currentColor; transform:none; }
+  html[data-workbench-design] .topbar #workspace-sync[data-update=available]:hover:not(:disabled) { background:white!important; }
+  html[data-workbench-design] .topbar #workspace-sync[data-update=draft]:hover:not(:disabled) { background:#fffa00!important; color:#161616!important; }
+  html[data-workbench-design] .topbar #nas-update-hint:not([hidden]) { display:inline-block; margin-inline-start:5px; padding:0 5px; background:#fffa00; color:#161616!important; font-weight:700; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) button:is(:hover,:focus-visible):not(:disabled) { background: var(--ef-signal) !important; color: #161616 !important; }
   html[data-workbench-design] :is(.topbar,.app-shell > .app-header) button:focus-visible { outline-color: currentColor !important; }
   html[data-workbench-design] .reui-rail { background: #161616 !important; color: #ededed !important; border-right: 1px solid #353535; }
@@ -471,7 +478,7 @@
 /* 原生滚动条：保留系统滚动与拖拽，不增加滚动监听或额外 DOM。 */
 @layer endfield-theme {
  :root[data-workbench-theme=light] { --workbench-scroll-thumb: #999994; --workbench-scroll-hover: #666660; }
- :root[data-workbench-theme=dark] { --workbench-scroll-thumb: #666662; --workbench-scroll-hover: #a3a39b; }
+ :root[data-workbench-theme=dark] { --workbench-scroll-thumb: #666666; --workbench-scroll-hover: #a3a3a3; }
  html[data-workbench-design], html[data-workbench-design] * { scrollbar-color: auto !important; }
  html[data-workbench-design]::-webkit-scrollbar, html[data-workbench-design] *::-webkit-scrollbar { width: 9px; height: 9px; background: var(--ef-paper); }
  html[data-workbench-design]::-webkit-scrollbar-track, html[data-workbench-design] *::-webkit-scrollbar-track { background: var(--ef-paper); border: 0; }
@@ -625,6 +632,9 @@
  html[data-workbench-design] #desktop-host-actions .app-more .app-more-menu { background:var(--ef-panel) !important; border:1px solid var(--ef-rule) !important; border-top:2px solid var(--ef-trace) !important; padding:5px !important; }
  html[data-workbench-design] #desktop-host-actions .app-more .app-more-menu button { background:transparent !important; color:var(--ef-ink) !important; border:0 !important; text-align:left !important; justify-content:flex-start !important; padding:10px 14px !important; clip-path:none !important; }
  html[data-workbench-design] #desktop-host-actions .app-more .app-more-menu button:hover { background:var(--ef-chip) !important; }
+ /* 菜单位于工作台 iframe，在这里设置与宿主权限弹窗一致的悬停色。 */
+ html[data-workbench-design] #desktop-host-actions .app-more .app-more-menu button.agent-permission-entry:hover { background:#fffa00 !important; color:#161616 !important; }
+ .app-more-menu .agent-permission-entry small { margin-inline-start:auto; font-size:11px; }
 }
 
 /* 工具归入最左分类导航；原按钮保留为控制器入口。 */

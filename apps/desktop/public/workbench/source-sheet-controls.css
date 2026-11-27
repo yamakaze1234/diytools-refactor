@@ -33,17 +33,17 @@
   line-height: 1.45;
 }
 html.dark :is(#dialog .ss-add-part, #dialog.source-quick-dialog, #source-sheet-page .ss-drawer, .addon-choices-editor, .ac-note, [data-addon-merged]) {
-  --wb-canvas: #1d1e21;
-  --wb-panel: #242529;
-  --wb-control: #2c2d32;
-  --wb-soft: #2e3036;
-  --wb-line: #44464c;
-  --wb-rule: #34363b;
-  --wb-ink: #eceef1;
-  --wb-muted: #a9afb8;
+  --wb-canvas: #161616;
+  --wb-panel: #1f1f1f;
+  --wb-control: #2a2a2a;
+  --wb-soft: #2e2e2e;
+  --wb-line: #353535;
+  --wb-rule: #2b2b2b;
+  --wb-ink: #ededed;
+  --wb-muted: #a3a3a3;
   --wb-accent: #fffa00;
   --wb-focus: #fffa00;
-  --wb-selected: #34311e;
+  --wb-selected: #333018;
   --wb-selected-ink: #fffa00;
   --wb-out-bg: #3b2023;
   --wb-out-line: #8c3d42;
@@ -51,15 +51,15 @@ html.dark :is(#dialog .ss-add-part, #dialog.source-quick-dialog, #source-sheet-p
   --wb-low-bg: #372d18;
   --wb-low-line: #8c6c24;
   --wb-low-ink: #f6cc63;
-  --wb-unk-bg: #2e3035;
-  --wb-unk-line: #565a63;
-  --wb-unk-ink: #b6bcc6;
+  --wb-unk-bg: #2e2e2e;
+  --wb-unk-line: #3f3f3f;
+  --wb-unk-ink: #a3a3a3;
   --wb-ok-bg: #1e3528;
   --wb-ok-line: #3d7554;
   --wb-ok-ink: #9be0b2;
-  --wb-transit-bg: #1c2f3d;
-  --wb-transit-line: #3d6d8f;
-  --wb-transit-ink: #8fd0ff;
+  --wb-transit-bg: #262626;
+  --wb-transit-line: #3f3f3f;
+  --wb-transit-ink: #ededed;
 }
 /* 覆盖工作台 Endfield 层的通用控件外观。作用域限定为这三个编辑入口。 */
 @layer workbench-interaction {

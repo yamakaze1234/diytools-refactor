@@ -5,6 +5,7 @@ import {Button} from '@/components/ui/button';
 import './reui.css';
 import DiagnosticExport from './DiagnosticExport';
 import CacheCleanupDialog from './CacheCleanupDialog';
+import AgentPermissionsMenu from './AgentPermissionsDialog';
 /** 桌面 React 宿主：组织启动登录、工作台导航和更新流程，统一阻止未完成保存时的切换。 */
 import { useEffect, useRef, useState } from "react";
 import { invoke, isTauri } from '@tauri-apps/api/core';
@@ -163,6 +164,7 @@ export default function App() {
         frame?.contentWindow?.postMessage({type:'workbench-nas-autosave-settings'},location.origin);
         event.currentTarget.closest('details')?.removeAttribute('open');
       }}>自动保存设置</Button>}
+      {nasMain&&desktop&&<AgentPermissionsMenu/>}
       {/* 新版通道由原生签名契约隔离；诊断仅导出本次运行日志。 */}
       {!acceptance&&<Button type="button" variant="outline"
         onClick={event => { dismissStartupNotice();setUpdateOpen(true);event.currentTarget.closest('details')?.removeAttribute('open'); }}>检查更新</Button>}

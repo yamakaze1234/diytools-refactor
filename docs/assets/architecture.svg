@@ -15,7 +15,7 @@
   <path fill="none" stroke="#585856" d="M.5 3v426.5h1119V3M22 54h1076"/>
   <g fill="#f4f4f2" font-family="Arial, Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
     <text x="23" y="37" font-size="24" font-weight="800">系统运行架构</text>
-    <text x="1097" y="36" text-anchor="end" fill="#b4b4b2" font-size="13" font-weight="700" letter-spacing="2">// RUNTIME ARCHITECTURE · v0.2.57</text>
+    <text x="1097" y="36" text-anchor="end" fill="#b4b4b2" font-size="13" font-weight="700" letter-spacing="2">// RUNTIME ARCHITECTURE · v0.2.58</text>
 
     <!-- 三段运行路径和工作台侧的只读、签名更新入口。 -->
     <g fill="#1b1b1b" stroke="#646461">

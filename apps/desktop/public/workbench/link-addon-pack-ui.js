@@ -2,6 +2,7 @@ import {addonPackCopy,addonPackLine,addonPackValidationIssue,addonPartSlot,addon
 import {sameNasDocument} from './nas-main-workspace.js';
 import {moneyCents} from './pricing.js';
 import {destroyProductSearch,mountProductSearch} from './product-search.js';
+import {addonDraftName} from './link-addon-drafts.js';
 
 const blank=(productId,mode='parts',id=crypto.randomUUID())=>({id,productId,name:'',mode,priceCents:null,copyMode:mode==='text'?'custom':'preset',preset:'parts',customCopy:'',presetEdits:{},rules:[]});
 // 金额仍按分计算和保存，这里只将页面金额四舍五入到元。
@@ -42,7 +43,9 @@ export function mountAddonPackEditor(root,api){
  const trial=configs.find(c=>c.id===api.currentId)||configs[0];
  const currentSaved=()=>api.saved().filter(pack=>pack.productId===product.id);
  const savedPlan=id=>currentSaved().find(pack=>pack.id===id)??null;
- const contents=()=>[...new Map([...currentSaved(),...[...drafts.values()].map(row=>row.pack)].filter(pack=>pack.productId===product.id).map(pack=>[pack.id,pack])).values()];
+ const contents=()=>[...new Map([...currentSaved(),...[...drafts.values()].map(row=>row.pack)]
+  .filter(pack=>pack.productId===product.id).map(pack=>[pack.id,pack])).values()];
+ const planLabel=pack=>drafts.has(pack.id)?addonDraftName(pack)+'（未保存）':pack.name||'新方案';
  let draft,base,baseline,lastPartsId,busy=false,disposed=false,notice='',reuseOrigin='';
  const candidate=()=>draft.mode==='parts'?draft:{...draft,priceCents:null,rules:[]};
  const preset=()=>draft.preset;
@@ -84,7 +87,7 @@ export function mountAddonPackEditor(root,api){
   destroySearch();
   const structured=draft?.mode==='parts',usePreset=structured&&draft.copyMode==='preset';
   const plans=contents().filter(pack=>pack.mode===(structured?'parts':'text'));
-  const planOptions=plans.map(pack=>[pack.id,pack.name||'未命名草稿']);
+  const planOptions=plans.map(pack=>[pack.id,planLabel(pack)]);
   if(!structured)planOptions.unshift([currentConfigCopy,'当前配置文案']);
   if(draft&&!plans.some(pack=>pack.id===draft.id))planOptions.push([draft.id,'新方案']);
   const configRows=draft?[]:configCopy.rows();
@@ -139,7 +142,10 @@ export function mountAddonPackEditor(root,api){
   };
   if(!draft){mountConfigCopy(configRows);return;}
   $('pack-discard').onclick=()=>{
-   const {id,mode}=draft;drafts.delete(id);api.refresh();pick(id,mode);$('pack-name').focus();
+   const {id,mode}=draft;
+   if(!confirm(`确认放弃「${addonDraftName(draft)}」？`))return;
+   if(!drafts.delete(id)){notice='无法从本机移除草稿，请重试。';draw(false);return;}
+   api.refresh();pick(id,mode);$('pack-name').focus();
   };
   $('pack-name').oninput=event=>{draft.name=event.currentTarget.value;change(true);};
   if(structured){
@@ -218,7 +224,7 @@ export function mountAddonPackEditor(root,api){
    dirty&&issue?issue:drafts.failed(draft.id)?'草稿暂未写入本机，请保存加购包。':stateLabel());
   $('pack-discard').hidden=!dirty;
   const select=$('pack-select');
-  select.selectedOptions[0].textContent=draft.name|| (drafts.has(draft.id)?'未命名草稿':'新方案');
+  select.selectedOptions[0].textContent=planLabel(draft);
   $('pack-save').disabled=busy||!dirty||conflict||Boolean(issue);
   if(!structured)return;
   $('pack-match-count').textContent=`· 当前链接匹配 ${matches.length} / ${configs.length} 套`;
@@ -334,25 +340,32 @@ export function mountAddonBenefits(root,{config,rows,visible,esc,onBegin,onEdit,
  update();
 }
 
-export function openAddonPackMaintenance({openDialog,esc,configs,packs,inputs,edit}){
- openDialog('加购包维护','<div class="actions"><input id="pack-search" type="search" aria-label="搜索加购包、链接或 SPU" placeholder="方案名 / 链接 / SPU"><label><input id="pack-losses" type="checkbox">仅看亏损</label></div><div id="pack-maintenance-list"></div>');
+export function openAddonPackMaintenance({openDialog,esc,configs,packs,inputs,edit,discard}){
+ openDialog('加购包维护','<div class="actions"><input id="pack-search" type="search" aria-label="搜索加购包、链接或 SPU" placeholder="方案名 / 链接 / SPU"><label><input id="pack-losses" type="checkbox">仅看亏损</label><label><input id="pack-unsaved" type="checkbox">仅看未保存草稿</label></div><div id="pack-maintenance-list"></div>');
  const $=id=>document.getElementById(id),holder=$('pack-maintenance-list');
  const groups=new Map();
  for(const config of configs){const list=groups.get(config.productId)??[];list.push(config);groups.set(config.productId,list);}
  function draw(){
   const query=$('pack-search').value.trim().toLowerCase(),losses=$('pack-losses').checked;
-  const results=packs.flatMap(pack=>{
+  const current=packs();
+  const results=current.flatMap(pack=>{
+   if($('pack-unsaved').checked&&!pack.unsaved)return [];
    const list=groups.get(pack.productId)??[],link=list[0],matches=list.map(c=>({c,result:assessAddonPack(c,pack,inputs)})).filter(row=>!row.result.issue);
    const known=matches.map(row=>row.result.profit).filter(value=>value!=null),min=known.length?Math.min(...known):null;
-   if(![pack.name,link?.product,link?.spu].join(' ').toLowerCase().includes(query)||losses&&!(min<0))return [];
-   const name=link?.product||'链接已无在用配置';
-   return [`<details class="list-card addon-pack-maintenance"><summary><strong>${esc(pack.name)}</strong> · ${esc(name)} · SPU ${esc(link?.spu||'未填写')} · 命中 ${matches.length} 套
+   if(![addonDraftName(pack),link?.product,link?.spu].join(' ').toLowerCase().includes(query)||losses&&!(min<0))return [];
+   const name=link?(link.product||'未命名链接'):'链接已无在用配置';
+   return [`<details class="list-card addon-pack-maintenance"><summary><strong>${esc(addonDraftName(pack))}</strong>${pack.unsaved?' · 未保存草稿':''} · ${esc(name)} · SPU ${esc(link?.spu||'未填写')} · 命中 ${matches.length} 套
     ${pack.mode==='parts'?` · 最低利润 <strong data-profit-tone="${tone(min)}">${esc(packProfitText(pack.priceCents,min))}</strong>`:''}</summary>
     ${link?`<button data-pack-edit="${esc(pack.id)}" type="button">编辑此方案</button>`:''}
+    ${pack.unsaved?`<button data-pack-discard="${esc(pack.id)}" type="button">放弃草稿</button>`:''}
     ${matches.map(({c,result})=>pack.mode==='parts'?`<details class="addon-pack-match"><summary>${esc(c.name)} · 核算差 ${price(result.tax)} · ERP 差 ${price(result.erp)} · 客户补差 ${price(pack.priceCents)} · 利润 ${profit(pack.priceCents,result.profit)}</summary>${partDetails(result,esc)}</details>`:`<div class="addon-pack-match">${esc(c.name)}</div>`).join('')}</details>`];
   });
   holder.innerHTML=results.join('')||'<p class="hint">没有匹配的加购包。</p>';
-  for(const button of holder.querySelectorAll('[data-pack-edit]'))button.onclick=()=>edit(packs.find(pack=>pack.id===button.dataset.packEdit));
+  for(const button of holder.querySelectorAll('[data-pack-edit]'))button.onclick=()=>edit(current.find(pack=>pack.id===button.dataset.packEdit));
+  for(const button of holder.querySelectorAll('[data-pack-discard]'))button.onclick=()=>{
+   const pack=current.find(row=>row.id===button.dataset.packDiscard);
+   if(confirm(`确认放弃「${addonDraftName(pack)}」？`)){discard(pack.id);draw();}
+  };
  }
- $('pack-search').oninput=draw;$('pack-losses').onchange=draw;draw();
+ $('pack-search').oninput=draw;$('pack-losses').onchange=draw;$('pack-unsaved').onchange=draw;draw();
 }

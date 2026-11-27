@@ -23,6 +23,8 @@ mod agent_commands;
 #[cfg(feature = "agent-tools")]
 mod agent_jobs;
 #[cfg(feature = "agent-tools")]
+mod agent_permissions;
+#[cfg(feature = "agent-tools")]
 mod agent_files;
 #[cfg(feature = "agent-tools")]
 mod agent_entry;
@@ -196,6 +198,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             agent_commands::agent_ui,
+            agent_commands::agent_permissions_get,
+            agent_commands::agent_permissions_set,
             updater::updater_check,
             updater::updater_download,
             updater::updater_install,

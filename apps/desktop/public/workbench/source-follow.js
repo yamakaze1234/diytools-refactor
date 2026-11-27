@@ -48,6 +48,14 @@ export function markSourceFieldManual(part,field){
  const previous=part.sourceFollow[field];
  part.sourceFollow[field]={mode:'manual',value:effective(part,field),...(previous&&Object.hasOwn(previous,'sourceValue')?{sourceValue:previous.sourceValue}:{})};
 }
+/** 换件先恢复新来源跟随，仅在用户给出了不同的展示名时转为手工维护。 */
+export function setReplacementDisplayName(part,displayName){
+ const name=typeof displayName==='string'?displayName.trim():'';
+ if(name&&name!==part.name){
+  part.displayName=name;
+  markSourceFieldManual(part,'name');
+ }
+}
 function writeFollow(part,field,value){
  if(field==='name'){part.name=value;delete part.displayName;}else part.upgrade=value;
  const textOnly=field==='upgrade'&&part.sourceFollow[field]?.textOnly===true;

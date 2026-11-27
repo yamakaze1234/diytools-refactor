@@ -1,5 +1,5 @@
 import {ensureActualParts} from './actual-parts.js';
-import {markSourceFieldManual} from './source-follow.js';
+import {setReplacementDisplayName} from './source-follow.js';
 import {replaceSourcePart} from './source.js';
 
 /** 明确的双侧替换按部位定位，不能依赖展示与实际清单的行号相同。 */
@@ -16,10 +16,5 @@ export function replaceBothParts(config,slot,replacement,qty=null,options=null){
  replaceSourcePart({...config,parts:config.actualParts},actualIndex,replacement,{syncAddons:false});
  if(qty!==null){config.parts[displayIndex].qty=qty;config.actualParts[actualIndex].qty=qty;}
  // 自定义名称仅跟随展示行，实际 BOM 继续使用所选输出源。
- const name=typeof options?.displayName==='string'?options.displayName.trim():'';
- if(name&&name!==replacement.name){
-  const part=config.parts.find(p=>p.slot===slot);
-  part.displayName=name;
-  markSourceFieldManual(part,'name');
- }
+ setReplacementDisplayName(config.parts[displayIndex],options?.displayName);
 }

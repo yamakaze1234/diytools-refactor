@@ -11,11 +11,15 @@ const money=x=>x==null?'—':Number(x).toFixed(2);
 export function openCostEditor(api){let page=0,selected=new Set(),preview=null,busy=false;
  api.openDialog(api.nas?'当前店铺核算价':'成本源维护',`<p class="hint">${api.nas?'打开时读取主机成本表。手动保存后本店这一行会保留手改价，直到点击「重新同步核算价」。':'库存与 ERP 成本由右上角“一键同步”更新。含税核算价人工维护，保存后同步到引用该 goods_id 的输出源和配置，并记录时间。'}</p><div class="cost-source-meta" id="cost-source-meta"></div>${api.reloadCosts?'<p id="cost-workbook-status" class="hint" role="status"></p>':''}<div class="source-toolbar"><input id="cost-source-search" type="search" placeholder="搜索 goods_id 或商品名称">${api.resume?'<select id="cost-price-filter" aria-label="筛选核算价"><option value="all">全部核算价</option><option value="different">与 ERP 成本不同</option><option value="manual">仅手动改价</option></select>':''}<button id="cost-source-paste-toggle">批量粘贴核算价</button>${api.reloadCosts?'<button id="cost-workbook-refresh">重新读取成本表</button>':''}</div><div id="cost-source-paste" class="hidden"><p class="hint">支持两列：goods_id＋含税单价；或先勾选商品，再粘贴一列单价（按表格原始顺序）。可带 goods_id / 含税成本表头，空值保留原价；#VALUE! 改用对应 ERP 成本，无可用 ERP 成本时保留原核算价。</p><textarea id="cost-paste-values" placeholder="100001&#9;100"></textarea><button id="cost-paste-check">预览修改</button><div id="cost-paste-message" class="hint" role="status" aria-live="polite"></div><div id="cost-paste-diff" class="hint"></div><button id="cost-paste-apply" class="primary" disabled>${api.nas?'保存本店核算价':'保存并更新引用配置'}</button></div><div class="cost-source-wrap"><table class="cost-source-table"><thead><tr><th><input id="cost-source-all" type="checkbox" aria-label="全选搜索结果"></th><th>goods_id</th><th>商品名称</th><th>可销库存</th><th>ERP 成本</th><th>含税核算单价</th><th>核算价更新时间</th><th></th></tr></thead><tbody id="cost-source-rows"></tbody></table></div><div class="source-pagination"><button id="cost-prev">上一页</button><span id="cost-page"></span><button id="cost-next">下一页</button></div><div id="cost-message" class="hint" role="status"></div>`);$('#dialog').classList.add('cost-dialog');
  const panel=$('#cost-source-rows');
+ const search=$('#cost-source-search');
+ // 从操作记录进入时按商品 ID 精确匹配，手动输入后恢复普通搜索。
+ let focusGoodsId=api.focusGoodsId;
+ if(focusGoodsId)search.value=focusGoodsId;
  const isManual=row=>api.resume&&row.nasManualTax===true;
  function filtered(source=api.getRows()){
   const q=$('#cost-source-search').value.toLowerCase().trim(),mode=$('#cost-price-filter')?.value;
   return source.filter(row=>{
-   if(![row.goodsId,row.name].join(' ').toLowerCase().includes(q))return false;
+   if(focusGoodsId?row.goodsId!==focusGoodsId:![row.goodsId,row.name].join(' ').toLowerCase().includes(q))return false;
    if(mode==='manual')return isManual(row);
    if(mode!=='different')return true;
    // 只和有效的 ERP 成本比较，按界面显示的分币精度忽略工作簿小数误差。
@@ -83,7 +87,7 @@ export function openCostEditor(api){let page=0,selected=new Set(),preview=null,b
   return `已更新 ${entries.length} 条核算价${api.nas?'，本店手改价已保留。':'，'+count+' 套配置已重新核算。'}`;
  });
  const restartPage=()=>{page=0;draw();};
- $('#cost-source-search').oninput=restartPage;
+ search.oninput=()=>{focusGoodsId=null;restartPage();};
  if($('#cost-price-filter'))$('#cost-price-filter').onchange=restartPage;
  $('#cost-prev').onclick=()=>{page--;draw();};$('#cost-next').onclick=()=>{page++;draw();};$('#cost-source-all').onchange=e=>{filtered().forEach(r=>e.target.checked?selected.add(r.goodsId):selected.delete(r.goodsId));preview=null;$('#cost-paste-apply').disabled=true;draw();};
  $('#cost-source-paste-toggle').onclick=()=>$('#cost-source-paste').classList.toggle('hidden');$('#cost-paste-values').oninput=()=>{preview=null;$('#cost-paste-apply').disabled=true;$('#cost-paste-diff').textContent='';message('粘贴内容已更改，请点击“预览修改”。');};
@@ -95,6 +99,7 @@ export function openCostEditor(api){let page=0,selected=new Set(),preview=null,b
  $('#cost-paste-apply').textContent=`保存 ${preview.length} 条${api.nas?'本店核算价':'并更新引用配置'}`;$('#cost-paste-apply').disabled=false;
  }catch(e){message(e.message,true);}};
  $('#cost-paste-apply').onclick=()=>preview&&commit(preview);draw();
+ if(focusGoodsId)panel.querySelector('[data-manual-price]')?.focus();
  if(api.reloadCosts){
   const refresh=$('#cost-workbook-refresh'),status=$('#cost-workbook-status');
   refresh.onclick=async()=>{

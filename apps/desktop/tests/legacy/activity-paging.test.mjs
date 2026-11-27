@@ -20,28 +20,55 @@ test('activity loads 30-row pages and ignores superseded dates or replaced dialo
  assert.equal(nodes.get('#activity-count').textContent,'共 60 条记录');assert.deepEqual(errors,[]);
 });
 
-test('NAS 操作记录按服务端日期分页，并用明确资源定位到当前配置',async()=>{
- const nodes=new Map(),requests=[],errors=[],positions=[],hint=[];
- const locateButton={dataset:{activityLocate:'0'}};
- const context=vm.createContext({URLSearchParams,recentActivity:()=>assert.fail('NAS 分页不能先取本机记录'),
-  document:{querySelector:key=>nodes.get(key),querySelectorAll:()=>[locateButton]}});
+test('NAS 活动按人、类型和日期筛选，批量与单件定位分流，清理先预览',async()=>{
+ const nodes=new Map(),requests=[],errors=[],positions=[],purges=[];
+ const button=dataset=>({dataset});
+ const locateButtons=[button({activityLocate:'0'}),button({activityLocate:'1'}),button({activityLocate:'2'})];
+ const rowPerson=button({activityPerson:'other'}),ownButton=button({activityOperator:'own'});
+ const context=vm.createContext({URLSearchParams,recentActivity:()=>assert.fail('NAS 不读本机记录'),
+  document:{querySelector:key=>nodes.get(key),querySelectorAll:()=>[]}});
  vm.runInContext(source,context);
- const row={kind:'configurations',resource_id:'config-a',resource_name:'配置 A',operator:'当班人员',action:'replace',
-  next_version:'21',created_at:'2026-11-16T16:00:00Z'};
- context.openActivity({esc:String,toast:error=>errors.push(error),locate:target=>positions.push({...target}),
-  openDialog:(_title,html)=>{hint.push(html);for(const match of html.matchAll(/id="([^"]+)"/g))nodes.set('#'+match[1],{value:'',isConnected:true});},
-  request:()=>assert.fail('NAS 不调用本机活动记录'),
-  loadNasPage:async query=>{requests.push({...query});return {...query,total:221,rows:[row]};}});
+ const base={actor_uid:'other',operator:'当班人员',next_version:'21',created_at:'2026-11-16T16:08:00Z'};
+ const rows=[
+  {...base,kind:'configurations',resource_id:'config-a',resource_name:'配置 A',product_name:'测试链接',action:'replace'},
+  {...base,kind:'costs',resource_id:'batch',action:'tax_sync',updated_count:842,skipped_count:15,samples:[{name:'样本显卡',id:'1002'}]},
+  {...base,kind:'costs',resource_id:'1001',action:'global_tax',resource_name:'测试内存'},
+  {...base,kind:'sources',resource_id:'deleted',action:'purge',object_exists:false},
+ ];
+ const operators=[{uid:'own',name:'我',own:true},{uid:'other',name:'当班人员',own:false}];
+ context.openActivity({esc:String,toast:error=>errors.push(error),locate:target=>positions.push({...target}),shop:{id:'jonsbo',name:'乔思伯'},
+  openDialog:(_title,html,{headerHtml})=>{for(const match of (html+headerHtml).matchAll(/id="([^"]+)"/g))nodes.set('#'+match[1],{
+   value:'',hidden:true,isConnected:true,setAttribute(){},focus(){},querySelectorAll:selector=>({
+    '[data-activity-locate]':locateButtons,'[data-activity-person]':[rowPerson],'[data-activity-operator]':[ownButton],
+   }[selector]??[])});},
+  loadNasPage:async query=>{requests.push({...query});return {...query,total:221,rows,operators,supportsPurge:true};},
+  purgeNas:async body=>{purges.push(body);return {audit_count:842,receipt_count:1};}});
  await settle();
- assert.match(hint[0],/旧工作台本机记录未迁入/);
  assert.deepEqual(requests[0],{page:0,pageSize:30,from:'',to:''});
  assert.equal(nodes.get('#activity-count').textContent,'共 221 条记录');
- assert.match(nodes.get('#activity-list').innerHTML,/修改 · 配置.+配置 A · 版本 21.+操作人：当班人员.+2026\/11\/17/);
- await locateButton.onclick();assert.deepEqual(positions,[{id:'config-a',type:'configuration',shopId:'intel'}]);
- nodes.get('#activity-next').onclick();await settle();assert.equal(requests[1].page,1);
- nodes.get('#activity-from').value='2026-11-17';nodes.get('#activity-to').value='2026-11-18';
- nodes.get('#activity-from').onchange();await settle();
- assert.deepEqual(requests[2],{page:0,pageSize:30,from:'2026-11-17',to:'2026-11-18'});
+ assert.match(nodes.get('#activity-operators').innerHTML,/全部人员.+本人（我）.+当班人员/);
+ const records=nodes.get('#activity-list').innerHTML;
+ for(const label of ['测试链接 · 配置 A · 版本 21','当班人员','2026-11-17','更新 842 项，跳过 15 项手动核算价','样本显卡','三店改共用核算价','彻底清理','已永久清理'])assert.ok(records.includes(label),label);
+ assert.equal((records.match(/data-activity-locate=/g)||[]).length,3);
+ for(const locateButton of locateButtons)await locateButton.onclick();
+ assert.deepEqual(positions,[
+  {id:'config-a',type:'configuration',shopId:'jonsbo'},
+  {id:'batch',type:'price-changes',shopId:'jonsbo'},
+  {id:'1001',type:'component',shopId:'jonsbo',goodsId:'1001'},
+ ]);
+ nodes.get('#activity-next').onclick();await settle();assert.equal(requests.at(-1).page,1);
+ ownButton.onclick();await settle();assert.equal(requests.at(-1).actor,'own');
+ rowPerson.onclick();await settle();assert.equal(requests.at(-1).actor,'other');
+ nodes.get('#activity-kind').value='costs';nodes.get('#activity-from').value='2026-11-17';nodes.get('#activity-to').value='2026-11-18';
+ nodes.get('#activity-kind').onchange();await settle();
+ assert.deepEqual(requests.at(-1),{page:0,pageSize:30,from:'2026-11-17',to:'2026-11-18',actor:'other',kind:'costs'});
+ nodes.get('#activity-cleanup-open').onclick();
+ nodes.get('#activity-cleanup-scope').value='selected';nodes.get('#activity-cleanup-scope').onchange();
+ await nodes.get('#activity-cleanup-confirm').onclick();assert.equal(purges.length,0);
+ await nodes.get('#activity-cleanup-preview').onclick();
+ assert.match(nodes.get('#activity-cleanup-status').textContent,/预计清理 842.+1 份过期回执/);
+ await nodes.get('#activity-cleanup-confirm').onclick();
+ assert.deepEqual(purges.map(body=>({...body})),[true,false].map(dry_run=>({from:'2026-11-17',to:'2026-11-18',actor:'other',kind:'costs',dry_run})));
  nodes.get('#activity-to').value='2026-11-16';nodes.get('#activity-to').onchange();await settle();
- assert.equal(requests.length,3);assert.deepEqual(errors,['开始日期不得晚于结束日期。']);
+ assert.deepEqual(errors,['开始日期不得晚于结束日期。']);
 });

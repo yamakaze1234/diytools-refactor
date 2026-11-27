@@ -33,9 +33,12 @@ function grouped(items){
  return [...groups.values()].sort((a,b)=>timeOf(b.d.changedAt)-timeOf(a.d.changedAt)||slotOrder(a.d.slot)-slotOrder(b.d.slot));
 }
 
-function memberHtml({config,detail},ignored){
+function memberHtml({config,detail,draft},ignored){
  const key=esc(detail.key),spu=config.before.spu;
+ // 在途提交优先显示回执状态，避免用户误判为尚未保存而重复处理。
+ const badge=draft?(draft.pending?'本机待确认回执':draft.staleRemote?'本机旧草稿 · 服务器已更新':'本机未保存草稿'):'';
  return `<div class="sd-member"><label>${ignored?'':`<input type="checkbox" data-source-select value="${key}">`}<strong title="${esc(config.product)}">${esc(config.product)}</strong><span title="${esc(config.name)}">· ${esc(config.name)}</span></label>
+ ${badge?`<span class="sd-badge sd-amber" data-source-draft>${badge}</span>`:''}
  ${ignored?`<span class="sd-badge sd-grey">还剩 ${detail.daysLeft} 天清理</span><button type="button" data-restore-item="${key}">恢复</button>`:spu?`<small title="${esc(spu)}">SPU …${esc(String(spu).slice(-6))}</small>`:''}</div>`;
 }
 function groupHtml(group,index,ignored,expanded){
@@ -142,9 +145,11 @@ export function mountSourceSync(root,api){
   for(const {detail:d} of filtered){if(d.ignored)counts.ignored++;else{counts.all++;counts[d.kind]++;}}
   for(const el of all('[data-count]'))el.textContent=counts[el.dataset.count];
   for(const el of all('[data-diff-tab]'))el.setAttribute('aria-pressed',String(el.dataset.diffTab===tab));
-  $('[data-diff-summary]').textContent=`待同步跟随 ${counts.follow} · 人工待确认 ${counts.manual} · 已忽略 ${counts.ignored}`;
   const ignored=tab==='ignored';
   visible=filtered.filter(({detail:d})=>ignored?d.ignored:!d.ignored&&(tab==='all'||tab===d.kind));
+  // 一份草稿可在多个字段、多个分组里出现，摘要按当前筛选中的配置去重。
+  const draftCount=countConfigs(visible.filter(item=>item.draft));
+  $('[data-diff-summary]').textContent=`待同步跟随 ${counts.follow} · 人工待确认 ${counts.manual} · 已忽略 ${counts.ignored}`+(draftCount?` · 其中 ${draftCount} 条来自本机未保存草稿`:'');
   const found=grouped(visible),pages=Math.max(1,Math.ceil(found.length/pageSize));
   page=Math.min(page,pages-1);groups=found.slice(page*pageSize,(page+1)*pageSize);
   const pagination=$('[data-review-pagination]');pagination.hidden=pages===1;
@@ -205,7 +210,8 @@ export function mountSourceSync(root,api){
    const fields=all('[data-source-field]:checked').map(el=>el.dataset.sourceField);
    if(fields.length){
     preview=sourceFollowPlan(api.getConfigs(),api.getRows(),fields,api.shopId(),{includeIgnored:true});
-    items=preview.changes.flatMap(config=>config.details.map(detail=>({config,detail})));
+    const drafts=api.getDraftStates?.();
+    items=preview.changes.flatMap(config=>config.details.map(detail=>({config,detail,draft:drafts?.get(config.id)})));
    }
    updateFilters();render();
    scheduleRetention();

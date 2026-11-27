@@ -6,6 +6,7 @@ import {PGlite} from '@electric-sql/pglite';
 
 const sql=name=>readFile(new URL('../sql/'+name,import.meta.url),'utf8');
 const migration=await sql('009-operations-activity-page.sql');
+const migration034=await sql('034-activity-filter-and-cleanup.sql');
 const call=(db,args=[null,null,0,30])=>db.query('SELECT intel_live.operations_activity_page($1::date,$2::date,$3::integer,$4::integer) data',args).then(result=>result.rows[0].data);
 const bind=(db,workspace,actor)=>db.query("SELECT set_config('intel_live.catalog_workspace',$1,false),set_config('intel_live.catalog_uid',$2,false)",[workspace,actor]);
 const trial='diy_workbench_trial',formal='diy_workbench',trialRole='diy_api_operations',formalRole='diy_api_intel_production';
@@ -104,4 +105,52 @@ test('试验库独立授予试验角色，非目标数据库拒绝部署',async(
  }finally{await db.close();}
  const wrong=new PGlite();
  try{await assert.rejects(()=>wrong.exec(migration),/只允许英特尔正式库或试验库/);}finally{await wrong.close();}
+});
+
+test('034 兼容无认证表的试验库，清理按工作区与成本批次匹配并保护近期回执',async()=>{
+ const db=await fixture(trial,trialRole);
+ try{
+  await db.exec(migration034);
+  await db.exec(migration034);
+  await db.exec(`INSERT INTO intel_live.sources VALUES ('s1','intel',false,'101','测试散热器','{}',1);
+   INSERT INTO intel_live.workspace_receipts(workspace_id,actor_uid,operation_id,shop_id,kind,request_sha256,result,created_at) VALUES
+    ('w','alice','00000000-0000-4000-8000-000000000011','intel','costs',repeat('0',64),'{}',now()-interval '2 days'),
+    ('w','bob','00000000-0000-4000-8000-000000000012','intel','costs',repeat('0',64),'{}',now()),
+    ('other','eve','00000000-0000-4000-8000-000000000013','intel','costs',repeat('0',64),'{}',now()-interval '31 days'),
+    ('w','system:retention','00000000-0000-4000-8000-000000000014','intel','configurations',repeat('0',64),'{}',now()-interval '31 days');
+   INSERT INTO intel_live.workspace_audit VALUES
+    ('w','alice','00000000-0000-4000-8000-000000000011',1,'101','tax_file_skipped',1,2,gen_random_uuid(),'2026-11-16 15:59:59+00'),
+    ('w','alice','00000000-0000-4000-8000-000000000011',2,'102','tax_sync',1,2,gen_random_uuid(),'2026-11-16 16:00:00+00'),
+    ('w','bob','00000000-0000-4000-8000-000000000012',1,'101','global_tax',1,3,gen_random_uuid(),'2026-11-16 16:00:00+00'),
+    ('other','eve','00000000-0000-4000-8000-000000000013',1,'102','tax_edit',1,2,gen_random_uuid(),now()-interval '31 days'),
+    ('w','system:retention','00000000-0000-4000-8000-000000000014',1,'removed','purge',1,2,gen_random_uuid(),now()-interval '31 days');`);
+  await db.exec('SET ROLE '+trialRole);
+  const query=async(args=[null,null,0,30,null,null])=>(await db.query('SELECT intel_live.operations_activity_query($1,$2,$3,$4,$5,$6) data',args)).rows[0].data;
+  const purge=async(dry)=>(await db.query("SELECT intel_live.purge_operations_activity('intel','2026-11-17','2026-11-17',NULL,'costs',$1) data",[dry])).rows[0].data;
+  await assert.rejects(query(),{code:'42501'});
+  await bind(db,'w','alice');
+  const result=await query(),batch=result.rows.find(row=>row.batch),single=result.rows.find(row=>row.action==='global_tax');
+  assert.equal(result.total,3);
+  assert.deepEqual(result.operators,[{uid:'alice',name:'alice',own:true},{uid:'bob',name:'bob',own:false},
+   {uid:'system:retention',name:'系统定时清理',own:false}]);
+  assert.deepEqual([batch.item_count,batch.updated_count,batch.skipped_count,batch.action],[2,1,1,'tax_sync']);
+  assert.deepEqual(batch.samples,[{id:'102',name:null},{id:'101',name:'测试散热器'}]);
+  assert.deepEqual([single.resource_id,single.resource_name,single.object_exists],['101','测试散热器',true]);
+  assert.equal(result.rows.find(row=>row.action==='purge').object_exists,false);
+  assert.equal((await query(['2026-11-17','2026-11-17',0,30,'alice','costs'])).total,1);
+  assert.equal((await query(['2026-11-16','2026-11-16',0,30,'alice','costs'])).total,0);
+  assert.equal((await query([null,null,0,30,'eve',null])).total,0);
+  assert.equal((await call(db)).total,4);
+  assert.ok((await call(db)).rows.every(row=>!('actor_uid' in row)));
+  await assert.rejects(db.query("SELECT intel_live.purge_operations_activity('jonsbo')"),{code:'42501'});
+  await assert.rejects(db.query('DELETE FROM intel_live.workspace_audit'),{code:'42501'});
+  assert.deepEqual(await purge(true),{audit_count:3,batch_count:2,receipt_count:1});
+  assert.equal((await query()).total,3);
+  assert.deepEqual(await purge(false),{audit_count:3,batch_count:2,receipt_count:1});
+  assert.deepEqual((await db.query("SELECT intel_live.purge_expired_activity('intel') data")).rows[0].data,{purged_audits:1,purged_receipts:1});
+  assert.equal((await query()).total,0);
+  await db.exec('RESET ROLE');
+  assert.deepEqual((await db.query('SELECT actor_uid FROM intel_live.workspace_receipts ORDER BY actor_uid')).rows,[{actor_uid:'bob'},{actor_uid:'eve'}]);
+  assert.equal((await db.query('SELECT name FROM intel_live.sources')).rows[0].name,'测试散热器');
+ }finally{await db.close();}
 });

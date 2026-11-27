@@ -12,6 +12,7 @@ import {summaryOf} from '../public/workbench/lazy-workspace.js';
 const require=createRequire(import.meta.url),{chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const base=process.env.REACT_TEST_URL||'http://127.0.0.1:5199';
 const colorStage=process.env.COLOR_STAGE||'final';
+const colorOutput=process.env.MODULE_COLOR_OUTPUT;
 const configs=Array.from({length:4},(_,i)=>{
  const product={id:`p${Math.floor(i/25)}`,name:`隔离链接${Math.floor(i/25)}`,shopId:'intel',spu:'',configs:[]};
  const c=blankConfig(null,product,`配置${i}`);c.id=`c${i}`;c.price=5000;return c;
@@ -19,7 +20,7 @@ const configs=Array.from({length:4},(_,i)=>{
 let state=normalizeWorkspaceState({revision:1,updatedAt:new Date().toISOString(),configs,templates:[],sourceCatalog:[],costSource:[],caseGallery:[],shopSettings:{intel:{coupon:0}},logs:[]},[]);
 state.configs.forEach((c,i)=>c.name='配置'+(i+1));
 state.sourceCatalog=[{shopId:'intel',sourceId:'s-cpu',goodsId:'1001',name:'验收CPU',erp:800,tax:850},{shopId:'intel',sourceId:'s-memory',goodsId:'1002',name:'验收内存',erp:220,tax:240}];
-state.costSource=state.sourceCatalog.map(p=>({...p,stockAvailable:0}));
+state.costSource=state.sourceCatalog.map(p=>({...p,stockAvailable:0,stockIncomingAvailable:null}));
 for(const c of state.configs){Object.assign(c.parts[0],state.sourceCatalog[0]);Object.assign(c.actualParts[0],state.sourceCatalog[0]);}
 let host,callStore,storeDirectory;
 if(process.env.REUI_REAL_STORE==='1'){
@@ -68,6 +69,7 @@ try{
   await topPage.route('**/workbench/reui-host',r=>r.fulfill({contentType:'text/html',body:`<!doctype html><script src="/workbench/endfield-init.js"></script><link rel="stylesheet" href="/workbench/endfield/endfield.css"><link rel="stylesheet" href="/workbench/endfield-workbench.css"><script type="module" src="/workbench/endfield-theme.js"></script><style>body{margin:0}html,body,#root{height:100%;margin:0}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;const React=(await import('/node_modules/.vite/deps/react.js')).default;const {createRoot}=(await import('/node_modules/.vite/deps/react-dom_client.js')).default;/* 宿主先核对启动模式，隔离桩明确使用本机模式。 */window.isTauri=true;window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>1,invoke:async(command)=>command==='nas_native_request'?{status:200,body:JSON.stringify({main_editor:false})}:command==='cloud_native_json_request'?{status:200,body:JSON.stringify({configured:false})}:1};const {default:App}=await import('/src/App.tsx');window.installWorkbenchBridge=async()=>{};const host=document.createElement('div');host.id='root';document.body.append(host);createRoot(host).render(React.createElement(App));</script>`}));
   await topPage.goto(base+'/workbench/reui-host');await topPage.locator('iframe').waitFor();page=await topPage.locator('iframe').elementHandle().then(h=>h.contentFrame());
  }else await page.goto(base+'/workbench/renumber-fixture');await page.waitForFunction(()=>window.workbenchReady);
+ topPage.setDefaultTimeout(7000);
  await page.locator('[data-product-toggle="p0"] .link-arrow').click();await page.locator('[data-id="c0"]').click();
  await page.locator('[data-continuous-config="c3"]').waitFor();
  // 默认九个基础槽位，空扩展配件不再占据总表行。
@@ -94,16 +96,25 @@ try{
   await clickWorkbenchControl(page,'#link-recycle-shortcut');await page.locator('#dialog[open]').waitFor();
   await audit(theme+'-recycle','#dialog');await closeWorkbenchDialog(page);continue;
  }
- if(await page.locator('#template-section-toggle').getAttribute('aria-expanded')!=='true')await page.locator('#template-section-toggle').click();await audit(theme+'-template-sidebar','.template-library-section');if(theme==='dark')await page.locator('.template-library-section').screenshot({path:new URL('../../../../module-template-dark.png',import.meta.url).pathname.replace(/^\/(\w:)/,'$1')});await page.locator('#template-section-toggle').click();
+ // 价格与输出源已是全屏工作表，按各自容器审查主题和对比度。
+ await clickWorkbenchControl(page,'[data-nav="source"]');
+ await page.locator('#source-sheet-page:visible .ss-grid').waitFor();
+ await audit(theme+'-source-sheet','#source-sheet-page');
+ await page.locator('.ss-back').click();
+ await page.locator('.rail-navigation button[title="价格与利润"]').click();
+ await page.locator('#price-profit-page:visible .pp-table').waitFor();
+ await audit(theme+'-price-profit','#price-profit-page');
+ await page.locator('.rail-navigation button[title="返回当前配置"]').click();
+ if(await page.locator('#template-section-toggle').getAttribute('aria-expanded')!=='true')await page.locator('#template-section-toggle').click();await audit(theme+'-template-sidebar','.template-library-section');if(colorOutput&&theme==='dark')await page.locator('.template-library-section').screenshot({path:colorOutput+'/module-template-dark.png'});await page.locator('#template-section-toggle').click();
  for(const tab of ['parts','display','actual','addons','perks','modules','costs']){await openWorkbenchEditor(page,tab);await audit(theme+'-'+tab,tab==='parts'?'#continuous-workbench':'#editor');}
- for(const [name,selector,ready] of [['history','#logs-open','#activity-list .list-card'],['erp','#erp-sync','.cloud-shop-card'],['templates','[data-nav="templates"]','#dialog-body'],['source','[data-nav="source"]','#source-list'],['cost-source','[data-nav="cost-source"]','#dialog-body'],['gallery','#case-gallery-open','#dialog-body'],['global','#global-batch-open','#dialog-body'],['link-parts','#link-parts','#link-part-scope'],['upgrade','#link-upgrades','#upgrade-batch-query'],['display-name','#link-display-names','#upgrade-batch-query'],['appearance','#batch-style','#style-scope'],['ids','#ids','#ids-spu'],['sync','#workspace-sync','#dialog-body'],['prices','#price-changes-open','.price-track'],['overview','#overview','.overview-dialog'],['product','#new-product','#wps-import-mount'],['deleted','#link-recycle-shortcut','#dialog-body'],['shop','#shop-settings','#dialog-body'],['template-new','[data-template-area-action="new"]','#dialog-body']]){
+ for(const [name,selector,ready] of [['history','#logs-open','#activity-list .list-card'],['erp','#erp-sync','.cloud-shop-card'],['templates','[data-nav="templates"]','#dialog-body'],['cost-source','[data-nav="cost-source"]','#dialog-body'],['gallery','#case-gallery-open','#dialog-body'],['global','#global-batch-open','#dialog-body'],['link-parts','#link-parts','#link-part-scope'],['upgrade','#link-upgrades','#upgrade-batch-query'],['display-name','#link-display-names','#upgrade-batch-query'],['appearance','#batch-style','#style-scope'],['ids','#ids','#ids-spu'],['sync','#workspace-sync','#dialog-body'],['prices','#price-changes-open','.price-track'],['overview','#overview','.overview-dialog'],['product','#new-product','#wps-import-mount'],['deleted','#link-recycle-shortcut','#dialog-body'],['shop','#shop-settings','#dialog-body'],['template-new','[data-template-area-action="new"]','#dialog-body']]){
  try{allowPriceFixtures=name==='prices';if(name==='template-new'&&!await page.locator('[data-template-area-action="new"]').count())await page.locator('#template-section-toggle').click();await clickWorkbenchControl(page,selector);
  await page.locator('#dialog[open]').waitFor({timeout:8000});await page.locator(ready).first().waitFor({timeout:8000});await audit(theme+'-'+name,'#dialog');
  if(name==='product'){await page.locator('.wps-import>summary').click();await audit(theme+'-wps-import','#dialog');}
- if(name==='source'){await page.locator('#source-list .source-item').first().click();await audit(theme+'-source-detail','#dialog');}
- if(name==='history'&&theme==='dark')await page.locator('#dialog').screenshot({path:new URL('../../../../module-'+name+'-dark.png',import.meta.url).pathname.replace(/^\/(\w:)/,'$1')});}catch(e){audits.push({name:theme+'-'+name,error:e.message.split('\n')[0],dialog:await page.locator('#dialog-title').textContent(),body:(await page.locator('#dialog-body').textContent()).slice(0,160)});}
+ if(colorOutput&&name==='history'&&theme==='dark')await page.locator('#dialog').screenshot({path:colorOutput+'/module-history-dark.png'});}catch(e){audits.push({name:theme+'-'+name,error:e.message.split('\n')[0],dialog:await page.locator('#dialog-title').textContent(),body:(await page.locator('#dialog-body').textContent()).slice(0,160)});}
  if(await page.locator('#dialog[open]').count())await closeWorkbenchDialog(page);
  }
  }
- if(!stockOnly)await fs.writeFile(new URL('../../../../module-color-'+colorStage+'.json',import.meta.url),JSON.stringify({audits,errors},null,2));if(colorStage==='final'){assert.ok(audits.every(a=>!a.error&&!a.bright.length&&!a.low.length),JSON.stringify(audits.filter(a=>a.error||a.bright?.length||a.low?.length)));assert.deepEqual(errors,[]);}console.log(JSON.stringify(audits.map(a=>({name:a.name,bright:a.bright?.length,low:a.low?.length,error:a.error}))));
+ if(!stockOnly&&colorOutput){await fs.mkdir(colorOutput,{recursive:true});await fs.writeFile(colorOutput+'/module-color-'+colorStage+'.json',JSON.stringify({audits,errors},null,2));}
+ if(colorStage==='final'){assert.ok(audits.every(a=>!a.error&&!a.bright.length&&!a.low.length),JSON.stringify(audits.filter(a=>a.error||a.bright?.length||a.low?.length)));assert.deepEqual(errors,[]);}console.log(JSON.stringify(audits.map(a=>({name:a.name,bright:a.bright?.length,low:a.low?.length,error:a.error}))));
 }finally{await browser.close();host?.kill();}

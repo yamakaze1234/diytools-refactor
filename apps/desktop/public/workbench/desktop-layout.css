@@ -5,6 +5,7 @@
 .topbar .brand span { font-size: 14px; margin-left: 5px; }
 .topbar .prototype, .topbar #erp-last,
 .topbar #workspace-sync-status { display: none; }
+.topbar #workspace-sync-status[data-addon-drafts] { display:block; }
 .topbar .top-right { gap: 8px; }
 .topbar .erp-sync-controls, .topbar .workspace-sync-controls { border: 0; padding: 0; min-width: 0; }
 .topbar button { min-height: 30px; padding: 5px 10px; }

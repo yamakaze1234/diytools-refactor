@@ -1,6 +1,6 @@
 [package]
 name = "desktop"
-version = "0.2.57"
+version = "0.2.58"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2024"
@@ -9,7 +9,7 @@ default-run = "desktop"
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 review-host = []
-agent-tools = ["dep:diytools-agent-core"]
+agent-tools = ["dep:diytools-agent-core", "dep:regex", "dep:icu_normalizer"]
 # 独立正式包从程序旁配置直接启动，禁止无配置时退回本机工作区。
 formal-nas-client = []
 # 使用独立目录、合成账号和真实 API 的本机验收包。
@@ -45,6 +45,9 @@ serde_json = "1"
 
 [dependencies]
 diytools-agent-core = { path = "../../../packages/agent-core", optional = true }
+# 输出源与界面共用同一份分类规则和 NFKC 名称规范。
+regex = { version = "1", optional = true }
+icu_normalizer = { version = "2", default-features = false, features = ["compiled_data"], optional = true }
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }

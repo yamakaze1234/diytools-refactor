@@ -279,6 +279,18 @@ export class LiveStore extends Store{
    return (await retentionQuery(db,'SELECT intel_live.purge_expired_retention($1,7,30) AS stats',[this.shopId])).rows[0].stats;
   });
  }
+ async purgeExpiredActivity(workspaceId){
+  requireValue(this.workspaceWritable,'WRITES_DISABLED',405);
+  try{
+   return await this.tx('retention',async db=>{
+    await db.query("SELECT set_config('intel_live.catalog_workspace',$1,true)",[workspaceId]);
+    return (await db.query('SELECT intel_live.purge_expired_activity($1,30) AS stats',[this.shopId])).rows[0].stats;
+   });
+  }catch(error){
+   if(error.code==='42883')return null;
+   throw error;
+  }
+ }
  async configurations(shop,{id=null,sales=false,limit=50,offset=0,search='',archived=false,db=this.pool}={}){
   const order=archived?'c.archived_at,c.configuration_id':'c.workspace_order,c.configuration_id';
   const {rows}=await db.query('SELECT '+summarySelect(this.workspaceWritable)+' '+summaryJoins(this.workspaceWritable)+
@@ -573,13 +585,38 @@ export class LiveStore extends Store{
    return (await db.query('SELECT kind,resource_id,action,next_version::text,created_at FROM intel_live.operations_activity($1)',[limit])).rows;
   });
  }
- async workspaceActivityPage(member,{from,to,page,size}){
+ async workspaceActivityPage(member,{from,to,page,size,actor=null,kind=null}){
   requireValue(this.workspaceWritable,'WRITES_DISABLED',405);
-  return this.tx(false,async db=>{
+  const read=(sql,params)=>this.tx(false,async db=>{
    await this.catalog.bind(db,member);
-   const {rows:[{data}]}=await db.query('SELECT intel_live.operations_activity_page($1::date,$2::date,$3::integer,$4::integer) AS data',[from,to,page,size]);
-   return {...data,rows:data.rows.map(({own_operation,...row})=>({...row,operator:own_operation?member.name||'':''}))};
+   return (await db.query(sql,params)).rows[0].data;
   });
+  try{
+   const data=await read('SELECT intel_live.operations_activity_query($1::date,$2::date,$3::integer,$4::integer,$5::text,$6::text) AS data',[from,to,page,size,actor,kind]);
+   return {...data,operators:data.operators.map(row=>row.own&&row.name===row.uid?{...row,name:member.name||row.name}:row),
+    rows:data.rows.map(({own_operation,...row})=>({...row,operator:own_operation&&row.operator===row.actor_uid?member.name||row.operator:row.operator}))};
+  }catch(error){
+   if(error.code==='42501')throw new Fault('FORBIDDEN',403);
+   if(error.code!=='42883')throw error;
+   if(actor||kind)throw new Fault('NAS_ACTIVITY_NOT_INSTALLED',503);
+  }
+  // 缺少新函数会中止当前事务；用新读事务降级，保留旧接口字段。
+  const data=await read('SELECT intel_live.operations_activity_page($1::date,$2::date,$3::integer,$4::integer) AS data',[from,to,page,size]);
+  return {...data,rows:data.rows.map(({own_operation,...row})=>({...row,operator:own_operation?member.name||'':''}))};
+ }
+ async purgeWorkspaceActivity(member,shop,{from,to,actor,kind,dryRun}){
+  requireValue(this.workspaceWritable,'WRITES_DISABLED',405);
+  try{
+   return await this.tx(!dryRun,async db=>{
+    await this.catalog.bind(db,member);
+    return (await db.query('SELECT intel_live.purge_operations_activity($1,$2::date,$3::date,$4,$5,$6) AS data',
+     [shop,from,to,actor,kind,dryRun])).rows[0].data;
+   });
+  }catch(error){
+   if(error.code==='42883')throw new Fault('NAS_ACTIVITY_NOT_INSTALLED',503);
+   if(error.code==='42501')throw new Fault('FORBIDDEN',403);
+   throw error;
+  }
  }
  async workspaceProfit(member,shop,action,input){
   const write=['start','reset'].includes(action);

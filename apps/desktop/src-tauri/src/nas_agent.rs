@@ -1,4 +1,10 @@
 //! NAS Agent 复用当前登录会话和正式 HTTPS 查询，任务记录以部署、账号隔离。
+#[path = "nas_agent_access.rs"]
+mod access;
+use crate::agent_permissions::Policy;
+use access::{gate, operating_shops, scope_key};
+#[path = "nas_agent_queries.rs"]
+mod extended;
 use crate::{agent_jobs::AgentJobs, agent_queries as query, cloud_native::CloudRuntime};
 use diytools_agent_core::{AgentError, Request, Response};
 use serde_json::{Value, json};
@@ -19,6 +25,8 @@ type JobScopes = HashMap<String, Arc<AgentJobs>>;
 pub struct NasAgent {
     cloud: Arc<CloudRuntime>,
     folder: PathBuf,
+    policy: Policy,
+    query_slots: Arc<tokio::sync::Semaphore>,
     jobs: Mutex<JobScopes>,
     _lock: File,
 }
@@ -37,6 +45,8 @@ impl NasAgent {
         lock.try_lock().map_err(io::Error::other)?;
         Ok(Self {
             cloud,
+            policy: Policy::open(&folder)?,
+            query_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             folder,
             jobs: Mutex::new(HashMap::new()),
             _lock: lock,
@@ -50,7 +60,7 @@ impl NasAgent {
     }
 
     fn jobs(&self, endpoint: &str, actor: &Actor) -> Result<Arc<AgentJobs>> {
-        let key = format!("{:x}", Sha256::digest(json!([endpoint, actor]).to_string()));
+        let key = scope_key(endpoint, actor);
         let mut scopes = self
             .jobs
             .lock()
@@ -74,19 +84,192 @@ impl NasAgent {
         self.jobs(&endpoint, &actor)
     }
 
-    pub fn dispatch(&self, instance: &str, request: Request) -> Response {
+    pub fn dispatch(self: &Arc<Self>, instance: &str, request: Request) -> Response {
+        // 超慢的 NAS 只读请求不得占满管道的 5 秒时限；最多保留两个尚在退出的请求。
+        if matches!(
+            request.method.as_str(),
+            "sources.find"
+                | "sources.get"
+                | "activity.list"
+                | "configs.find"
+                | "configs.get"
+                | "status"
+                | "shops.list"
+                | "jobs.status"
+                | "inventory.check"
+        ) {
+            let Ok(slot) = self.query_slots.clone().try_acquire_owned() else {
+                return Response::failure(
+                    &request,
+                    AgentError::new("QUERY_BUSY", "先前的 NAS 请求仍在收尾，请稍后重试"),
+                );
+            };
+            let (send, recv) = std::sync::mpsc::sync_channel(1);
+            let agent = self.clone();
+            let name = instance.to_owned();
+            let copy = request.clone();
+            let work = std::thread::Builder::new()
+                .name("workbench-nas-query".into())
+                .spawn(move || {
+                    let _slot = slot;
+                    let _ = send.send(agent.dispatch_inner(&name, copy));
+                });
+            if work.is_err() {
+                return Response::failure(&request, bad_response());
+            }
+            return recv
+                .recv_timeout(Duration::from_millis(4200))
+                .unwrap_or_else(|_| {
+                    Response::failure(
+                        &request,
+                        AgentError::new("QUERY_TIMEOUT", "NAS 查询超过时限，请缩小范围或稍后重试"),
+                    )
+                });
+        }
+        self.dispatch_inner(instance, request)
+    }
+    fn dispatch_inner(&self, instance: &str, request: Request) -> Response {
+        let started = Instant::now();
         let result = request.validate().and_then(|_| {
             let (endpoint, actor) = self.scope()?;
-            let data = match request.method.as_str() {
-                "changes.preview" | "changes.apply" | "export.start" | "sync.run"
-                | "jobs.status" => self
-                    .jobs(&endpoint, &actor)?
-                    .dispatch(&request.method, &request.params)?,
-                "status" | "shops.list" | "configs.find" | "configs.get" => {
-                    self.query(instance, &actor, &request.method, &request.params)?
-                }
-                _ => return Err(AgentError::new("METHOD_NOT_FOUND", "不支持此 Agent 方法")),
+            let key = scope_key(&endpoint, &actor);
+            let method = request.method.as_str();
+            let input = &request.params;
+            if !access::METHODS.contains(&method) {
+                return Err(AgentError::new("METHOD_NOT_FOUND", "不支持此 Agent 方法"));
+            }
+            let (enabled, flags) = self.policy.get(&key)?;
+            let local = access::local_gate(enabled, &flags, method, false);
+            if method != "changes.apply" && !crate::agent_jobs::steps::stepped(method) {
+                local.clone()?;
+            }
+            let task = matches!(
+                method,
+                "jobs.status"
+                    | "draft.preview"
+                    | "draft.apply"
+                    | "sources.preview"
+                    | "sources.apply"
+                    | "changes.preview"
+                    | "changes.apply"
+                    | "export.start"
+                    | "sync.run"
+                    | "inventory.check"
+            );
+            let jobs = if task {
+                Some(self.jobs(&endpoint, &actor)?)
+            } else {
+                None
             };
+            let (target, recover) = if let Some(queue) = &jobs {
+                if method == "inventory.check" && input["jobId"].is_string() {
+                    (
+                        Some(queue.inventory_shop(input["jobId"].as_str().unwrap())?),
+                        false,
+                    )
+                } else {
+                    queue
+                        .nas_target(method, input)
+                        .map_err(|error| local.clone().err().unwrap_or(error))?
+                }
+            } else {
+                (input["shopId"].as_str().map(str::to_owned), false)
+            };
+            if !recover {
+                local?;
+            }
+            let me = self.cloud.nas_agent_read("/api/v1/me", &actor, None)?;
+            let (enabled, flags) = self.policy.get(&key)?;
+            gate(
+                enabled,
+                &flags,
+                &me,
+                method,
+                target.as_deref(),
+                recover,
+                false,
+            )?;
+            if !recover && let Some(queue) = &jobs {
+                access::source_gate(
+                    &flags,
+                    &me,
+                    target.as_deref(),
+                    queue.source_scope(method, input)?.as_ref(),
+                    false,
+                )?;
+            }
+            let mut data = if let Some(queue) = jobs {
+                if method != "jobs.status" && started.elapsed() >= Duration::from_secs(4) {
+                    return Err(AgentError::new("QUERY_TIMEOUT", "权限核对超时，任务未入队"));
+                }
+                let mut result = queue.dispatch_at(method, input, target.as_deref())?;
+                if method == "jobs.status"
+                    || (method == "sources.preview" && result["status"] == "succeeded")
+                    || (recover && crate::agent_jobs::steps::stepped(method))
+                {
+                    let job_method = result["method"].as_str().unwrap_or_default();
+                    let original_shop =
+                        queue.nas_status_shop(result["jobId"].as_str().unwrap_or(""))?;
+                    let spec = queue.status_source_scope(result["jobId"].as_str().unwrap_or(""))?;
+                    let shop_visible = original_shop
+                        .as_deref()
+                        .is_some_and(|shop| operating_shops(&me).iter().any(|(id, _)| *id == shop));
+                    if !shop_visible
+                        || access::source_gate(
+                            &flags,
+                            &me,
+                            original_shop.as_deref(),
+                            spec.as_ref(),
+                            false,
+                        )
+                        .is_err()
+                        || gate(
+                            enabled,
+                            &flags,
+                            &me,
+                            job_method,
+                            original_shop.as_deref(),
+                            false,
+                            false,
+                        )
+                        .is_err()
+                    {
+                        // apply 的公开结果已经裁成正式回执元数据，原店仍可见时允许核对已发出的单据。
+                        if shop_visible && crate::agent_jobs::steps::stepped(job_method) {
+                            // 撤权后仅返回原步骤的编号与状态，不公开预览正文、业务内容或已失去运营权限的店铺。
+                            result["result"] =
+                                access::visible_step_progress(&result["result"], &me);
+                        } else if !(shop_visible && job_method == "changes.apply") {
+                            result["result"] = Value::Null;
+                        }
+                        result["progress"] = Value::Null;
+                        if let Some(code) = result["error"]["code"].as_str() {
+                            result["error"] = json!({"code":code});
+                        }
+                    }
+                }
+                result
+            } else if matches!(method, "sources.get" | "sources.find" | "activity.list") {
+                self.extended_query(&actor, method, input, &me, flags.read_inventory_activity)?
+            } else {
+                self.query(instance, &actor, method, input, &me, &key)?
+            };
+            // 查询飞行期间撤权，不能把按原权限计算的库存或其他结果交还调用方。
+            let (now_enabled, now_flags) = self.policy.get(&key)?;
+            let permission_changed = enabled != now_enabled || flags != now_flags;
+            if (!task || (method == "inventory.check" && input["jobId"].is_string()))
+                && permission_changed
+            {
+                return Err(AgentError::new(
+                    "PERMISSION_REVOKED",
+                    "读取期间权限已变更，请重新查询",
+                ));
+            }
+            if task && permission_changed {
+                data["result"] = Value::Null;
+                data["progress"] = Value::Null;
+                data["error"] = Value::Null;
+            }
             if self.scope()? != (endpoint, actor) {
                 return Err(AgentError::new("MEMBER_CHANGED", "工作台成员已变化"));
             }
@@ -98,10 +281,10 @@ impl NasAgent {
         }
     }
 
-    fn query(&self, instance: &str, actor: &Actor, method: &str, input: &Value) -> Result<Value> {
+    fn query(&self, instance: &str, actor: &Actor, method: &str, input: &Value, me:&Value, scope_key:&str) -> Result<Value> {
         let allowed: &[&str] = match method {
             "configs.find" => &[
-                "shopId", "goodsId", "sku", "spu", "limit", "offset", "revision",
+                "shopId", "goodsId", "sku", "spu", "query", "limit", "offset", "revision",
             ],
             "configs.get" => &["shopId", "configId"],
             _ => &[],
@@ -117,6 +300,7 @@ impl NasAgent {
         if method == "configs.get" && id.is_none() {
             return Err(query::invalid("configId 为必填参数"));
         }
+        let phrase = extended::phrase(args)?;
         let filter = Find {
             goods: query::string(args, "goodsId")?,
             sku: query::string(args, "sku")?,
@@ -134,23 +318,7 @@ impl NasAgent {
             ));
         }
         let deadline = Instant::now() + Duration::from_millis(4200);
-        let me = self.cloud.nas_agent_read("/api/v1/me", actor, None)?;
-        let capabilities = query::SHOPS
-            .iter()
-            .filter_map(|(shop, _)| {
-                let authorized = me["shops"]
-                    .as_array()?
-                    .iter()
-                    .any(|role| role["shop_id"] == *shop && role["role"] == "operations");
-                let capability = match me.get("shop_capabilities") {
-                    Some(list) => &list[*shop],
-                    None if *shop == "intel" => &me,
-                    _ => return None,
-                };
-                (authorized && capability["data_source"] == format!("{shop}_live"))
-                    .then_some((*shop, capability))
-            })
-            .collect::<Vec<_>>();
+        let capabilities = operating_shops(me);
         let shops = capabilities.iter().map(|(id, _)| *id).collect::<Vec<_>>();
         if shops.is_empty() || requested_shop.is_some_and(|shop| !shops.contains(&shop)) {
             return Err(AgentError::new(
@@ -164,25 +332,12 @@ impl NasAgent {
             );
         }
         if method == "status" {
-            let writable = capabilities.iter().any(|(_, c)| can_write(c));
-            let mut methods = vec![
-                "status",
-                "shops.list",
-                "configs.find",
-                "configs.get",
-                "jobs.status",
-                "export.start",
-                "sync.run",
-            ];
-            if writable {
-                methods.extend(["changes.preview", "changes.apply"]);
-            }
-            return Ok(
-                json!({"instance":instance,"appVersion":env!("CARGO_PKG_VERSION"),
-                "snapshot":"nasSaved","snapshotDescription":"NAS 正式工作区的已保存配置，不包含本机草稿",
-                "savedOn":"nas","capabilities":methods,"readOnly":!writable,"authorization":"nasOperations",
-                "authentication":"windowsCurrentUserAndWorkbenchLogin","unsavedChanges":"excluded"}),
-            );
+            let mut data=self.policy_status(scope_key,actor,me)?;
+            data["instance"]=json!(instance);data["appVersion"]=json!(env!("CARGO_PKG_VERSION"));
+            data["snapshot"]=json!("nasSaved");data["snapshotDescription"]=json!("NAS 正式工作区的已保存配置，不包含本机草稿");
+            data["savedOn"]=json!("nas");data["authorization"]=json!("nasOperations");
+            data["authentication"]=json!("windowsCurrentUserAndWorkbenchLogin");data["unsavedChanges"]=json!("excluded");
+            return Ok(data);
         }
         let scope = requested_shop.map_or(shops, |shop| vec![shop]);
         // 各店目录彼此独立，并发读取，保持固定店铺顺序以稳定计算分页版本。
@@ -227,7 +382,7 @@ impl NasAgent {
             };
             let detail = self.detail(actor, shop, row)?;
             let config = &detail["document"];
-            let mut projected = query::business(config, true);
+            let mut projected = nas_config(config, true);
             projected["nasVersion"] = detail["version"].clone();
             return Ok(
                 json!({"revision":revision_for([(shop,index["revision"].as_str().unwrap())]),
@@ -242,7 +397,10 @@ impl NasAgent {
             let candidates = rows(index)
                 .iter()
                 .filter(|row| {
-                    filter
+                    // 模糊词仅匹配已保存索引中的商品、配置或短名，其他条件仍取交集。
+                    phrase.as_ref().is_none_or(|q| ["product", "name", "shortName"].iter().any(|key|
+                        row[*key].as_str().is_some_and(|name| name.to_lowercase().contains(q))))
+                    && filter
                         .sku
                         .is_none_or(|sku| row["skuId"].as_str() == Some(sku))
                         && filter
@@ -309,7 +467,7 @@ impl NasAgent {
                 for (row, matched) in group.iter().zip(matches) {
                     if matched {
                         if count >= filter.offset {
-                            let mut item = query::business(row, false);
+                            let mut item = nas_config(row, false);
                             if let Some(version) = row.get("nasVersion") {
                                 item["nasVersion"] = version.clone();
                             }
@@ -395,6 +553,14 @@ struct Find<'a> {
 }
 fn can_write(capability: &Value) -> bool {
     capability["configuration_writes"] == true && capability["workspace_writes"] == true
+}
+// 目录与详情使用相同的草稿标识，历史配置缺少这些字段时仍按普通配置展示。
+fn nas_config(config: &Value, detail: bool) -> Value {
+    let mut value = query::business(config, detail);
+    for field in ["productDraft", "emptyLinkDraft"] {
+        value[field] = json!(config[field] == true);
+    }
+    value
 }
 fn bad_response() -> AgentError {
     AgentError::new("INVALID_API_RESPONSE", "NAS 查询响应不完整")

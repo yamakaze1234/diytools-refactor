@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/badges/version.svg" height="26" alt="版本 0.2.57">
+  <img src="docs/assets/badges/version.svg" height="26" alt="版本 0.2.58">
   <img src="docs/assets/badges/platform.svg" height="26" alt="Windows x64">
   <img src="docs/assets/badges/backend.svg" height="26" alt="NAS · PostgreSQL">
   <img src="docs/assets/badges/updater.svg" height="26" alt="Ed25519 签名更新">
@@ -12,15 +12,21 @@
 
 <p align="center">面向 DIY 整机运营的 Windows 工作台，在同一处完成三店选件、定价和商品图交付。</p>
 
-[立即下载](#立即下载) · [界面预览](#界面预览) · [核心能力](#核心能力) · [系统架构](#系统架构) · [文档中心](#文档中心)
+<p align="center">
+  <a href="#立即下载">立即下载</a> ·
+  <a href="#界面预览">界面预览</a> ·
+  <a href="#核心能力">核心能力</a> ·
+  <a href="#系统架构">系统架构</a> ·
+  <a href="#文档中心">文档中心</a>
+</p>
 
 ## 立即下载
 
 | 发行入口 | 适用场景 | 通道与校验 |
 | --- | --- | --- |
-| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.57/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.57.zip) | Windows x64 首次使用，完整解压 | 主源 · 签名清单见 Gitea 发行页 |
-| [Windows 使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.57/DIY-0.2.57.zip) | 主源下载不便时使用 | 备用源 · 签名清单见 GitHub 发行页 |
-| [Gitea Releases](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases) · [GitHub Releases](https://github.com/yamakaze1234/diytools-refactor/releases) | 查看版本和附件 | [0.2.57 更新说明 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.57) · [GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/tag/workbench-v0.2.57) |
+| [Windows 使用包 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/download/workbench-v0.2.58/DIY%E5%B7%A5%E4%BD%9C%E5%8F%B0-0.2.58.zip) | Windows x64 首次使用，完整解压 | 主源 · 签名清单见 Gitea 发行页 |
+| [Windows 使用包 · GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/download/workbench-v0.2.58/DIY-0.2.58.zip) | 主源下载不便时使用 | 备用源 · 签名清单见 GitHub 发行页 |
+| [Gitea Releases](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases) · [GitHub Releases](https://github.com/yamakaze1234/diytools-refactor/releases) | 查看版本和附件 | [0.2.58 更新说明 · Gitea](https://gitea.cq360.top/CoreStudio/diy-tools-refactor/releases/tag/workbench-v0.2.58) · [GitHub](https://github.com/yamakaze1234/diytools-refactor/releases/tag/workbench-v0.2.58) |
 
 <details>
 <summary>首次连接 4 步</summary>

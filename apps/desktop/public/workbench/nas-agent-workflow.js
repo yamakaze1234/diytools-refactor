@@ -3,6 +3,11 @@ import {buildAgentPlan} from './agent-changes.js';
 import {exportAgentSnapshot} from './agent-export.js';
 import {receiptNotFound} from './nas-api-client.js';
 import {nasDependencies} from './nas-draft-controller.js';
+import {checkInventory,inventoryCounts} from './inventory-check-data.js';
+import {inventoryLinks} from './inventory-export.js';
+import {ordinaryConfigs} from './template-library.js';
+import {previewAgentDraft,applyAgentDraft} from './agent-drafts.js';
+import {createAgentSources} from './agent-sources.js';
 
 const fail=(code,message)=>{throw Object.assign(Error(message),{code});};
 const stale=()=>fail('REVISION_CONFLICT','NAS 配置或工作区已变化，请重新查询、预览');
@@ -16,7 +21,7 @@ async function agentRevision(indexes){
  return Number.parseInt([...digest.slice(0,7)].map(byte=>byte.toString(16).padStart(2,'0')).join('').slice(0,13),16);
 }
 
-async function readDocuments(client,shop,ids,head){
+async function readDocuments(client,shop,ids,head,project=row=>row){
  const summaries=new Map(head.summaries.map(row=>[row.id,row]));
  const rows=[];
  for(let i=0;i<ids.length;i+=6){
@@ -27,7 +32,7 @@ async function readDocuments(client,shop,ids,head){
     fail('INVALID_API_RESPONSE','NAS 返回的配置身份或版本无效');
    const version=summaries.get(id).nasVersion;
    if(version&&version!==row.version)stale();
-   return row;
+   return project(row);
   })));
  }
  return rows;
@@ -49,6 +54,27 @@ function verifiedReceipt(receipt,shop,operationId,changes){
 }
 
 export function createNasAgentWorkflow(api){
+ const sources=createAgentSources(api);
+ // 逐批读已保存的实际 BOM，不打开库存页，不把当前编辑器的草稿并入结果。
+ async function inventory(params){
+  const shop=params.shopId,{client}=await api.access(shop);
+  const [head,catalog]=await Promise.all([client.workspaceIndex(),client.workspaceCatalog()]);
+  const groups=inventoryLinks(ordinaryConfigs(head.summaries),shop);
+  const selected=groups.filter(group=>!params.productId||params.productId===group.id).flatMap(group=>group.configs);
+  // 海报和加购大字段不参与巡检，处理完一批详情即可释放。
+  const configs=await readDocuments(client,shop,selected.map(c=>c.id),head,({document:c})=>({
+   id:c.id,name:c.name,product:c.product,productId:c.productId,shopId:shop,spu:c.spu,actualParts:c.actualParts??c.parts
+  }));
+  if((await client.workspaceIndex()).revision!==head.revision)stale();
+  const report=checkInventory(configs,catalog.costSource,shop,params.threshold??5,catalog.sourceCatalog);
+  const items=report.issues.filter(row=>!params.status||row.status===params.status).map(({sources,...row})=>{
+   const links=new Map(sources.map(s=>[s.productId,{id:s.productId,name:s.product}]));
+   return {...row,affectedConfigCount:new Set(sources.map(s=>s.configId)).size,
+    affectedLinkCount:links.size,affectedLinks:[...links.values()].slice(0,20),affectedLinksTruncated:links.size>20};
+  });
+  return {shopId:shop,threshold:report.threshold,checkedAt:report.checkedAt,linkCount:report.linkCount,configCount:report.configCount,
+   counts:inventoryCounts(report.issues),total:items.length,items};
+ }
  async function preview(params){
   const request=params.request,shop=request.shopId,{client,assertWritable,assertDrafts}=await api.access(shop);
   assertWritable();
@@ -76,7 +102,8 @@ export function createNasAgentWorkflow(api){
    configs:changes.map(change=>({id:change.id,nasVersion:change.expected_version}))}};
  }
 
- async function apply(params){
+ async function apply(job){
+  const params=job.params;
   const {shop,revision,ids,changes}=params.plan;
   const {client,assertWritable,assertDrafts}=await api.access(shop);
   const operationId=params.operationId;
@@ -92,6 +119,8 @@ export function createNasAgentWorkflow(api){
    if(await agentRevision([[shop,head]])!==revision)stale();
    if(!changes.length)return {localSave:'unchanged',nasSave:'unchanged',revision,
     snapshot:{shopId:shop,revision,configIds:ids}};
+   // 查已有回执不产生写入；只有确实需要发送新正文时才再向宿主核对这一领取标识。
+   await api.native('preflight',{id:job.id,shopId:shop});
    receipt=verifiedReceipt(await client.workspaceWrite('configurations',{operation_id:operationId,changes}),shop,operationId,changes);
   }
   // 正式回执已经确认，刷新失败不能把一次成功写入谎报为可再次保存。
@@ -127,21 +156,29 @@ export function createNasAgentWorkflow(api){
   const configs=api.present(rows,catalog,shop);
   return exportAgentSnapshot({configs,revision,snapshotKind:'nasSaved',params:{...opts,configIds:ids},render:api.render,
    progress:p=>api.native('progress',{id:job.id,...p}),
-   writeFile:file=>api.native('export.write',{jobId:job.id,...file}),
-   finish:value=>api.native('export.finish',{jobId:job.id,...value})});
+   writeFile:file=>api.native('export.write',{jobId:job.id,shopId:shop,...file}),
+   finish:value=>api.native('export.finish',{jobId:job.id,shopId:shop,...value})});
  }
 
  return async job=>{
-  if(api.blocked())fail('UI_BUSY','当前正在编辑或执行任务，请关闭弹窗并等待编辑器就绪');
+  if(job.method==='inventory.check')return inventory(job.params);
+  // 草稿与来源预览仅读取已保存快照。输出源工作表的人工修改可继续保留。
+  if(job.method==='sources.preview')return sources.preview(job.params);
+  if(job.method==='draft.preview')return previewAgentDraft(job.params,api);
+  if(api.blocked(job.method))fail('UI_BUSY','当前正在编辑或执行任务，请关闭弹窗并等待编辑器就绪');
   const release=api.lock();
   try{
    switch(job.method){
+    case 'draft.apply':return await applyAgentDraft(job,api);
+    case 'sources.apply':return await sources.apply(job);
     case 'changes.preview':return await preview(job.params);
-    case 'changes.apply':return await apply(job.params);
+    case 'changes.apply':return await apply(job);
     case 'export.start':return await exportSaved(job);
     case 'sync.run':{
      const shop=api.activeShop();
+     if(job.params.shopId&&job.params.shopId!==shop)fail('MEMBER_CHANGED','当前店铺已切换，请在目标店铺重新刷新');
      await api.access(shop);
+     await api.native('preflight',{id:job.id,shopId:shop});
      await api.refresh(shop);
      return {localSave:'unchanged',nasRefresh:'completed',shopId:shop};
     }

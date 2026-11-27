@@ -5,6 +5,29 @@ const entries=()=>['a','b'].map(id=>({name:id+'.png',config:{id,name:id,parts:[{
 const render=async config=>({canvas:{toBlob:callback=>callback(new Blob([JSON.stringify(config)]))}});
 const deferred=()=>{let resolve;return {promise:new Promise(r=>resolve=r),resolve:()=>resolve()};};
 
+test('图片任务全部正常完成或清空后同时隐藏两个入口，失败和取消可继续处理',async()=>{
+ const element=()=>({style:{},children:[],setAttribute(){},append(...kids){this.children.push(...kids);},replaceChildren(){this.children=[];}});
+ const body=element();
+ globalThis.document={body,createElement:element,querySelector:key=>body.children.find(node=>'#'+node.id===key)};
+ try{
+  const {startImageExportTask:start,imageExportTasks:list}=await import('../../public/workbench/image-export-tasks.js?visibility');
+  const gate=deferred();
+  const task=start({entries:entries(),name:'测试',renderImage:async config=>{await gate.promise;return render(config);},saveFolder:async()=>({directory:'test'})});
+  const [toggle,panel]=body.children;
+  assert.equal(toggle.hidden,false);toggle.onclick();assert.equal(panel.style.display,'');
+  gate.resolve();await task.done;
+  for(const node of [toggle,panel]){assert.equal(node.hidden,true);assert.equal(node.style.display,'none');}
+  assert.equal(list().length,1);assert.equal(toggle.textContent,'');
+  const failed=start({entries:entries(),name:'失败',renderImage:async()=>{throw Error('测试失败');},saveFolder:async()=>({directory:'test'})});
+  await assert.rejects(failed.done,/全部图片生成失败/);assert.equal(toggle.hidden,false);
+  const cancelled=start({entries:entries(),name:'取消',renderImage:render,saveFolder:async()=>({cancelled:true})});
+  await cancelled.done;assert.equal(cancelled.phase,'cancelled');assert.equal(toggle.hidden,false);
+  toggle.onclick();panel.children.find(node=>node.textContent==='一键清空记录').onclick();
+  assert.equal(list().length,0);
+  for(const node of [toggle,panel]){assert.equal(node.hidden,true);assert.equal(node.style.display,'none');}
+ }finally{delete globalThis.document;}
+});
+
 test('快照隔离后续编辑和渲染器修改，失败重试只输出未成功的图片',async()=>{
  const input=entries(),gate=deferred(),renders=[],outputs=[];let fail=true;
  const task=startImageExportTask({entries:input,name:'测试',renderImage:async config=>{await gate.promise;renders.push(structuredClone(config));if(config.id==='b'&&fail)throw Error('暂时失败');config.parts[0].name='渲染器改动';return render(config);},saveFolder:async files=>{outputs.push(files.map(file=>file.name));return {directory:'test'};}});
